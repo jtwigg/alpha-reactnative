@@ -1,0 +1,19 @@
+{
+  "name": "@rn-monorepo/server",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "convex": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  }
+}

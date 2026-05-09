@@ -1,0 +1,11 @@
+node_modules/
+.nx/cache
+.nx/workspace-data
+dist/
+.expo/
+*.log
+.DS_Store
+.env
+.env.local
+.convex/
+        

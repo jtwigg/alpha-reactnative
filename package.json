@@ -1,0 +1,24 @@
+{
+  "name": "rn-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "nx build",
+    "lint": "nx lint",
+    "test": "nx test",
+    "typecheck": "nx typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@parcel/watcher", "esbuild", "nx"],
+    "overrides": {
+      "react": "19.1.0",
+      "react-dom": "19.1.0"
+    }
+  },
+  "devDependencies": {
+    "@nx/expo": "^20.3.0",
+    "@nx/js": "^20.3.0",
+    "nx": "^20.3.0",
+    "typescript": "^5.7.0"
+  }
+}

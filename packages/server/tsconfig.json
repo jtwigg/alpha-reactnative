@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "convex/_generated/api": ["./convex/_generated/api"]
+    }
+  },
+  "include": ["convex", "tests", "vitest.config.ts"],
+  "exclude": ["node_modules"]
+}
