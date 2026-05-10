@@ -16,7 +16,7 @@ type Props = {
 
 export function ChatInput({ onSend, isLoading }: Props) {
   const [text, setText] = useState('');
-  const { startRecording, stopRecording, isRecording, isTranscribing, isAvailable: micAvailable } = useWhisper();
+  const { startRecording, stopRecording, isRecording, isTranscribing, isAvailable: micAvailable, partialTranscript } = useWhisper();
 
   const handleSend = () => {
     const trimmed = text.trim();
@@ -42,13 +42,13 @@ export function ChatInput({ onSend, isLoading }: Props) {
     <View style={styles.container}>
       <TextInput
         style={styles.input}
-        value={text}
+        value={(isRecording || isTranscribing) && partialTranscript ? partialTranscript : text}
         onChangeText={setText}
-        placeholder={isRecording ? 'Listening...' : 'Message...'}
+        placeholder={isRecording ? 'Listening...' : isTranscribing ? 'Finishing...' : 'Message...'}
         placeholderTextColor="#999"
         multiline
         maxLength={4000}
-        editable={!isRecording}
+        editable={!isRecording && !isTranscribing}
         onSubmitEditing={handleSend}
       />
       {micAvailable && (

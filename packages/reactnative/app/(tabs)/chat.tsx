@@ -52,7 +52,7 @@ export default function ChatScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.header}>
-          <Text style={styles.headerText}>Chat</Text>
+          <Text style={styles.headerText}>Chat <Text style={{ color: 'red', fontSize: 14 }}>V4</Text></Text>
         </View>
 
         <FlatList
