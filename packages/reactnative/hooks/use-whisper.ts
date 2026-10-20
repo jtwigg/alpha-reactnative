@@ -1,10 +1,11 @@
+import { useAuth } from '@clerk/expo';
 import { Audio } from 'expo-av';
 import { useState } from 'react';
 
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? '';
-const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
+import { transcribeAudio } from '@/lib/transcribe';
 
 export function useWhisper() {
+  const { getToken } = useAuth();
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -18,10 +19,10 @@ export function useWhisper() {
       playsInSilentModeIOS: true,
     });
 
-    const { recording } = await Audio.Recording.createAsync(
+    const { recording: nextRecording } = await Audio.Recording.createAsync(
       Audio.RecordingOptionsPresets.HIGH_QUALITY,
     );
-    setRecording(recording);
+    setRecording(nextRecording);
     setIsRecording(true);
   };
 
@@ -38,32 +39,15 @@ export function useWhisper() {
 
     setIsTranscribing(true);
     try {
-      return await transcribe(uri);
+      const token = await getToken({ template: 'convex' });
+      return await transcribeAudio(
+        { uri, type: 'audio/m4a', name: 'recording.m4a' },
+        token,
+      );
     } finally {
       setIsTranscribing(false);
     }
   };
 
   return { startRecording, stopRecording, isRecording, isTranscribing, isAvailable: true };
-}
-
-async function transcribe(uri: string): Promise<string> {
-  const formData = new FormData();
-  formData.append('file', { uri, type: 'audio/m4a', name: 'recording.m4a' } as any);
-
-  formData.append('model', 'whisper-1');
-
-  const response = await fetch(WHISPER_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Whisper error: ${err}`);
-  }
-
-  const data = await response.json();
-  return data.text ?? '';
 }

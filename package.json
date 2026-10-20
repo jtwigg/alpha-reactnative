@@ -6,7 +6,8 @@
     "build": "nx build",
     "lint": "nx lint",
     "test": "nx test",
-    "typecheck": "nx typecheck"
+    "typecheck": "nx run-many -t typecheck --all",
+    "export:web": "nx run reactnative:export:web"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@parcel/watcher", "esbuild", "nx"],

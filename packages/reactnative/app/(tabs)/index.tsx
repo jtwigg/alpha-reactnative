@@ -1,98 +1,185 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useAuth, useClerk, useUser } from '@clerk/expo';
+import { useMutation, useQuery } from 'convex/react';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { api } from '@/lib/api';
+import { isClerkConfigured } from '@/lib/convex';
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  if (!isClerkConfigured()) {
+    return null;
+  }
+  return <SignedInHome />;
+}
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
+function SignedInHome() {
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const { isSignedIn } = useAuth();
+  const greeting = useQuery(api.users.greeting);
+  const notes = useQuery(api.messages.list);
+  const sendNote = useMutation(api.messages.send);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await sendNote({ text });
+      setDraft('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save note');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  return (
+    <ThemedView style={styles.flex}>
+      <SafeAreaView style={styles.flex} edges={['top']}>
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <ThemedText type="title">{greeting ?? 'Home'}</ThemedText>
+            <ThemedText style={styles.muted}>
+              {user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? 'Signed in'}
+            </ThemedText>
+          </View>
+          {isSignedIn ? (
+            <Pressable style={styles.signOut} onPress={handleSignOut}>
+              <Text style={styles.signOutText}>Sign out</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <ThemedText style={styles.sectionTitle}>Private notes</ThemedText>
+        <ThemedText style={styles.muted}>
+          These Convex documents are scoped to your user. Other accounts cannot read them.
         </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+
+        <View style={styles.composer}>
+          <TextInput
+            style={styles.input}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Write a note…"
+            placeholderTextColor="#888"
+            editable={!saving}
+          />
+          <Pressable
+            style={[styles.save, (!draft.trim() || saving) && styles.disabled]}
+            onPress={handleSave}
+            disabled={!draft.trim() || saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.saveText}>Save</Text>
+            )}
+          </Pressable>
+        </View>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <FlatList
+          data={notes}
+          keyExtractor={(item) => item._id}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            notes === undefined ? (
+              <ActivityIndicator style={styles.empty} />
+            ) : (
+              <Text style={styles.empty}>No notes yet. Add one above.</Text>
+            )
+          }
+          renderItem={({ item }) => (
+            <View style={styles.note}>
+              <Text style={styles.noteText}>{item.text}</Text>
+            </View>
+          )}
+        />
+      </SafeAreaView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  flex: { flex: 1 },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
   },
-  stepContainer: {
+  headerText: { flex: 1, gap: 6 },
+  muted: { opacity: 0.7, marginHorizontal: 20, marginBottom: 12 },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  signOut: {
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  signOutText: { color: '#0a7ea4', fontWeight: '600' },
+  composer: {
+    flexDirection: 'row',
     gap: 8,
+    paddingHorizontal: 20,
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 16,
+    backgroundColor: '#f7f7f7',
   },
+  save: {
+    backgroundColor: '#0a7ea4',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  saveText: { color: '#fff', fontWeight: '600' },
+  disabled: { opacity: 0.4 },
+  error: { color: '#b42318', marginHorizontal: 20, marginBottom: 8 },
+  list: { paddingHorizontal: 20, paddingBottom: 24, gap: 8 },
+  note: {
+    backgroundColor: '#f3f3f3',
+    borderRadius: 12,
+    padding: 12,
+  },
+  noteText: { fontSize: 16, color: '#11181C' },
+  empty: { textAlign: 'center', color: '#888', marginTop: 32 },
 });

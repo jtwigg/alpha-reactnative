@@ -9,6 +9,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': '*',
 };
 
+function jsonResponse(body: unknown, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
+
 // Preflight for browser CORS requests (e.g. Expo Web)
 http.route({
   path: '/transcribe',
@@ -21,20 +28,24 @@ http.route({
 // Accepts a multipart/form-data POST with a single `file` field (audio).
 // Proxies it to OpenAI Whisper and returns { text: string }.
 // The OPENAI_API_KEY stays server-side — never exposed to the client.
+// Clients must send the Clerk Convex JWT: Authorization: Bearer <token>
 http.route({
   path: '/transcribe',
   method: 'POST',
-  handler: httpAction(async (_ctx, request) => {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'OPENAI_API_KEY not set' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-      });
+  handler: httpAction(async (ctx, request) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ error: 'Unauthorized' }, 401);
     }
 
-    // Forward the raw multipart body to Whisper, injecting the model field.
-    const formData = await request.formData();
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return jsonResponse({ error: 'OPENAI_API_KEY not set' }, 500);
+    }
+
+    // FormData typings differ between Convex (DOM) and Expo (RN). Use a
+    // structural any so both packages can typecheck this shared module.
+    const formData: any = await request.formData();
     if (!formData.has('model')) {
       formData.set('model', 'whisper-1');
     }

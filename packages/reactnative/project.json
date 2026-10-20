@@ -1,0 +1,23 @@
+{
+  "name": "reactnative",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/reactnative",
+  "projectType": "application",
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc --noEmit",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "export:web": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "expo export --platform web",
+        "cwd": "packages/reactnative"
+      }
+    }
+  },
+  "tags": []
+}
