@@ -1,6 +1,6 @@
 import { ClerkProvider, useAuth as useClerkAuth } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
-import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { type ReactNode } from 'react';
 
@@ -22,9 +22,21 @@ function useAuthForConvex() {
   };
 }
 
+function useUnauthenticatedConvexAuth() {
+  return {
+    isLoading: false,
+    isAuthenticated: false,
+    fetchAccessToken: async () => null,
+  };
+}
+
 export function AppProviders({ children }: { children: ReactNode }) {
   if (!isClerkConfigured()) {
-    return <ConvexProvider client={convex}>{children}</ConvexProvider>;
+    return (
+      <ConvexProviderWithAuth client={convex} useAuth={useUnauthenticatedConvexAuth}>
+        {children}
+      </ConvexProviderWithAuth>
+    );
   }
 
   return (
