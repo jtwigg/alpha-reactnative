@@ -12,27 +12,32 @@
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
       "ios": {
         "simulator": true
       },
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk"
       }
     },
     "preview": {
       "extends": "base",
       "distribution": "internal",
+      "channel": "preview",
       "ios": {
         "simulator": false
       },
       "env": {
-        "APP_ENV": "preview"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk"
       }
     },
     "production": {
       "extends": "base",
       "autoIncrement": true,
       "distribution": "store",
+      "channel": "production",
       "env": {
         "APP_ENV": "production"
       }

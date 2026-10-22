@@ -2,12 +2,15 @@
   "name": "rn-monorepo",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@10.33.4",
   "scripts": {
     "build": "nx build",
     "lint": "nx lint",
     "test": "nx test",
     "typecheck": "nx run-many -t typecheck --all",
-    "export:web": "nx run reactnative:export:web"
+    "export:web": "nx run reactnative:export:web",
+    "update:preview": "nx run reactnative:update:preview",
+    "update:production": "nx run reactnative:update:production"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@parcel/watcher", "esbuild", "nx"],

@@ -17,6 +17,20 @@
         "command": "expo export --platform web",
         "cwd": "packages/reactnative"
       }
+    },
+    "update:preview": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/eas-update.sh preview",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "update:production": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/eas-update.sh production",
+        "cwd": "packages/reactnative"
+      }
     }
   },
   "tags": []

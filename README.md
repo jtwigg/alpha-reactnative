@@ -1,44 +1,59 @@
 # John's App
 
-Personal NX + pnpm monorepo: an Expo app for **iOS and web**, with a **Convex** backend and **Clerk** authentication.
+Personal NX + pnpm monorepo. **iOS (Expo / React Native) is the main platform.** The web build is a secondary Expo static export that Vercel deploys. Ship JS and asset changes to iOS with **EAS Update** (no App Store review). Native changes still need a new EAS Build / store binary.
 
 ```
 /
-├── vercel.json              — Vercel import config (web export)
+├── vercel.json                 — Vercel import config (web only)
+├── .github/workflows/eas-update.yml — OTA to EAS Update (not web)
 ├── packages/
-│   ├── reactnative/         — Expo Router app (iOS + static web)
-│   │   ├── app.config.js    — bundle id, icons, splash, EAS project id
-│   │   ├── eas.json         — EAS Build + Submit profiles
-│   │   └── app/             — sign-in, sign-up, signed-in home + chat
-│   └── server/              — Convex schema and functions
-│       └── convex/
-│           ├── auth.config.ts
-│           ├── schema.ts    — users + per-user messages
-│           ├── users.ts     — store / current / greeting
-│           └── messages.ts  — authenticated list / send
+│   ├── reactnative/            — Expo Router app (iOS primary, web secondary)
+│   │   ├── app.config.js       — bundle id, runtimeVersion, updates.url
+│   │   ├── eas.json            — Build/Submit profiles + OTA channels
+│   │   └── app/                — sign-in, sign-up, signed-in home + chat
+│   └── server/                 — Convex schema and functions
 ```
 
 ## Why Clerk + Convex
 
-This repo uses **Clerk for login** and **Convex for data**, wired together with Clerk's Convex JWT template.
+This repo uses **one Clerk application** for login on **both iOS and web**, and **Convex** for data. The same `@clerk/expo` screens and `ConvexProviderWithClerk` wrap native and web. Do not add a second auth stack for web.
 
 | Option | Why not (for this app) |
 | --- | --- |
-| Convex Auth | Great when auth lives only in Convex, but email verification, native token storage, and the same UI on iOS + web are more work. OAuth on Expo needs extra deep-link setup. |
-| Clerk + Convex | **Chosen.** `@clerk/expo` is a first-party SDK for native iOS and Expo web. Convex officially validates Clerk JWTs (`auth.config.ts` + `ConvexProviderWithClerk`), so every query/mutation can call `ctx.auth.getUserIdentity()` and load **that user's** row. Email + password, verification codes, sign-out, and SecureStore session cache are production defaults. |
+| Convex Auth | Great when auth lives only in Convex, but email verification, native token storage, and the same UI on iOS + web are more work. |
+| Clerk + Convex | **Chosen.** `@clerk/expo` (current SDK generation, v4) works on native iOS and Expo web. Convex validates Clerk JWTs (`auth.config.ts` + `ConvexProviderWithClerk`). |
 
-Users can only read or write their own `messages`. Chat and Whisper HTTP routes reject unauthenticated requests. Whisper no longer ships an OpenAI key to the client.
+**John's Clerk app (already created, Expo selected): `app_3L3Yo0NESQ48He3AynMeLsx1HTA`.** Do **not** run `clerk init` and do **not** create another Clerk application. Link this repo and pull keys:
+
+```sh
+npx -y clerk@latest auth login
+clerk link --app app_3L3Yo0NESQ48He3AynMeLsx1HTA
+clerk env pull
+```
+
+If `clerk` is not on your PATH after login, prefix the last two commands with `npx -y clerk@latest`. That writes the publishable key into the env file Clerk detects (copy `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` into `packages/reactnative/.env.local` if it landed at the repo root).
+
+Also in the Clerk Dashboard: enable **email + password**, the **Native API**, and the **Convex** integration with a JWT template named `convex` (required — Convex will not accept Clerk tokens without it). The Frontend API URL / issuer for this app is `https://awaited-jennet-2760.clerk.accounts.dev`.
+
+Users can only read or write their own `messages`. Chat and Whisper HTTP routes reject unauthenticated requests.
 
 ## Accounts John has to create (manual)
 
 Nothing in this PR can finish these for you. Do them in this order:
 
-1. **Clerk** — [clerk.com/sign-up](https://clerk.com/sign-up). Create an application. Enable **email + password** (User & authentication). Enable the **Native API** (native applications). Enable the **Convex** integration (JWT template named `convex`). Copy the **Publishable Key** (`pk_test_…` / `pk_live_…`) and the **Frontend API URL** (`https://verb-noun-00.clerk.accounts.dev`).
-2. **Convex** — [dashboard.convex.dev](https://dashboard.convex.dev). This repo already has `packages/server/convex.json` pointing at team `john-twigg`. Log in with that account (or create a new project and replace `convex.json`). Copy the deployment URL (`https://….convex.cloud`). Create a **deploy key** (Settings → Deploy Key) if Vercel or CI should push functions.
-3. **Expo / EAS** — [expo.dev](https://expo.dev) account. Run `npx eas-cli login` and `npx eas-cli init` from `packages/reactnative` (this writes `extra.eas.projectId`).
-4. **Apple Developer Program** — paid membership. Needed for device/App Store builds and Submit. You will also create an App Store Connect app and paste its numeric **Apple ID** into `packages/reactnative/eas.json` → `submit.production.ios.ascAppId`.
-5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo** (`jtwigg/alpha-reactnative`). Root Directory = repo root (leave default). Vercel reads `vercel.json`.
-6. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
+1. **Clerk** — app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` already exists. Link it (commands above). Do not create a second app. Turn on the **Convex** integration / JWT template named `convex`.
+2. **Convex** — [dashboard.convex.dev](https://dashboard.convex.dev). This repo already has `packages/server/convex.json` pointing at team `john-twigg`. Copy the deployment URL (`https://….convex.cloud`). Set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **both** the development and production deployments. Create a **deploy key** if CI should push functions.
+3. **Expo / EAS** — [expo.dev](https://expo.dev) account. From `packages/reactnative`:
+   ```sh
+   npx eas-cli login
+   npx eas-cli init
+   npx eas-cli update:configure
+   ```
+   `update:configure` writes `runtimeVersion` / `updates.url` / `extra.eas.projectId` if they are still placeholders. Paste the project ID into `EAS_PROJECT_ID` (or `app.config.js`) so `updates.url` is `https://u.expo.dev/<project-id>`.
+4. **Apple Developer Program** — paid membership for device/App Store builds. Create an App Store Connect app and put its numeric Apple ID in `eas.json` → `submit.production.ios.ascAppId`.
+5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**.
+6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. Also add `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `EAS_PROJECT_ID` so the OTA JS bundle is built with production/preview keys.
+7. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
 
 Replace placeholder branding before a store submission: `com.example.johnsapp`, `assets/images/icon.png`, `splash-icon.png`, Android adaptive icons, and `favicon.png`.
 
@@ -58,49 +73,109 @@ pnpm convex login          # once
 pnpm convex dev            # syncs schema, auth.config.ts, and functions
 ```
 
-In another terminal, or from the Convex dashboard → Settings → Environment Variables, set:
-
 | Convex env var | Value |
 | --- | --- |
-| `CLERK_JWT_ISSUER_DOMAIN` | Clerk Frontend API URL, **no trailing slash** |
+| `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **both** Convex deployments. |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
 
-Use the **development** deployment for `convex dev` and the **production** deployment for `npx convex deploy`. Set the same names on both; production Clerk uses the `pk_live_` / production Frontend API URL.
+`packages/server/convex/auth.config.ts` defaults to that issuer and still honors `CLERK_JWT_ISSUER_DOMAIN` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
 
 ### 3. Expo env
 
-Copy `packages/reactnative/.env.example` to `packages/reactnative/.env.local`:
+Copy `packages/reactnative/.env.example` to `packages/reactnative/.env.local` (or use `clerk env pull` as above). The committed example already has John's public Clerk **dev** publishable key:
 
 ```
 EXPO_PUBLIC_CONVEX_URL=https://YOUR_DEPLOYMENT.convex.cloud
-EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_YOUR_KEY
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk
 ```
+
+The same `pk_test_` key is inlined on the EAS `development` and `preview` profiles in `eas.json`. Production builds should use a `pk_live_` value via an EAS secret.
 
 ### 4. Run
 
 ```sh
-# from repo root
-nx run server:dev              # Convex (if not already running)
-nx run reactnative:start       # Expo: press i (simulator) or w (web)
+nx run server:dev              # Convex
+nx run reactnative:start       # Expo: press i (iOS) or w (web)
 ```
 
-Sign up with email/password, enter the Clerk verification code, and you should land on the signed-in home screen. Sign out is on that screen.
+Sign up with email/password, enter the Clerk verification code, and you land on the signed-in home screen. Sign-out is on that screen. The same Clerk session code path runs on iOS and web.
 
-### NX commands
+### NX / pnpm commands
 
 ```sh
 pnpm typecheck                 # tsc for server + app
 pnpm export:web                # Expo static web → packages/reactnative/dist
+pnpm update:preview            # eas update --channel preview
+pnpm update:production         # eas update --channel production
 nx run reactnative:start
-nx run reactnative:export:web
-nx run server:dev
 nx run server:deploy           # production Convex
-nx run server:typecheck
 ```
+
+Pass a custom OTA message: `pnpm --filter @rn-monorepo/reactnative update:preview -- "fix home layout"`.
+
+## Over-the-air updates (iOS)
+
+iOS binaries install **expo-updates**. On launch they ask EAS for a JS bundle on their **channel**. Web does **not** use OTA; Vercel rebuilds the static export on git push.
+
+### runtimeVersion: `appVersion`
+
+`app.config.js` sets `"runtimeVersion": { "policy": "appVersion" }`. The native binary and every OTA update must share `expo.version` (currently `1.0.0`).
+
+**Why not fingerprint:** fingerprint hashes native files at build time. GitHub Actions runs on Linux; EAS iOS builds run on macOS. Those hashes can disagree, so a perfectly compatible JS update would never install. `appVersion` is the same string everywhere. When you change native code, bump `version` in `app.config.js` and cut a new iOS build.
+
+### Channels (mapped to `eas.json` profiles)
+
+| Build profile | `channel` | Who gets OTA |
+| --- | --- | --- |
+| `development` | `development` | Dev-client / simulator builds |
+| `preview` | `preview` | Internal / TestFlight-style binaries |
+| `production` | `production` | App Store binaries |
+
+`updates.url` is `https://u.expo.dev/<EAS_PROJECT_ID>`.
+
+### JS-only vs native (when you need a store build)
+
+**OTA is enough** (keep `version` as-is, `pnpm update:preview` / `update:production` or push to `main`):
+
+- Screen layout, copy, styles
+- Clerk/Convex JS (`app/`, `providers/`, `convex/*.ts` that is not a native module)
+- Images loaded as JS assets (not the iOS app icon / splash used by the binary)
+
+**New EAS Build + App Store / TestFlight binary** (bump `version`, then `eas build`):
+
+- New native dependency (`expo install` of a module with native code)
+- Expo SDK upgrade
+- Changes to `app.config.js` plugins, permissions, bundle id, icons, splash
+- `ios/` / `android/` native files (this repo is CNG; those folders are generated at build time)
+- `newArchEnabled` or other runtime flags
+
+Incompatible OTAs are avoided by bumping `version` whenever native changes. A `1.0.1` update will not load on a `1.0.0` binary.
+
+### Publish locally
+
+```sh
+cd packages/reactnative
+npx eas-cli update:configure          # once, after eas init
+pnpm update:preview                   # or: pnpm update:production
+```
+
+Preview/production release builds download the update in the background and apply it after a second launch. Dev clients can load a specific update from the Extensions tab.
+
+### GitHub Actions
+
+`.github/workflows/eas-update.yml`:
+
+| Trigger | Channel |
+| --- | --- |
+| Push to `main` | `preview` |
+| Git tag `v*` (e.g. `v1.0.1`) | `production` |
+| Actions → Run workflow | you pick `preview` or `production` |
+
+Vercel is unchanged: it still builds web from `vercel.json`. The workflow never runs `expo export --platform web`.
 
 ## Web / Vercel
 
-`packages/reactnative/app.config.js` sets `web.output` to `"static"`. The production web build is Expo's static export (not Next.js).
+`packages/reactnative/app.config.js` sets `web.output` to `"static"`.
 
 | Vercel setting | Value |
 | --- | --- |
@@ -110,82 +185,52 @@ nx run server:typecheck
 | Output directory | `packages/reactnative/dist` |
 | Root Directory | repository root |
 
-**Vercel environment variables** (Production and Preview):
+**Vercel env vars:** `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
 
-| Name | Notes |
-| --- | --- |
-| `EXPO_PUBLIC_CONVEX_URL` | **Production** Convex URL (`https://….convex.cloud`) |
-| `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk `pk_live_…` in Production; `pk_test_…` is fine for Preview |
+In Clerk, add the Vercel URL (and `http://localhost:8081`) under allowed origins / redirect URLs.
 
-Optional: also deploy Convex from Vercel by wrapping the build:
-
-```sh
-cd packages/server && npx convex deploy --cmd 'cd ../reactnative && npx expo export --platform web' --cmd-url-env-name EXPO_PUBLIC_CONVEX_URL
-```
-
-That needs `CONVEX_DEPLOY_KEY` on Vercel. Otherwise run `nx run server:deploy` yourself whenever backend code changes.
-
-In Clerk, add the Vercel URL (and `http://localhost:8081`) under **Allowed origins / redirect URLs**.
-
-## App Store / EAS
+## App Store / EAS Build
 
 From `packages/reactnative`:
 
 ```sh
 npx eas-cli login
-npx eas-cli init                 # fills extra.eas.projectId
+npx eas-cli init
+npx eas-cli update:configure
 npx eas-cli build --profile development --platform ios
 npx eas-cli build --profile preview --platform ios
 npx eas-cli build --profile production --platform ios
 npx eas-cli submit --profile production --platform ios
 ```
 
-Profiles in `eas.json`:
-
-| Profile | What it is |
-| --- | --- |
-| `development` | Dev client, internal, iOS Simulator |
-| `preview` | Internal distribution (TestFlight-style / ad hoc) |
-| `production` | Store build, `autoIncrement` via remote app version |
-
-Set these as **EAS secrets** (they are inlined at build time). Do not put secrets in `eas.json`.
+Set **EAS secrets** for values inlined at native build time (do not put them in `eas.json`):
 
 ```sh
 npx eas-cli secret:create --name EXPO_PUBLIC_CONVEX_URL --value https://YOUR_PROD.convex.cloud
 npx eas-cli secret:create --name EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY --value pk_live_YOUR_KEY
 ```
 
-Optional identifier overrides: `IOS_BUNDLE_IDENTIFIER`, `ANDROID_PACKAGE`, `EAS_PROJECT_ID`, `EXPO_OWNER`.
-
-Before the first production iOS build:
-
-1. Paid **Apple Developer** membership.
-2. Change `com.example.johnsapp` in `app.config.js` (or set `IOS_BUNDLE_IDENTIFIER`) to an id you own.
-3. Replace placeholder icon / splash images.
-4. In Clerk, add the iOS bundle identifier on the **Native applications** page.
-5. Put the App Store Connect app id in `eas.json` → `submit.production.ios.ascAppId`.
-6. Register the bundle id and signing via `npx eas-cli credentials` (EAS can manage certs and profiles).
-
-`expo-dev-client` is installed so the `development` profile can produce a development build.
+GitHub Actions needs the same `EXPO_PUBLIC_*` values as repository secrets so OTA bundles match the binary.
 
 ## Manual checklist (cannot be done in this PR)
 
-- [ ] Create Clerk app; enable email+password, Native API, Convex JWT template
-- [ ] Copy Clerk publishable key + Frontend API URL
-- [ ] Log into Convex; set `CLERK_JWT_ISSUER_DOMAIN` (dev and prod)
-- [ ] Optional: Convex `OPENAI_API_KEY`, `CONVEX_DEPLOY_KEY`
+- [ ] Link Clerk app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` (`npx -y clerk@latest auth login` then `clerk link --app app_3L3Yo0NESQ48He3AynMeLsx1HTA` + `clerk env pull`). Do not `clerk init`.
+- [ ] Enable email+password, Native API, and the **Convex** integration / JWT template named `convex` in that Clerk app
+- [ ] Log into Convex; set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **dev and prod** deployments
 - [ ] Fill `packages/reactnative/.env.local`
-- [ ] Create Expo account; `eas-cli login` + `eas-cli init`
-- [ ] Enroll in Apple Developer; create App Store Connect app; set bundle id + `ascAppId`
+- [ ] Expo account; `eas-cli login` + `eas-cli init` + **`eas-cli update:configure`**
+- [ ] Put EAS project ID in `EAS_PROJECT_ID` so `updates.url` is real
+- [ ] GitHub secret **`EXPO_TOKEN`**, plus `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, `EAS_PROJECT_ID`
+- [ ] Apple Developer; App Store Connect app; bundle id + `ascAppId`
 - [ ] Replace icon/splash placeholders
-- [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_*` env vars
+- [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_*` (web only)
 - [ ] Add Vercel and native origins in the Clerk dashboard
-- [ ] Run a production Convex deploy (`nx run server:deploy`) before pointing the web app at prod
+- [ ] `nx run server:deploy` before pointing clients at prod Convex
 
 ## Auth model
 
-1. Expo wraps the tree in `ClerkProvider` + `ConvexProviderWithClerk`.
+1. Expo wraps the tree in `ClerkProvider` + `ConvexProviderWithClerk` on iOS and web.
 2. After Clerk has a session, Convex fetches the `convex` JWT.
 3. `users.store` upserts `{ tokenIdentifier, name, email }` so data can foreign-key `users._id`.
-4. `messages.list` / `messages.send` load the current user and index by `userId`. Unauthenticated callers throw.
-5. Sign-in, sign-up (email verification code), and sign-out are first-class screens.
+4. `messages.list` / `messages.send` load the current user and index by `userId`.
+5. Sign-in, sign-up (email verification code), and sign-out are the same screens on both platforms.

@@ -1,5 +1,7 @@
 const bundleIdentifier = process.env.IOS_BUNDLE_IDENTIFIER ?? 'com.example.johnsapp';
 const androidPackage = process.env.ANDROID_PACKAGE ?? 'com.example.johnsapp';
+// Filled by `eas init` / `eas update:configure`, or set EAS_PROJECT_ID.
+const projectId = process.env.EAS_PROJECT_ID;
 
 module.exports = ({ config }) => ({
   ...config,
@@ -11,6 +13,21 @@ module.exports = ({ config }) => ({
   scheme: 'johnsapp',
   userInterfaceStyle: 'automatic',
   newArchEnabled: true,
+  // appVersion: runtimeVersion === expo.version. JS-only OTA stays on the same
+  // binary; bump version (and cut a new iOS build) when native code changes.
+  // Prefer this over fingerprint so GitHub Actions (Linux) and EAS iOS builders
+  // cannot disagree on the hash.
+  runtimeVersion: {
+    policy: 'appVersion',
+  },
+  updates: {
+    url: projectId
+      ? `https://u.expo.dev/${projectId}`
+      : 'https://u.expo.dev/00000000-0000-0000-0000-000000000000',
+    enabled: true,
+    checkAutomatically: 'ON_LOAD',
+    fallbackToCacheTimeout: 0,
+  },
   ios: {
     supportsTablet: true,
     bundleIdentifier,
@@ -40,6 +57,7 @@ module.exports = ({ config }) => ({
     'expo-router',
     'expo-secure-store',
     '@clerk/expo',
+    'expo-updates',
     [
       'expo-splash-screen',
       {
@@ -62,7 +80,7 @@ module.exports = ({ config }) => ({
       origin: false,
     },
     eas: {
-      projectId: process.env.EAS_PROJECT_ID,
+      projectId,
     },
   },
   ...(process.env.EXPO_OWNER ? { owner: process.env.EXPO_OWNER } : {}),
