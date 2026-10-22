@@ -42,7 +42,7 @@ Users can only read or write their own `messages`. Chat and Whisper HTTP routes 
 Nothing in this PR can finish these for you. Do them in this order:
 
 1. **Clerk** — app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` already exists. Link it (commands above). Do not create a second app. The **Convex** integration is on; that is enough. Confirm Sessions → Claims includes `aud` = `convex`. Do **not** add a JWT template.
-2. **Convex** — [dashboard.convex.dev](https://dashboard.convex.dev). This repo already has `packages/server/convex.json` pointing at team `john-twigg`. Copy the deployment URL (`https://….convex.cloud`). Set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **both** the development and production deployments. Create a **deploy key** if CI should push functions.
+2. **Convex** — project **alpha** on team `john-twigg` already exists. Dev deployment is `CONVEX_DEPLOYMENT=dev:posh-mink-581` (`https://posh-mink-581.convex.cloud`). On that deployment (Dashboard → Settings → Environment Variables) set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev`. Create a **deploy key** if CI should push functions.
 3. **Expo / EAS** — [expo.dev](https://expo.dev) account. From `packages/reactnative`:
    ```sh
    npx eas-cli login
@@ -52,7 +52,7 @@ Nothing in this PR can finish these for you. Do them in this order:
    `update:configure` writes `runtimeVersion` / `updates.url` / `extra.eas.projectId` if they are still placeholders. Paste the project ID into `EAS_PROJECT_ID` (or `app.config.js`) so `updates.url` is `https://u.expo.dev/<project-id>`.
 4. **Apple Developer Program** — paid membership is required for TestFlight. In App Store Connect, create an **app record** (needed so TestFlight has a place to land; do not fill a public store listing or submit for App Store review). Paste the numeric Apple ID into `eas.json` → `submit.production.ios.ascAppId`.
 5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**.
-6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. Also add `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `EAS_PROJECT_ID` so OTA JS for TestFlight (`production` channel) and preview is built with the right keys.
+6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. Also add `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (the committed `pk_test_`), and `EAS_PROJECT_ID` so OTA JS for TestFlight (`production` channel) and preview is built with the right keys.
 7. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
 
 Replace placeholder branding before the first TestFlight build: `com.example.johnsapp`, `assets/images/icon.png`, `splash-icon.png`, and `favicon.png`.
@@ -69,27 +69,30 @@ pnpm install
 
 ```sh
 cd packages/server
+# CONVEX_DEPLOYMENT=dev:posh-mink-581  (team john-twigg, project alpha)
 pnpm convex login          # once
 pnpm convex dev            # syncs schema, auth.config.ts, and functions
 ```
 
+`packages/server/.env.example` already has `CONVEX_DEPLOYMENT=dev:posh-mink-581`. Copy it to `packages/server/.env.local` if the CLI has not written that file yet.
+
 | Convex env var | Value |
 | --- | --- |
-| `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **both** Convex deployments. |
+| `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **dev:posh-mink-581** (and on production later). |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
 
 `packages/server/convex/auth.config.ts` defaults to that issuer (`applicationID: "convex"` matches the session token `aud`) and still honors `CLERK_JWT_ISSUER_DOMAIN` / `CLERK_FRONTEND_API_URL` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
 
 ### 3. Expo env
 
-Copy `packages/reactnative/.env.example` to `packages/reactnative/.env.local` (or use `clerk env pull` as above). The committed example already has John's public Clerk **dev** publishable key:
+Copy `packages/reactnative/.env.example` to `packages/reactnative/.env.local` (or use `clerk env pull` as above). The committed example already has John's public Convex **dev** URL and Clerk **dev** publishable key:
 
 ```
-EXPO_PUBLIC_CONVEX_URL=https://YOUR_DEPLOYMENT.convex.cloud
+EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk
 ```
 
-The same `pk_test_` key is inlined on the EAS `development` and `preview` profiles in `eas.json`. Production builds should use a `pk_live_` value via an EAS secret.
+The same values are inlined on the EAS `development` and `preview` profiles in `eas.json`. Production / TestFlight builds should override via EAS secrets if you later use a prod Convex deployment or `pk_live_` Clerk keys.
 
 ### 4. Run
 
@@ -186,7 +189,12 @@ Vercel is unchanged: it still builds web from `vercel.json`. The workflow never 
 | Output directory | `packages/reactnative/dist` |
 | Root Directory | repository root |
 
-**Vercel env vars:** `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
+**Vercel env vars** (same public dev values until you have a prod Convex deployment):
+
+| Name | Value |
+| --- | --- |
+| `EXPO_PUBLIC_CONVEX_URL` | `https://posh-mink-581.convex.cloud` |
+| `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk` |
 
 In Clerk, add the Vercel URL (and `http://localhost:8081`) under allowed origins / redirect URLs.
 
@@ -209,7 +217,7 @@ That runs `eas build --profile production --platform ios --auto-submit`: EAS bui
 Set **EAS secrets** for values baked into the TestFlight binary (do not put production secrets in `eas.json`):
 
 ```sh
-npx eas-cli secret:create --name EXPO_PUBLIC_CONVEX_URL --value https://YOUR_PROD.convex.cloud
+npx eas-cli secret:create --name EXPO_PUBLIC_CONVEX_URL --value https://posh-mink-581.convex.cloud
 npx eas-cli secret:create --name EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY --value pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk
 ```
 
@@ -251,16 +259,16 @@ npx eas-cli submit --profile production --platform ios --latest
 
 - [ ] Link Clerk app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` (`npx -y clerk@latest auth login` then `clerk link --app app_3L3Yo0NESQ48He3AynMeLsx1HTA` + `clerk env pull`). Do not `clerk init`.
 - [ ] Enable email+password, Native API, and the **Convex** integration (session token `aud: convex`). Do **not** create a JWT template named `convex`
-- [ ] Log into Convex; set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **dev and prod** deployments
+- [ ] Convex project **alpha** / `CONVEX_DEPLOYMENT=dev:posh-mink-581`; set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on that deployment
 - [ ] Fill `packages/reactnative/.env.local`
 - [ ] Expo account; `eas-cli login` + `eas-cli init` + **`eas-cli update:configure`**
 - [ ] Put EAS project ID in `EAS_PROJECT_ID` so `updates.url` is real
-- [ ] GitHub secret **`EXPO_TOKEN`**, plus `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, `EAS_PROJECT_ID`
+- [ ] GitHub secret **`EXPO_TOKEN`**, plus `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, `EAS_PROJECT_ID`
 - [ ] Apple Developer; App Store Connect **app record** for TestFlight (no public listing); bundle id + `ascAppId`
 - [ ] `pnpm ios:testflight`; add ~5 family testers as an **external** TestFlight group; fill TestFlight test information
 - [ ] Do **not** submit for App Store review
 - [ ] Replace icon/splash placeholders before the first TestFlight build
-- [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_*` (web only)
+- [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud` and the Clerk `pk_test_` key (web only)
 - [ ] Add Vercel and native origins in the Clerk dashboard
 - [ ] `nx run server:deploy` before pointing clients at prod Convex
 
