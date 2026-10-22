@@ -31,6 +31,13 @@
         "command": "bash ./scripts/eas-update.sh production",
         "cwd": "packages/reactnative"
       }
+    },
+    "ios:testflight": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/ios-testflight.sh",
+        "cwd": "packages/reactnative"
+      }
     }
   },
   "tags": []

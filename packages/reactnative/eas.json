@@ -45,9 +45,8 @@
   },
   "submit": {
     "production": {
-      "ios": {},
-      "android": {
-        "track": "internal"
+      "ios": {
+        "language": "en-US"
       }
     }
   }

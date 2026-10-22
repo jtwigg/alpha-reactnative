@@ -1,4 +1,5 @@
 # Publishes a JS/asset OTA update to EAS Update.
+# The production channel is for TestFlight binaries (no public App Store listing).
 # Web deploys stay on Vercel (vercel.json). This workflow never builds or ships web.
 name: EAS Update
 

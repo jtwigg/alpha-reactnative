@@ -10,7 +10,8 @@
     "typecheck": "nx run-many -t typecheck --all",
     "export:web": "nx run reactnative:export:web",
     "update:preview": "nx run reactnative:update:preview",
-    "update:production": "nx run reactnative:update:production"
+    "update:production": "nx run reactnative:update:production",
+    "ios:testflight": "nx run reactnative:ios:testflight"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@parcel/watcher", "esbuild", "nx"],
