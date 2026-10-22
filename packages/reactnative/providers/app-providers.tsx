@@ -9,15 +9,19 @@ import { getConvexCloudUrl, isClerkConfigured } from '@/lib/convex';
 const convex = new ConvexReactClient(getConvexCloudUrl());
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '';
 
+// Clerk v4's useAuth() is a broader type than ConvexProviderWithClerk expects.
+// Forward getToken options as-is so Convex can request the default session
+// token (no `template`) when Clerk's Convex integration set aud: "convex".
 function useAuthForConvex() {
   const auth = useClerkAuth();
   return {
     isLoaded: auth.isLoaded,
     isSignedIn: auth.isSignedIn,
-    getToken: (options: { template?: 'convex'; skipCache?: boolean }) =>
-      auth.getToken({ template: options.template, skipCache: options.skipCache }),
+    getToken: (options?: { template?: 'convex'; skipCache?: boolean }) =>
+      auth.getToken(options),
     orgId: auth.orgId,
     orgRole: auth.orgRole,
+    sessionId: auth.sessionId,
     sessionClaims: auth.sessionClaims as Record<string, unknown> | null | undefined,
   };
 }

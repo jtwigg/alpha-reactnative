@@ -33,7 +33,7 @@ clerk env pull
 
 If `clerk` is not on your PATH after login, prefix the last two commands with `npx -y clerk@latest`. That writes the publishable key into the env file Clerk detects (copy `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` into `packages/reactnative/.env.local` if it landed at the repo root).
 
-Also in the Clerk Dashboard: enable **email + password**, the **Native API**, and the **Convex** integration with a JWT template named `convex` (required — Convex will not accept Clerk tokens without it). The Frontend API URL / issuer for this app is `https://awaited-jennet-2760.clerk.accounts.dev`.
+Also in the Clerk Dashboard: enable **email + password**, the **Native API**, and the **Convex** integration (John already turned this on). **Do not create a JWT template named `convex`.** Today's Clerk–Convex integration puts `aud: "convex"` on the **default session token** (Dashboard → Sessions → Claims). That audience is what `auth.config.ts` `applicationID: "convex"` matches. No template will show up under JWT templates — that is expected. The Frontend API URL / issuer for this app is `https://awaited-jennet-2760.clerk.accounts.dev`.
 
 Users can only read or write their own `messages`. Chat and Whisper HTTP routes reject unauthenticated requests.
 
@@ -41,7 +41,7 @@ Users can only read or write their own `messages`. Chat and Whisper HTTP routes 
 
 Nothing in this PR can finish these for you. Do them in this order:
 
-1. **Clerk** — app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` already exists. Link it (commands above). Do not create a second app. Turn on the **Convex** integration / JWT template named `convex`.
+1. **Clerk** — app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` already exists. Link it (commands above). Do not create a second app. The **Convex** integration is on; that is enough. Confirm Sessions → Claims includes `aud` = `convex`. Do **not** add a JWT template.
 2. **Convex** — [dashboard.convex.dev](https://dashboard.convex.dev). This repo already has `packages/server/convex.json` pointing at team `john-twigg`. Copy the deployment URL (`https://….convex.cloud`). Set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **both** the development and production deployments. Create a **deploy key** if CI should push functions.
 3. **Expo / EAS** — [expo.dev](https://expo.dev) account. From `packages/reactnative`:
    ```sh
@@ -78,7 +78,7 @@ pnpm convex dev            # syncs schema, auth.config.ts, and functions
 | `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **both** Convex deployments. |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
 
-`packages/server/convex/auth.config.ts` defaults to that issuer and still honors `CLERK_JWT_ISSUER_DOMAIN` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
+`packages/server/convex/auth.config.ts` defaults to that issuer (`applicationID: "convex"` matches the session token `aud`) and still honors `CLERK_JWT_ISSUER_DOMAIN` / `CLERK_FRONTEND_API_URL` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
 
 ### 3. Expo env
 
@@ -250,7 +250,7 @@ npx eas-cli submit --profile production --platform ios --latest
 ## Manual checklist (cannot be done in this PR)
 
 - [ ] Link Clerk app `app_3L3Yo0NESQ48He3AynMeLsx1HTA` (`npx -y clerk@latest auth login` then `clerk link --app app_3L3Yo0NESQ48He3AynMeLsx1HTA` + `clerk env pull`). Do not `clerk init`.
-- [ ] Enable email+password, Native API, and the **Convex** integration / JWT template named `convex` in that Clerk app
+- [ ] Enable email+password, Native API, and the **Convex** integration (session token `aud: convex`). Do **not** create a JWT template named `convex`
 - [ ] Log into Convex; set `CLERK_JWT_ISSUER_DOMAIN=https://awaited-jennet-2760.clerk.accounts.dev` on **dev and prod** deployments
 - [ ] Fill `packages/reactnative/.env.local`
 - [ ] Expo account; `eas-cli login` + `eas-cli init` + **`eas-cli update:configure`**
@@ -267,7 +267,7 @@ npx eas-cli submit --profile production --platform ios --latest
 ## Auth model
 
 1. Expo wraps the tree in `ClerkProvider` + `ConvexProviderWithClerk` on iOS and web.
-2. After Clerk has a session, Convex fetches the `convex` JWT.
+2. After Clerk has a session, ConvexProviderWithClerk sees `sessionClaims.aud === "convex"` and calls `getToken()` **without** a JWT template (the default session token). Whisper HTTP uses the same helper.
 3. `users.store` upserts `{ tokenIdentifier, name, email }` so data can foreign-key `users._id`.
 4. `messages.list` / `messages.send` load the current user and index by `userId`.
 5. Sign-in, sign-up (email verification code), and sign-out are the same screens on both platforms.

@@ -2,10 +2,11 @@ import { useAuth } from '@clerk/expo';
 import { Audio } from 'expo-av';
 import { useState } from 'react';
 
+import { getConvexAccessToken } from '@/lib/convex';
 import { transcribeAudio } from '@/lib/transcribe';
 
 export function useWhisper() {
-  const { getToken } = useAuth();
+  const { getToken, sessionClaims } = useAuth();
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -39,7 +40,7 @@ export function useWhisper() {
 
     setIsTranscribing(true);
     try {
-      const token = await getToken({ template: 'convex' });
+      const token = await getConvexAccessToken(getToken, sessionClaims);
       return await transcribeAudio(
         { uri, type: 'audio/m4a', name: 'recording.m4a' },
         token,
