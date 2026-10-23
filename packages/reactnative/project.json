@@ -1,0 +1,44 @@
+{
+  "name": "reactnative",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/reactnative",
+  "projectType": "application",
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc --noEmit",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "export:web": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "expo export --platform web",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "update:preview": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/eas-update.sh preview",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "update:production": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/eas-update.sh production",
+        "cwd": "packages/reactnative"
+      }
+    },
+    "ios:testflight": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash ./scripts/ios-testflight.sh",
+        "cwd": "packages/reactnative"
+      }
+    }
+  },
+  "tags": []
+}

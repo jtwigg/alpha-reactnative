@@ -12,7 +12,12 @@ export const send = action({
   args: {
     messages: v.array(messageArg),
   },
-  handler: async (_ctx, { messages }) => {
+  handler: async (ctx, { messages }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error('Not authenticated');
+    }
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
 

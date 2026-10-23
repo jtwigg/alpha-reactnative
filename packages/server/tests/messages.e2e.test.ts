@@ -10,31 +10,22 @@ describe('messages (e2e)', () => {
     client = new ConvexHttpClient(url);
   });
 
-  it('lists messages', async () => {
-    const messages = await client.query(api.messages.list);
-    expect(Array.isArray(messages)).toBe(true);
+  it('rejects unauthenticated list', async () => {
+    await expect(client.query(api.messages.list)).rejects.toThrow();
   });
 
-  it('sends a message and finds it in the list', async () => {
-    const uniqueText = `e2e-${Date.now()}`;
-    await client.mutation(api.messages.send, { text: uniqueText, author: 'e2e' });
-    const messages = await client.query(api.messages.list);
-    const found = messages.find((m) => m.text === uniqueText);
-    expect(found).toBeDefined();
-    expect(found?.author).toBe('e2e');
+  it('rejects unauthenticated send', async () => {
+    await expect(
+      client.mutation(api.messages.send, { text: `e2e-${Date.now()}` }),
+    ).rejects.toThrow();
   });
 
-  it('getHello returns a non-empty string', async () => {
-    const result = await client.query(api.messages.getHello);
-    expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
+  it('rejects unauthenticated users.current as null or throw', async () => {
+    const result = await client.query(api.users.current);
+    expect(result).toBeNull();
   });
 
-  it('seed is idempotent', async () => {
-    await client.mutation(api.messages.seed);
-    await client.mutation(api.messages.seed);
-    const messages = await client.query(api.messages.list);
-    const seeds = messages.filter((m) => m.text === 'Hello, World!' && m.author === 'system');
-    expect(seeds.length).toBeLessThanOrEqual(1);
+  it('rejects unauthenticated greeting', async () => {
+    await expect(client.query(api.users.greeting)).rejects.toThrow();
   });
 });

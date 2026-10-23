@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm --filter @rn-monorepo/reactnative export:web",
+  "outputDirectory": "packages/reactnative/dist"
+}

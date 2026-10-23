@@ -12,9 +12,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChatInput } from '@/components/chat/chat-input';
 import { Message, MessageBubble } from '@/components/chat/message-bubble';
-import { api } from '../../../server/convex/_generated/api';
+import { api } from '@/lib/api';
+import { isClerkConfigured } from '@/lib/convex';
 
 export default function ChatScreen() {
+  if (!isClerkConfigured()) {
+    return null;
+  }
+  return <SignedInChat />;
+}
+
+function SignedInChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const listRef = useRef<FlatList>(null);
@@ -28,16 +36,20 @@ export default function ChatScreen() {
 
     try {
       const reply = await sendMessage({
-        messages: next.map(m => ({ role: m.role, content: m.content })),
+        messages: next.map((m) => ({ role: m.role, content: m.content })),
       });
-      setMessages(prev => [
+      setMessages((prev) => [
         ...prev,
         { id: (Date.now() + 1).toString(), role: 'assistant', content: reply },
       ]);
     } catch {
-      setMessages(prev => [
+      setMessages((prev) => [
         ...prev,
-        { id: (Date.now() + 1).toString(), role: 'assistant', content: '⚠️ Something went wrong.' },
+        {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: '⚠️ Something went wrong.',
+        },
       ]);
     } finally {
       setIsLoading(false);
@@ -58,7 +70,7 @@ export default function ChatScreen() {
         <FlatList
           ref={listRef}
           data={messages}
-          keyExtractor={m => m.id}
+          keyExtractor={(m) => m.id}
           renderItem={({ item }) => <MessageBubble message={item} />}
           contentContainerStyle={styles.list}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}

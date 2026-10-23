@@ -1,9 +1,11 @@
+import { useAuth } from '@clerk/expo';
 import { useRef, useState } from 'react';
 
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? '';
-const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
+import { getConvexAccessToken } from '@/lib/convex';
+import { transcribeAudio } from '@/lib/transcribe';
 
 export function useWhisper() {
+  const { getToken, sessionClaims } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -22,7 +24,7 @@ export function useWhisper() {
     };
 
     mediaRecorderRef.current = mediaRecorder;
-    mediaRecorder.start(100); // flush chunks every 100ms so the start isn't dropped
+    mediaRecorder.start(100);
     setIsRecording(true);
   };
 
@@ -44,45 +46,14 @@ export function useWhisper() {
     mediaRecorderRef.current = null;
     chunksRef.current = [];
 
-    debugDownload(blob);
-
     setIsTranscribing(true);
     try {
-      return await transcribe(blob);
+      const token = await getConvexAccessToken(getToken, sessionClaims);
+      return await transcribeAudio(blob, token);
     } finally {
       setIsTranscribing(false);
     }
   };
 
   return { startRecording, stopRecording, isRecording, isTranscribing, isAvailable };
-}
-
-function debugDownload(blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `recording-${Date.now()}.webm`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function transcribe(blob: Blob): Promise<string> {
-  const formData = new FormData();
-  formData.append('file', blob, 'recording.webm');
-
-  formData.append('model', 'whisper-1');
-
-  const response = await fetch(WHISPER_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Whisper error: ${err}`);
-  }
-
-  const data = await response.json();
-  return data.text ?? '';
 }

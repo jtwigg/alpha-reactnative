@@ -1,50 +1,38 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
+import { getCurrentUserOrThrow } from './users';
 
-// Returns the text of the first seeded hello world message,
-// or a default string if none exist yet.
-export const getHello = query({
-  args: {},
-  handler: async (ctx) => {
-    const message = await ctx.db.query('messages').order('asc').first();
-    return message?.text ?? 'Hello, World!';
-  },
-});
+const MAX_MESSAGES = 50;
 
-// Lists all messages ordered by creation time.
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query('messages').order('asc').collect();
+    const user = await getCurrentUserOrThrow(ctx);
+    return await ctx.db
+      .query('messages')
+      .withIndex('by_user', (q) => q.eq('userId', user._id))
+      .order('desc')
+      .take(MAX_MESSAGES);
   },
 });
 
-// Inserts a new message.
 export const send = mutation({
   args: {
     text: v.string(),
-    author: v.string(),
   },
-  handler: async (ctx, { text, author }) => {
-    await ctx.db.insert('messages', {
-      text,
-      author,
+  handler: async (ctx, { text }) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new Error('Message text is required');
+    }
+    if (trimmed.length > 4000) {
+      throw new Error('Message is too long');
+    }
+    return await ctx.db.insert('messages', {
+      userId: user._id,
+      text: trimmed,
       createdAt: Date.now(),
     });
-  },
-});
-
-// Seeds a "Hello, World!" message — run once via the Convex dashboard or CLI.
-export const seed = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const existing = await ctx.db.query('messages').first();
-    if (!existing) {
-      await ctx.db.insert('messages', {
-        text: 'Hello, World!',
-        author: 'system',
-        createdAt: Date.now(),
-      });
-    }
   },
 });
