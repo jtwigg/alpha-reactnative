@@ -4,8 +4,10 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
 import { LegendChip } from '@/components/finance/legend-chip';
+import { Reveal } from '@/components/finance/reveal';
 import { FText, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { axisDateLabel, formatCompactUsd, niceTicks, spanInDays } from '@/lib/chart-math';
+import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import { useSeriesHighlight, type SeriesHighlight } from '@/hooks/use-series-highlight';
 import { seriesOpacity } from '@/lib/series-highlight';
@@ -22,7 +24,6 @@ import {
 const PAD = { top: 8, right: 58, bottom: 26, left: 2 };
 const TOOLTIP_MAX_ROWS = 6;
 const LEGEND_SIDE_MIN_WIDTH = 720;
-const LOANS_COLOR = '#c2410c';
 
 type Geometry = {
   ticks: number[];
@@ -61,6 +62,7 @@ export function StackedChart({
   netLabel: string;
 }) {
   const palette = useFinancePalette();
+  const colors = useChartColors();
   const { width: screenWidth } = useWindowDimensions();
   const sideLegend = screenWidth >= LEGEND_SIDE_MIN_WIDTH;
   const [width, setWidth] = useState(0);
@@ -148,7 +150,7 @@ export function StackedChart({
       rows.push({
         key: activeIsLoan && active ? active : '__loans',
         label: normalized ? 'Loans (of gross)' : 'Loans',
-        color: LOANS_COLOR,
+        color: colors.groups.liability,
         value: normalized ? formatShare(loanShare(model, index)) : formatUsd(-owed),
         detail: normalized ? formatUsd(-owed) : formatShare(loanShare(model, index)),
       });
@@ -201,7 +203,12 @@ export function StackedChart({
               ]}
             />
           ) : null}
-          <Bars model={display} geometry={geometry} active={active} />
+          <Reveal
+            token={`${dates[0]}|${dates[count - 1]}|${count}|${mode}|${seriesSignature}`}
+            width={width}
+            height={height}>
+            <Bars model={display} geometry={geometry} active={active} />
+          </Reveal>
           {hairX != null && !normalized ? (
             <View
               style={[

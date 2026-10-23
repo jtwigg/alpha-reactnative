@@ -1,14 +1,16 @@
 import { Segmented } from '@/components/finance/ui';
-import type { RangeKey } from '../../../server/convex/finance/series';
-
-const RANGES: readonly RangeKey[] = ['1M', '3M', 'YTD', '1Y', 'All'];
+import { RANGE_KEYS, type RangeKey } from '../../../server/convex/finance/series';
 
 export function RangePills({
   value,
   onChange,
+  stretch,
 }: {
   value: RangeKey | null;
   onChange: (range: RangeKey) => void;
+  stretch?: boolean;
 }) {
-  return <Segmented options={RANGES} value={value} onChange={onChange} accessibilityLabel="Chart range" />;
+  return (
+    <Segmented options={RANGE_KEYS} value={value} onChange={onChange} stretch={stretch} accessibilityLabel="Chart range" />
+  );
 }

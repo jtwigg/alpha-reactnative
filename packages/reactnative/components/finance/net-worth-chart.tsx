@@ -6,7 +6,8 @@ import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
 import { LegendChip } from '@/components/finance/legend-chip';
 import { FText, LegendItem, useFinancePalette } from '@/components/finance/ui';
 import { useSeriesHighlight } from '@/hooks/use-series-highlight';
-import { classColor, classLabel, formatCoverageDate } from '@/lib/finance-coverage';
+import { useChartColors } from '@/lib/finance-colors';
+import { classLabel, formatCoverageDate } from '@/lib/finance-coverage';
 import type { ChartPoint, CoverageMarker } from '../../../server/convex/finance/series';
 
 export type BenchmarkLine = {
@@ -24,6 +25,8 @@ export function NetWorthChart({
   seriesLabel = 'Net worth',
   showMarkerNotes = true,
   color,
+  height,
+  headline = false,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -33,8 +36,12 @@ export function NetWorthChart({
   seriesLabel?: string;
   showMarkerNotes?: boolean;
   color?: string;
+  height?: number;
+  /** Values live in a hero above the chart; the tooltip shrinks to a date. */
+  headline?: boolean;
 }) {
   const palette = useFinancePalette();
+  const colors = useChartColors();
   const lineColor = color ?? palette.accent;
   const highlight = useSeriesHighlight();
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
@@ -47,7 +54,7 @@ export function NetWorthChart({
         values: points.map((point) => point.total),
         gaps: points.map((point) => point.interpolated),
         fill: true,
-        strokeWidth: 2.4,
+        strokeWidth: 2.2,
       },
     ];
     if (benchmark) {
@@ -57,7 +64,7 @@ export function NetWorthChart({
         color: benchmark.color,
         values: benchmark.values,
         dashed: true,
-        strokeWidth: 1.8,
+        strokeWidth: 1.6,
       });
     }
     return out;
@@ -76,12 +83,23 @@ export function NetWorthChart({
   const tooltipRows = (index: number): TooltipRow[] => {
     const point = points[index];
     const rows: TooltipRow[] = [
-      { key: 'primary', label: seriesLabel, color: lineColor, emphasis: true, ...moneyAndPct(point.total, first.total) },
+      {
+        key: 'primary',
+        label: seriesLabel,
+        color: lineColor,
+        emphasis: true,
+        ...moneyAndPct(point.total, first.total),
+      },
     ];
     const benchValue = benchmark?.values[index];
     const benchStart = benchmark?.values.find((value) => value != null);
     if (benchmark && benchValue != null && benchStart != null) {
-      rows.push({ key: 'benchmark', label: benchmark.label, color: benchmark.color, ...moneyAndPct(benchValue, benchStart) });
+      rows.push({
+        key: 'benchmark',
+        label: benchmark.label,
+        color: benchmark.color,
+        ...moneyAndPct(benchValue, benchStart),
+      });
     }
     return rows;
   };
@@ -94,34 +112,50 @@ export function NetWorthChart({
         scrubIndex={scrubIndex}
         onScrub={onScrub}
         tooltipRows={tooltipRows}
-        markers={markers.map((marker) => ({ asOf: marker.asOf, color: classColor(marker.class) }))}
+        tooltipMode={headline && !benchmark ? 'date' : 'full'}
+        height={height}
+        markers={markers.map((marker) => ({
+          asOf: marker.asOf,
+          color: colors.classColor(marker.class),
+        }))}
         highlight={highlight}
       />
-      <View style={styles.legend}>
-        <LegendChip seriesKey="primary" label={seriesLabel} color={lineColor} highlight={highlight} />
-        {benchmark ? (
-          <LegendChip
-            seriesKey="benchmark"
-            label={`${benchmark.label} (rebased)`}
-            color={benchmark.color}
-            swatch="dashed"
-            highlight={highlight}
-          />
-        ) : null}
-        {hasGaps ? <LegendItem color={lineColor} dashed label="Interpolated" /> : null}
-      </View>
-      {showMarkerNotes && markers.length > 0 ? (
-        <View style={styles.markers}>
-          {markers.map((marker) => (
-            <View key={`${marker.class}-${marker.asOf}`} style={styles.markerNote}>
-              <View style={[styles.markerTick, { backgroundColor: classColor(marker.class) }]} />
-              <FText variant="caption" tone="muted">
-                {classLabel(marker.class)} from {formatCoverageDate(marker.asOf)}
-              </FText>
-            </View>
-          ))}
+      {headline && !benchmark && !hasGaps ? null : (
+        <View style={styles.legend}>
+          {!headline || benchmark ? (
+            <LegendChip seriesKey="primary" label={seriesLabel} color={lineColor} highlight={highlight} />
+          ) : null}
+          {benchmark ? (
+            <LegendChip
+              seriesKey="benchmark"
+              label={`${benchmark.label} (rebased)`}
+              color={benchmark.color}
+              swatch="dashed"
+              highlight={highlight}
+            />
+          ) : null}
+          {hasGaps ? <LegendItem color={lineColor} dashed label="Interpolated" /> : null}
         </View>
-      ) : null}
+      )}
+      {showMarkerNotes ? <CoverageMarkerNotes markers={markers} /> : null}
+    </View>
+  );
+}
+
+/** Explains the faint vertical lines: where each class's history begins. */
+export function CoverageMarkerNotes({ markers }: { markers: CoverageMarker[] }) {
+  const { classColor } = useChartColors();
+  if (markers.length === 0) return null;
+  return (
+    <View style={styles.markers}>
+      {markers.map((marker) => (
+        <View key={`${marker.class}-${marker.asOf}`} style={styles.markerNote}>
+          <View style={[styles.markerTick, { backgroundColor: classColor(marker.class) }]} />
+          <FText variant="caption" tone="subtle">
+            {classLabel(marker.class)} from {formatCoverageDate(marker.asOf)}
+          </FText>
+        </View>
+      ))}
     </View>
   );
 }

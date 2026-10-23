@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import * as Haptics from 'expo-haptics';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  Animated,
   Platform,
   Pressable,
   StyleSheet,
@@ -14,35 +16,36 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatPct, formatUsdSigned } from '@/lib/finance-coverage';
 
 const LIGHT = {
-  page: '#F4F5F7',
+  page: '#F3F4F6',
   card: '#FFFFFF',
   cardAlt: '#F8F9FB',
-  border: '#E3E6EA',
-  hairline: '#ECEEF1',
+  border: '#E4E7EB',
+  hairline: '#EDEFF2',
   text: '#0F1419',
   muted: '#5B6670',
-  subtle: '#8A949E',
+  subtle: '#88929C',
   accent: '#0A7EA4',
   accentSoft: '#E3F2F8',
   positive: '#15803D',
   positiveSoft: '#E6F4EA',
   negative: '#C2362F',
   negativeSoft: '#FCE9E7',
-  chip: '#EEF1F4',
+  chip: '#EEF0F3',
   pressed: '#F1F3F5',
-  grid: '#EDEFF2',
-  crosshair: '#0F1419',
+  grid: '#EEF0F3',
+  crosshair: '#5B6670',
   tooltip: '#FFFFFF',
   shadow: 'rgba(15, 20, 25, 0.06)',
+  tooltipShadow: 'rgba(16, 24, 40, 0.16)',
 };
 
 export type FinancePalette = typeof LIGHT;
 
 const DARK: FinancePalette = {
-  page: '#0C0E10',
+  page: '#0B0D0F',
   card: '#16191C',
   cardAlt: '#1B1F23',
-  border: '#262B30',
+  border: '#272C31',
   hairline: '#22272B',
   text: '#ECEDEE',
   muted: '#A0A7AD',
@@ -53,12 +56,13 @@ const DARK: FinancePalette = {
   positiveSoft: '#14301C',
   negative: '#F2665C',
   negativeSoft: '#3A1A18',
-  chip: '#22272B',
+  chip: '#202428',
   pressed: '#1F2428',
-  grid: '#22272B',
-  crosshair: '#ECEDEE',
-  tooltip: '#1F2428',
+  grid: '#20252A',
+  crosshair: '#A0A7AD',
+  tooltip: '#21262B',
   shadow: 'rgba(0, 0, 0, 0.4)',
+  tooltipShadow: 'rgba(0, 0, 0, 0.55)',
 };
 
 export function useFinancePalette(): FinancePalette {
@@ -99,7 +103,7 @@ export function FText({
 }
 
 const typeStyles = StyleSheet.create({
-  display: { fontSize: 38, lineHeight: 44, fontWeight: '700', letterSpacing: -1, ...TABULAR },
+  display: { fontSize: 40, lineHeight: 46, fontWeight: '700', letterSpacing: -1.2, ...TABULAR },
   title: { fontSize: 28, lineHeight: 34, fontWeight: '700', letterSpacing: -0.5 },
   headline: { fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: -0.2 },
   body: { fontSize: 15, lineHeight: 20 },
@@ -176,6 +180,7 @@ export function Segmented<T extends string>({
   onChange,
   accessibilityLabel,
   labels,
+  stretch = false,
 }: {
   options: readonly T[];
   /** null when no option matches, e.g. a custom zoom window. */
@@ -183,13 +188,53 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
   accessibilityLabel?: string;
   labels?: Partial<Record<T, string>>;
+  /** Fill the row with equal-width segments. */
+  stretch?: boolean;
 }) {
   const palette = useFinancePalette();
+  const [layouts, setLayouts] = useState<Partial<Record<T, { x: number; width: number }>>>({});
+  const thumbX = useRef(new Animated.Value(0)).current;
+  const thumbW = useRef(new Animated.Value(0)).current;
+  const placed = useRef(false);
+  const target = value != null ? layouts[value] : undefined;
+
+  useEffect(() => {
+    if (!target) {
+      placed.current = false;
+      return;
+    }
+    if (!placed.current) {
+      thumbX.setValue(target.x);
+      thumbW.setValue(target.width);
+      placed.current = true;
+      return;
+    }
+    const spring = { speed: 24, bounciness: 3, useNativeDriver: false };
+    Animated.parallel([
+      Animated.spring(thumbX, { ...spring, toValue: target.x }),
+      Animated.spring(thumbW, { ...spring, toValue: target.width }),
+    ]).start();
+  }, [target, thumbW, thumbX]);
+
+  const select = (option: T) => {
+    if (option !== value && Platform.OS === 'ios') void Haptics.selectionAsync().catch(() => undefined);
+    onChange(option);
+  };
+
   return (
     <View
       accessibilityRole="tablist"
       accessibilityLabel={accessibilityLabel}
-      style={[styles.segmented, { backgroundColor: palette.chip }]}>
+      style={[styles.segmented, stretch && styles.segmentedStretch, { backgroundColor: palette.chip }]}>
+      {target ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.thumb,
+            { left: thumbX, width: thumbW, backgroundColor: palette.card, shadowColor: palette.tooltipShadow },
+          ]}
+        />
+      ) : null}
       {options.map((option) => {
         const active = option === value;
         return (
@@ -197,13 +242,17 @@ export function Segmented<T extends string>({
             key={option}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
-            onPress={() => onChange(option)}
+            onPress={() => select(option)}
+            onLayout={(event) => {
+              const { x, width } = event.nativeEvent.layout;
+              setLayouts((prev) =>
+                prev[option]?.x === x && prev[option]?.width === width ? prev : { ...prev, [option]: { x, width } },
+              );
+            }}
             hitSlop={4}
-            style={[
-              styles.segment,
-              active && [styles.segmentActive, { backgroundColor: palette.card, shadowColor: palette.shadow }],
-            ]}>
+            style={[styles.segment, stretch && styles.segmentStretch]}>
             <Text
+              numberOfLines={1}
               style={[
                 styles.segmentLabel,
                 { color: active ? palette.text : palette.muted },
@@ -398,14 +447,20 @@ const styles = StyleSheet.create({
     padding: 3,
     alignSelf: 'flex-start',
   },
+  segmentedStretch: { alignSelf: 'stretch' },
   segment: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, minWidth: 40, alignItems: 'center' },
-  segmentActive: {
+  segmentStretch: { flex: 1, paddingHorizontal: 4 },
+  thumb: {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    borderRadius: 8,
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 1,
-    shadowRadius: 3,
+    shadowOpacity: 0.7,
+    shadowRadius: 4,
     elevation: 1,
   },
-  segmentLabel: { fontSize: 13, fontWeight: '500' },
+  segmentLabel: { fontSize: 13, fontWeight: '500', letterSpacing: -0.1 },
   segmentLabelActive: { fontWeight: '700' },
   toggle: {
     flexDirection: 'row',

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   accountValueOnDay,
   buildNetWorthModel,
+  chartStep,
   rangeWindow,
   signedAmount,
+  trimModelToRange,
 } from '../convex/finance/series';
 
 describe('accountValueOnDay', () => {
@@ -91,5 +93,37 @@ describe('buildNetWorthModel', () => {
       from: '2026-09-23',
       to: '2026-10-23',
     });
+  });
+});
+
+describe('5Y range', () => {
+  it('spans five years weekly, clamped to the first data point', () => {
+    expect(rangeWindow('5Y', '2026-10-23', '2019-06-01')).toEqual({ from: '2021-10-23', to: '2026-10-23' });
+    expect(rangeWindow('5Y', '2026-10-23', '2024-02-01')).toEqual({ from: '2024-02-01', to: '2026-10-23' });
+    expect(chartStep('5Y')).toBe('week');
+  });
+
+  it('trims an All model to 5Y and recomputes the change', () => {
+    const model = buildNetWorthModel({
+      range: 'All',
+      asOf: '2026-10-23',
+      accounts: [
+        { sourceId: 'cash', name: 'Cash', class: 'cash', provider: 'manual', currentBalance: 300, syncedAt: 1 },
+      ],
+      snapshots: [
+        { accountId: 'cash', asOf: '2018-01-01', balance: 100, source: 'manual' },
+        { accountId: 'cash', asOf: '2021-10-25', balance: 200, source: 'manual' },
+        { accountId: 'cash', asOf: '2026-10-23', balance: 300, source: 'manual' },
+      ],
+    });
+    const trimmed = trimModelToRange(model, '5Y');
+    expect(trimmed.range).toBe('5Y');
+    expect(trimmed.points[0].asOf >= '2021-10-23').toBe(true);
+    expect(trimmed.points.length).toBeLessThan(model.points.length);
+    expect(trimmed.headline).toBe(model.headline);
+    const first = trimmed.points[0].total;
+    expect(trimmed.change).toBeCloseTo(300 - first, 2);
+    expect(trimmed.changePct).toBeCloseTo(300 / first - 1, 9);
+    expect(trimModelToRange(model, 'All').points).toHaveLength(model.points.length);
   });
 });

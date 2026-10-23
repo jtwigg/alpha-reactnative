@@ -9,7 +9,7 @@ import {
 import { CONVEX_QUERY_READ_BUDGET } from './validators';
 import { roundMoney, type SnapshotSource } from './hash';
 
-export const RANGE_KEYS = ['1M', '3M', 'YTD', '1Y', 'All'] as const;
+export const RANGE_KEYS = ['1M', '3M', 'YTD', '1Y', '5Y', 'All'] as const;
 export type RangeKey = (typeof RANGE_KEYS)[number];
 
 export const CHART_POINT_CAP = 160;
@@ -95,6 +95,10 @@ export function rangeWindow(
   if (range === '1M') return { from: addDays(asOf, -30), to: asOf };
   if (range === '3M') return { from: addDays(asOf, -90), to: asOf };
   if (range === '1Y') return { from: addDays(asOf, -365), to: asOf };
+  if (range === '5Y') {
+    const from = addDays(asOf, -1826);
+    return { from: earliest && earliest > from && earliest < asOf ? earliest : from, to: asOf };
+  }
   if (range === 'YTD') return { from: `${asOf.slice(0, 4)}-01-01`, to: asOf };
   const from = earliest && earliest < asOf ? earliest : asOf;
   return { from, to: asOf };
@@ -159,10 +163,10 @@ export function accountValueOnDay(
 }
 
 export function chartStep(range: RangeKey): 'week' | 'day' {
-  return range === 'All' ? 'week' : 'day';
+  return range === 'All' || range === '5Y' ? 'week' : 'day';
 }
 
-/** Weekly points for All, daily for 1Y / 3M / 1M / YTD. Always includes `to`. */
+/** Weekly points for All / 5Y, daily for 1Y / 3M / 1M / YTD. Always includes `to`. */
 export function chartDates(range: RangeKey, from: string, to: string): string[] {
   parseIsoDate(from);
   parseIsoDate(to);
@@ -463,6 +467,26 @@ export function buildNetWorthModel(args: {
     points,
     coverageMarkers,
     accounts,
+  };
+}
+
+/**
+ * Narrows a wider page model (e.g. All) to `range`, recomputing the change.
+ * Lets a client offer a range before the backend that validates it is live.
+ */
+export function trimModelToRange(model: NetWorthPageModel, range: RangeKey): NetWorthPageModel {
+  const earliest = model.points[0]?.asOf ?? null;
+  const { from } = rangeWindow(range, model.asOf, earliest);
+  const points = model.points.filter((point) => point.asOf >= from);
+  if (points.length === model.points.length) return { ...model, range };
+  const first = points[0];
+  const last = points[points.length - 1];
+  return {
+    ...model,
+    range,
+    points,
+    change: first && last ? roundMoney(last.total - first.total) : 0,
+    changePct: first && last && first.total !== 0 ? last.total / first.total - 1 : null,
   };
 }
 

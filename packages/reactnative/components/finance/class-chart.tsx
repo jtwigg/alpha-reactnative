@@ -5,7 +5,8 @@ import { classRows } from '@/components/finance/chart-tooltip';
 import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
 import { LegendChip } from '@/components/finance/legend-chip';
 import { useSeriesHighlight } from '@/hooks/use-series-highlight';
-import { classColor, classLabel } from '@/lib/finance-coverage';
+import { useChartColors } from '@/lib/finance-colors';
+import { classLabel } from '@/lib/finance-coverage';
 import type { ChartPoint } from '../../../server/convex/finance/series';
 
 export function ClassChart({
@@ -23,16 +24,18 @@ export function ClassChart({
   );
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
   const highlight = useSeriesHighlight();
+  const { classColor } = useChartColors();
   const series = useMemo<ChartSeries[]>(
     () =>
       classes.map((className) => ({
         key: className,
         label: classLabel(className),
         color: classColor(className),
+        strokeWidth: 1.8,
         values: points.map((point) => point.byClass[className] ?? null),
         gaps: points.map((point) => point.interpolated),
       })),
-    [classes, points],
+    [classColor, classes, points],
   );
 
   if (points.length < 2 || classes.length === 0) return null;
@@ -46,7 +49,7 @@ export function ClassChart({
         onScrub={onScrub}
         includeZero
         height={200}
-        tooltipRows={(index) => classRows(points[index].byClass)}
+        tooltipRows={(index) => classRows(points[index].byClass, classColor)}
         highlight={highlight}
       />
       <View style={styles.legend}>

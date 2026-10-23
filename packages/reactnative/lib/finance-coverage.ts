@@ -64,20 +64,8 @@ export const CLASS_LABELS: Record<string, string> = {
   real_estate: 'Home',
 };
 
-export const CLASS_COLORS: Record<string, string> = {
-  cash: '#1a7f37',
-  credit: '#cf222e',
-  liability: '#9a3412',
-  investments: '#0a7ea4',
-  real_estate: '#6e40c9',
-};
-
 export function classLabel(className: string): string {
   return CLASS_LABELS[className] ?? className;
-}
-
-export function classColor(className: string): string {
-  return CLASS_COLORS[className] ?? '#687076';
 }
 
 export function formatUsd(amount: number): string {

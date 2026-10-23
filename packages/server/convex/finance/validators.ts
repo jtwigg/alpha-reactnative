@@ -58,6 +58,7 @@ export const rangeKeyValidator = v.union(
   v.literal('3M'),
   v.literal('YTD'),
   v.literal('1Y'),
+  v.literal('5Y'),
   v.literal('All'),
 );
 

@@ -2,12 +2,12 @@ import { useQuery } from 'convex/react';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { GROUP_COLORS } from '@/components/finance/account-groups';
 import { RangeNavigator } from '@/components/finance/range-navigator';
 import { RangePills } from '@/components/finance/range-pills';
 import { StackedChart } from '@/components/finance/stacked-chart';
 import { Card, FText, SectionHeader, Segmented, StateMessage, TogglePill, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
+import { useChartColors } from '@/lib/finance-colors';
 import { demoStack } from '@/lib/finance-fixtures';
 import { buildStack, windowIndexes, type StackLevel, type StackMode } from '@/lib/stack-math';
 import { RANGE_KEYS, rangeWindow, type RangeKey } from '../../../server/convex/finance/series';
@@ -32,12 +32,14 @@ export function CompositionCard({
   refreshNonce: number;
 }) {
   const palette = useFinancePalette();
+  const colors = useChartColors();
   const [level, setLevel] = useState<StackLevel>('group');
   const [includeLoans, setIncludeLoans] = useState(true);
   const [mode, setMode] = useState<StackMode>('absolute');
   const normalized = mode === 'normalized';
   const stackLoans = includeLoans || normalized;
   const [committed, setCommitted] = useState<Window | null>(null);
+  const [tapped, setTapped] = useState<RangeKey | null>(null);
   const [preview, setPreview] = useState<[number, number] | null>(null);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
 
@@ -91,27 +93,33 @@ export function CompositionCard({
   const model = useMemo(
     () =>
       shown
-        ? buildStack({ accounts: shown.data.accounts, level, includeLoans: stackLoans, groupColors: GROUP_COLORS })
+        ? buildStack({
+            accounts: shown.data.accounts,
+            level,
+            includeLoans: stackLoans,
+            groupColors: colors.groups,
+            shade: colors.shade,
+          })
         : null,
-    [level, shown, stackLoans],
+    [colors, level, shown, stackLoans],
   );
   const overviewLine = useMemo(() => {
     if (!overview) return [];
-    const m = buildStack({ accounts: overview.accounts, level: 'group', includeLoans, groupColors: GROUP_COLORS });
+    const m = buildStack({ accounts: overview.accounts, level: 'group', includeLoans, groupColors: colors.groups });
     return m.net.map((value, i) => (m.covered[i] ? value : null));
-  }, [includeLoans, overview]);
+  }, [colors, includeLoans, overview]);
 
   useEffect(() => setScrubIndex(null), [shown, level, includeLoans, mode]);
 
   const preset = useMemo<RangeKey | null>(() => {
     if (!overview || !window) return null;
-    return (
-      RANGE_KEYS.find((key) => {
-        const w = rangeWindow(key, overview.asOf, overview.firstAsOf);
-        return clampFrom(w, overview) === clampFrom(window, overview) && w.to === window.to;
-      }) ?? null
-    );
-  }, [overview, window]);
+    const matches = (key: RangeKey) => {
+      const w = rangeWindow(key, overview.asOf, overview.firstAsOf);
+      return clampFrom(w, overview) === clampFrom(window, overview) && w.to === window.to;
+    };
+    if (tapped && matches(tapped)) return tapped;
+    return RANGE_KEYS.find(matches) ?? null;
+  }, [overview, tapped, window]);
 
   const header = (
     <SectionHeader title="Composition" subtitle="What makes up your net worth over time. Drag the strip below to zoom." />
@@ -142,6 +150,7 @@ export function CompositionCard({
           value={preset}
           onChange={(key) => {
             setPreview(null);
+            setTapped(key);
             setCommitted(rangeWindow(key, overview.asOf, overview.firstAsOf));
           }}
         />
@@ -149,7 +158,7 @@ export function CompositionCard({
           <Segmented options={MODES} value={mode} onChange={setMode} labels={MODE_LABELS} accessibilityLabel="Scale" />
           <Segmented options={LEVELS} value={level} onChange={setLevel} labels={LEVEL_LABELS} accessibilityLabel="Stack by" />
           {normalized ? null : (
-            <TogglePill label="Loans" value={includeLoans} onChange={setIncludeLoans} color={GROUP_COLORS.liability} />
+            <TogglePill label="Loans" value={includeLoans} onChange={setIncludeLoans} color={colors.groups.liability} />
           )}
         </View>
       </View>
