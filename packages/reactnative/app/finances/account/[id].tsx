@@ -19,6 +19,7 @@ import {
   Card,
   FText,
   MAX_CONTENT_WIDTH,
+  RefreshButton,
   StateMessage,
   useFinancePalette,
 } from '@/components/finance/ui';
@@ -26,6 +27,7 @@ import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
 import { liveRange } from '@/lib/range-support';
+import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountDetail, demoHoldings, demoTransactions } from '@/lib/finance-fixtures';
 import { groupKeyForClass } from '../../../../server/convex/finance/accountModel';
@@ -92,7 +94,6 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const router = useRouter();
   const [range, setRange] = useState<RangeKey>('1Y');
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
 
   const liveDetail = useQuery(
@@ -103,18 +104,12 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   useEffect(() => {
     if (liveDetail !== undefined) setHeld(liveDetail);
   }, [liveDetail]);
-  useEffect(() => {
-    if (refreshing && liveDetail !== undefined) setRefreshing(false);
-  }, [liveDetail, refreshing]);
+  const { refreshing, onRefresh } = useRefreshSpinner(!live || liveDetail !== undefined, () =>
+    setRefreshNonce((nonce) => nonce + 1),
+  );
   useEffect(() => setScrubIndex(null), [range]);
 
   const detail = live ? (liveDetail ?? held) : demoAccountDetail(sourceId, range);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    setRefreshNonce((nonce) => nonce + 1);
-    if (!live) setTimeout(() => setRefreshing(false), 400);
-  };
 
   if (detail === undefined) {
     return (
@@ -163,6 +158,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
                 {detail.name}
               </FText>
             </View>
+            <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
           </View>
           <View style={styles.badges}>
             <Badge label={detail.typeLabel} tone="accent" />

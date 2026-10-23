@@ -14,6 +14,7 @@ import {
   Card,
   FText,
   MAX_CONTENT_WIDTH,
+  RefreshButton,
   SectionHeader,
   Segmented,
   StateMessage,
@@ -29,6 +30,7 @@ import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
 import { liveRange } from '@/lib/range-support';
+import { useRefreshSpinner } from '@/lib/use-refresh';
 import {
   BENCHMARKS,
   BENCHMARK_STALE_MS,
@@ -84,7 +86,6 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const [range, setRange] = useState<RangeKey>('All');
   const [changeMode, setChangeMode] = usePersistedChoice<ChangeMode>('finance.changeMode', CHANGE_MODES, 'own');
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [showBenchmark, setShowBenchmark] = useState(false);
   const [chartGroup, setChartGroup] = useState<ChartGroup>('all');
@@ -117,11 +118,9 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     if (liveSparks) setHeldSparks(liveSparks);
   }, [liveSparks]);
 
-  useEffect(() => {
-    if (refreshing && live !== undefined && liveAccounts !== undefined && liveSparks !== undefined) {
-      setRefreshing(false);
-    }
-  }, [live, liveAccounts, liveSparks, refreshing]);
+  const { refreshing, onRefresh } = useRefreshSpinner(!allowed || (live !== undefined && liveAccounts !== undefined), () =>
+    setRefreshNonce((nonce) => nonce + 1),
+  );
 
   const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
   const data = useMemo(() => {
@@ -176,14 +175,6 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     if (key) scrollRef.current?.scrollTo({ y: Math.max(chartY.current - 12, 0), animated: true });
   };
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    setRefreshNonce((nonce) => nonce + 1);
-    if (demo && !allowed) {
-      setTimeout(() => setRefreshing(false), 400);
-    }
-  };
-
   if (!demo && allowed === undefined && !held) {
     return (
       <View style={[styles.centered, { backgroundColor: palette.page }]}>
@@ -224,14 +215,17 @@ function NetWorthPage({ demo }: { demo: boolean }) {
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.column}>
-            <View style={styles.header}>
-              <FText variant="eyebrow" tone="muted">
-                Personal finances
-              </FText>
-              <FText variant="title">Net worth</FText>
-              <FText variant="caption" tone="subtle">
-                As of {formatCoverageDate(data.asOf)}
-              </FText>
+            <View style={styles.headerRow}>
+              <View style={styles.header}>
+                <FText variant="eyebrow" tone="muted">
+                  Personal finances
+                </FText>
+                <FText variant="title">Net worth</FText>
+                <FText variant="caption" tone="subtle">
+                  As of {formatCoverageDate(data.asOf)}
+                </FText>
+              </View>
+              <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
             </View>
 
             {usingDemo ? (
@@ -501,7 +495,8 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   scroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 56 },
   column: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, alignSelf: 'center', gap: 16 },
-  header: { gap: 2, paddingHorizontal: 4 },
+  header: { flex: 1, gap: 2, paddingHorizontal: 4 },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   heroCard: { gap: 16 },
   stats: {
     flexDirection: 'row',

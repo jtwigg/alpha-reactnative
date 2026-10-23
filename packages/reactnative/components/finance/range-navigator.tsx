@@ -4,6 +4,7 @@ import { PanResponder, Platform, StyleSheet, View, type LayoutChangeEvent } from
 import { Sparkline } from '@/components/finance/sparkline';
 import { FText, useFinancePalette } from '@/components/finance/ui';
 import { axisDateLabel, spanInDays } from '@/lib/chart-math';
+import { scrubIntent } from '@/lib/gesture-math';
 import { dragWindow } from '@/lib/stack-math';
 
 const HEIGHT = 46;
@@ -42,8 +43,8 @@ export function RangeNavigator({
 
   const responder = (part: Part) =>
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => Platform.OS === 'web',
+      onMoveShouldSetPanResponder: (_event, gesture) => scrubIntent(gesture.dx, gesture.dy) === 'claim',
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
         origin.current = { start: latest.current.start, end: latest.current.end };
@@ -132,7 +133,7 @@ const styles = StyleSheet.create({
     height: HEIGHT,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
-    ...(Platform.OS === 'web' ? ({ userSelect: 'none', touchAction: 'none' } as object) : null),
+    ...(Platform.OS === 'web' ? ({ userSelect: 'none', touchAction: 'pan-y' } as object) : null),
   },
   spark: { position: 'absolute', left: 0, top: 4 },
   mask: { position: 'absolute', top: 0, bottom: 0, opacity: 0.6 },
