@@ -4,6 +4,7 @@ import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { type ReactNode } from 'react';
 
+import { SentryAuthObserver } from '@/components/auth/sentry-auth-observer';
 import { getConvexCloudUrl, isClerkConfigured } from '@/lib/convex';
 
 const convex = new ConvexReactClient(getConvexCloudUrl());
@@ -46,6 +47,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
       <ConvexProviderWithClerk client={convex} useAuth={useAuthForConvex}>
+        <SentryAuthObserver />
         {children}
       </ConvexProviderWithClerk>
     </ClerkProvider>

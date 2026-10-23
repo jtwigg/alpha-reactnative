@@ -39,15 +39,60 @@ export async function getConvexAccessToken(
   return getToken({ template: 'convex' });
 }
 
+export function describeConvexAuthStuck(sessionClaims: unknown): {
+  reason: string;
+  details: {
+    aud: unknown;
+    iss: unknown;
+    expectedAud: string;
+    expectedIssuer: string;
+  };
+} {
+  const claims =
+    sessionClaims && typeof sessionClaims === 'object'
+      ? (sessionClaims as { aud?: unknown; iss?: unknown })
+      : null;
+  const aud = claims?.aud ?? null;
+  const iss = claims?.iss ?? null;
+  const expectedAud = 'convex';
+  const expectedIssuer = 'https://awaited-jennet-2760.clerk.accounts.dev';
+  const details = { aud, iss, expectedAud, expectedIssuer };
+
+  if (!hasConvexAudience(claims)) {
+    return {
+      reason: `Clerk session token aud is ${JSON.stringify(aud)}, but Convex auth.config.ts applicationID is "${expectedAud}". ConvexProviderWithClerk will request a JWT template named "convex", which this Clerk app does not have. Enable the Convex native integration so the default session token includes aud=convex.`,
+      details,
+    };
+  }
+
+  if (typeof iss === 'string' && !iss.includes('awaited-jennet-2760')) {
+    return {
+      reason: `Clerk token issuer (${iss}) does not match Convex auth.config.ts issuer (${expectedIssuer}). Set CLERK_JWT_ISSUER_DOMAIN on the Convex deployment to the Clerk Frontend API URL.`,
+      details,
+    };
+  }
+
+  return {
+    reason:
+      'Clerk is signed in and the token has aud=convex, but Convex useConvexAuth is still isLoading. Convex never confirmed the JWT (issuer/applicationID mismatch, or the websocket never authenticated).',
+    details,
+  };
+}
+
 export function getClerkErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
   if (!error) return fallback;
 
   if (typeof error === 'object') {
     const record = error as {
       message?: unknown;
+      longMessage?: unknown;
       errors?: { message?: string; longMessage?: string }[];
       fields?: Record<string, { message?: string } | undefined>;
     };
+
+    if (typeof record.longMessage === 'string' && record.longMessage.trim()) {
+      return record.longMessage;
+    }
 
     if (typeof record.message === 'string' && record.message.trim()) {
       return record.message;

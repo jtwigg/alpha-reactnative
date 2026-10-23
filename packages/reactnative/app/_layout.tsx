@@ -7,13 +7,16 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { initSentry, Sentry } from '@/lib/sentry';
 import { AppProviders } from '@/providers/app-providers';
+
+initSentry();
 
 export const unstable_settings = {
   anchor: '(tabs)',
 };
 
-export default function RootLayout() {
+function RootLayout() {
   const colorScheme = useColorScheme();
 
   return (
@@ -30,3 +33,5 @@ export default function RootLayout() {
     </AppProviders>
   );
 }
+
+export default Sentry.wrap(RootLayout);

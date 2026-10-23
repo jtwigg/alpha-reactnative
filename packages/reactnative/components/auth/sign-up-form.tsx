@@ -8,6 +8,7 @@ import { AuthLayout } from '@/components/auth/auth-layout';
 import { GoogleButton } from '@/components/auth/google-button';
 import { ThemedText } from '@/components/themed-text';
 import { getClerkErrorMessage } from '@/lib/convex';
+import { captureAuthException, logAuth } from '@/lib/sentry';
 
 export function SignUpForm() {
   const { isSignedIn } = useAuth();
@@ -23,19 +24,23 @@ export function SignUpForm() {
   const handleSubmit = async () => {
     if (!signUp) return;
     setFormError(null);
+    logAuth('auth.sign_up_button_pressed', { strategy: 'password' });
     try {
       const { error } = await signUp.password({ emailAddress, password });
       if (error) {
+        captureAuthException(error, { strategy: 'password' });
         setFormError(getClerkErrorMessage(error));
         return;
       }
       const { error: sendError } = await signUp.verifications.sendEmailCode();
       if (sendError) {
+        captureAuthException(sendError, { strategy: 'email_code' });
         setFormError(getClerkErrorMessage(sendError));
         return;
       }
       setIsVerifying(true);
     } catch (error) {
+      captureAuthException(error, { strategy: 'password' });
       setFormError(getClerkErrorMessage(error));
     }
   };
@@ -46,11 +51,13 @@ export function SignUpForm() {
     try {
       const { error } = await signUp.verifications.verifyEmailCode({ code });
       if (error) {
+        captureAuthException(error, { strategy: 'email_code' });
         setFormError(getClerkErrorMessage(error));
         return;
       }
       await signUp.finalize();
     } catch (error) {
+      captureAuthException(error, { strategy: 'email_code' });
       setFormError(getClerkErrorMessage(error));
     }
   };

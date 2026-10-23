@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
+import { captureAuthException, logAuth } from '@/lib/sentry';
 import type { Id } from '../../server/convex/_generated/dataModel';
 
 export function useStoreUser() {
@@ -25,6 +26,7 @@ export function useStoreUser() {
         if (!cancelled) setUserId(id);
       })
       .catch((error) => {
+        captureAuthException(error, { action: 'users.store' });
         console.error('Failed to store user in Convex', error);
       });
 
@@ -33,6 +35,12 @@ export function useStoreUser() {
     };
   }, [allowed, clerkEnabled, isAuthenticated, storeUser]);
 
+  const denied = Boolean(isAuthenticated && status && !status.allowed);
+  useEffect(() => {
+    if (!denied) return;
+    logAuth('auth.allowlist_denied', { convexAuthenticated: isAuthenticated });
+  }, [denied, isAuthenticated]);
+
   return {
     isLoading:
       clerkEnabled &&
@@ -40,6 +48,6 @@ export function useStoreUser() {
         (isAuthenticated && status === undefined) ||
         (allowed && userId === null)),
     isAuthenticated: Boolean(isAuthenticated && allowed && userId),
-    isDenied: Boolean(isAuthenticated && status && !status.allowed),
+    isDenied: denied,
   };
 }

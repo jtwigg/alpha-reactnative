@@ -8,6 +8,7 @@ import { AuthLayout } from '@/components/auth/auth-layout';
 import { GoogleButton } from '@/components/auth/google-button';
 import { ThemedText } from '@/components/themed-text';
 import { getClerkErrorMessage } from '@/lib/convex';
+import { captureAuthException, logAuth } from '@/lib/sentry';
 
 export function SignInForm() {
   const { isSignedIn } = useAuth();
@@ -23,9 +24,11 @@ export function SignInForm() {
   const handleSubmit = async () => {
     if (!signIn) return;
     setFormError(null);
+    logAuth('auth.sign_in_button_pressed', { strategy: 'password' });
     try {
       const { error } = await signIn.password({ emailAddress, password });
       if (error) {
+        captureAuthException(error, { strategy: 'password' });
         setFormError(getClerkErrorMessage(error));
         return;
       }
@@ -45,6 +48,7 @@ export function SignInForm() {
       }
       setFormError('Sign-in needs another step. Check email verification in the Clerk dashboard.');
     } catch (error) {
+      captureAuthException(error, { strategy: 'password' });
       setFormError(getClerkErrorMessage(error));
     }
   };
@@ -58,6 +62,7 @@ export function SignInForm() {
         await signIn.finalize();
       }
     } catch (error) {
+      captureAuthException(error, { strategy: 'email_code' });
       setFormError(getClerkErrorMessage(error));
     }
   };
