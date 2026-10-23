@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { moneyAndPct, type TooltipRow } from '@/components/finance/chart-tooltip';
+import { CompareCard } from '@/components/finance/compare-card';
 import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
 import { LegendChip } from '@/components/finance/legend-chip';
 import { FText, LegendItem, useFinancePalette } from '@/components/finance/ui';
@@ -27,6 +28,7 @@ export function NetWorthChart({
   color,
   height,
   headline = false,
+  invert = false,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -39,6 +41,8 @@ export function NetWorthChart({
   height?: number;
   /** Values live in a hero above the chart; the tooltip shrinks to a date. */
   headline?: boolean;
+  /** Balance owed: a decrease is good in the compare card. */
+  invert?: boolean;
 }) {
   const palette = useFinancePalette();
   const colors = useChartColors();
@@ -119,6 +123,17 @@ export function NetWorthChart({
           color: colors.classColor(marker.class),
         }))}
         highlight={highlight}
+        renderCompare={(pair, clear) => (
+          <CompareCard
+            dates={dates}
+            pair={pair}
+            label={seriesLabel}
+            values={series[0].values}
+            invert={invert}
+            benchmark={benchmark}
+            onClose={clear}
+          />
+        )}
       />
       {headline && !benchmark && !hasGaps ? null : (
         <View style={styles.legend}>

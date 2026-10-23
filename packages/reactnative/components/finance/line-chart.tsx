@@ -1,11 +1,13 @@
-import { memo, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
+import { PointBadge } from '@/components/finance/compare-card';
 import { Reveal } from '@/components/finance/reveal';
 import { TABULAR, useFinancePalette, type FinancePalette } from '@/components/finance/ui';
 import type { SeriesHighlight } from '@/hooks/use-series-highlight';
+import type { ComparePair } from '@/lib/compare-math';
 import { seriesOpacity } from '@/lib/series-highlight';
 import {
   axisDateLabel,
@@ -52,6 +54,7 @@ export function LineChart({
   includeZero = false,
   markers = [],
   highlight,
+  renderCompare,
 }: {
   dates: string[];
   series: ChartSeries[];
@@ -65,9 +68,12 @@ export function LineChart({
   markers?: ChartMarker[];
   /** Legend-driven emphasis; hidden series are dropped from the scale. */
   highlight?: SeriesHighlight;
+  /** Enables two-point A/B compare; renders the summary under the chart. */
+  renderCompare?: (pair: ComparePair, clear: () => void) => ReactNode;
 }) {
   const palette = useFinancePalette();
   const [width, setWidth] = useState(0);
+  const [compare, setCompare] = useState<ComparePair | null>(null);
   const count = dates.length;
   const active = highlight?.active ?? null;
   const hidden = highlight?.hidden;
@@ -119,8 +125,7 @@ export function LineChart({
   };
 
   const span = count > 1 ? spanInDays(dates[0], dates[count - 1]) : 0;
-  const xLabels =
-    count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
+  const xLabels = count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
   const hairX = geometry && scrubIndex != null ? geometry.x(scrubIndex) : null;
   const markerIndex = (asOf: string) => {
     let best = 0;
@@ -132,6 +137,8 @@ export function LineChart({
   // Redraw (reveal) only when the data or the set of lines changes, not on highlight.
   const revealToken = `${dates[0]}|${dates[count - 1]}|${count}|${series.map((s) => s.key).join(',')}`;
   const native = Platform.OS !== 'web';
+  useEffect(() => setCompare(null), [revealToken]);
+  const pair = renderCompare && compare && compare.b < count ? compare : null;
 
   return (
     <View style={styles.wrap}>
@@ -142,7 +149,10 @@ export function LineChart({
         height={height}
         onScrub={onScrub}
         onWidth={setWidth}
-        onTap={highlight ? onTap : undefined}>
+        onTap={highlight ? onTap : undefined}
+        compare={pair}
+        onCompare={renderCompare ? setCompare : undefined}
+      >
         {geometry ? (
           <>
             {native ? (
@@ -151,6 +161,20 @@ export function LineChart({
               </Reveal>
             ) : null}
             <Grid geometry={geometry} palette={palette} includeZero={includeZero} />
+            {pair ? (
+              <View
+                style={[
+                  styles.compareBand,
+                  {
+                    left: geometry.x(pair.a),
+                    width: Math.max(geometry.x(pair.b) - geometry.x(pair.a), 0),
+                    top: PAD.top - 6,
+                    height: geometry.innerH + 6,
+                    backgroundColor: palette.accent,
+                  },
+                ]}
+              />
+            ) : null}
             {markers.map((marker) => (
               <View
                 key={`marker-${marker.asOf}-${marker.color}`}
@@ -172,6 +196,7 @@ export function LineChart({
                 <WebLines geometry={geometry} active={active} />
               )}
             </Reveal>
+            {pair ? <CompareMarks geometry={geometry} pair={pair} palette={palette} active={active} /> : null}
             {hairX != null ? (
               <>
                 <View
@@ -189,7 +214,12 @@ export function LineChart({
                 <View
                   style={[
                     styles.crosshair,
-                    { left: hairX - 0.5, top: PAD.top - 6, height: geometry.innerH + 8, backgroundColor: palette.crosshair },
+                    {
+                      left: hairX - 0.5,
+                      top: PAD.top - 6,
+                      height: geometry.innerH + 8,
+                      backgroundColor: palette.crosshair,
+                    },
                   ]}
                 />
                 {geometry.lines.map(({ series: s }) => {
@@ -204,7 +234,12 @@ export function LineChart({
                       <View
                         style={[
                           styles.dot,
-                          { left: hairX - DOT / 2, top: cy - DOT / 2, backgroundColor: s.color, borderColor: palette.card },
+                          {
+                            left: hairX - DOT / 2,
+                            top: cy - DOT / 2,
+                            backgroundColor: s.color,
+                            borderColor: palette.card,
+                          },
                         ]}
                       />
                     </View>
@@ -224,7 +259,8 @@ export function LineChart({
                     : i === xLabels.length - 1
                       ? { right: PAD.right - 6, textAlign: 'right' }
                       : { left: geometry.x(index) - 40, width: 80, textAlign: 'center' },
-                ]}>
+                ]}
+              >
                 {axisDateLabel(dates[index], span)}
               </Text>
             ))}
@@ -247,7 +283,67 @@ export function LineChart({
           </>
         ) : null}
       </ChartTouch>
+      {pair && renderCompare ? renderCompare(pair, () => setCompare(null)) : null}
     </View>
+  );
+}
+
+function CompareMarks({
+  geometry,
+  pair,
+  palette,
+  active,
+}: {
+  geometry: Geometry;
+  pair: ComparePair;
+  palette: FinancePalette;
+  active: string | null;
+}) {
+  const ends: { label: 'A' | 'B'; index: number }[] =
+    pair.a === pair.b
+      ? [{ label: 'A', index: pair.a }]
+      : [
+          { label: 'A', index: pair.a },
+          { label: 'B', index: pair.b },
+        ];
+  return (
+    <>
+      {ends.map(({ label, index }) => {
+        const x = geometry.x(index);
+        return (
+          <View key={`cmp-${label}`} style={StyleSheet.absoluteFill}>
+            <View
+              style={[
+                styles.compareLine,
+                { left: x - 0.75, top: PAD.top - 6, height: geometry.innerH + 6, backgroundColor: palette.accent },
+              ]}
+            />
+            {geometry.lines.map(({ series: s }) => {
+              const value = s.values[index];
+              if (value == null) return null;
+              return (
+                <View
+                  key={`cmp-dot-${label}-${s.key}`}
+                  style={[
+                    styles.dot,
+                    {
+                      left: x - DOT / 2,
+                      top: geometry.y(value) - DOT / 2,
+                      backgroundColor: s.color,
+                      borderColor: palette.card,
+                      opacity: seriesOpacity(s.key, active),
+                    },
+                  ]}
+                />
+              );
+            })}
+            <View style={[styles.compareBadge, { left: x - 9, top: PAD.top - 24 }]}>
+              <PointBadge label={label} color={palette.accent} />
+            </View>
+          </View>
+        );
+      })}
+    </>
   );
 }
 
@@ -260,7 +356,11 @@ function DatePill({ date, x, width, palette }: { date: string; x: number; width:
   return (
     <View
       pointerEvents="none"
-      style={[styles.pill, { left, backgroundColor: palette.tooltip, shadowColor: palette.tooltipShadow, borderColor: palette.border }]}>
+      style={[
+        styles.pill,
+        { left, backgroundColor: palette.tooltip, shadowColor: palette.tooltipShadow, borderColor: palette.border },
+      ]}
+    >
       <Text style={[styles.pillText, { color: palette.text }]} numberOfLines={1}>
         {formatCoverageDate(date)}
       </Text>
@@ -330,7 +430,8 @@ const WebLines = memo(function WebLines({ geometry, active }: { geometry: Geomet
     <svg
       width={geometry.width}
       height={geometry.height}
-      style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}>
+      style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}
+    >
       {fillSeries ? (
         <>
           <defs>
@@ -485,6 +586,9 @@ const styles = StyleSheet.create({
   xLabel: { position: 'absolute', fontSize: 11, fontWeight: '500', ...TABULAR },
   marker: { position: 'absolute', width: 1, opacity: 0.16 },
   dim: { position: 'absolute', opacity: 0.55 },
+  compareBand: { position: 'absolute', opacity: 0.1, borderRadius: 4 },
+  compareLine: { position: 'absolute', width: 1.5, opacity: 0.85 },
+  compareBadge: { position: 'absolute' },
   crosshair: { position: 'absolute', width: 1, opacity: 0.5 },
   halo: { position: 'absolute', width: HALO, height: HALO, borderRadius: HALO / 2, opacity: 0.18 },
   dot: { position: 'absolute', width: DOT, height: DOT, borderRadius: DOT / 2, borderWidth: 2 },
