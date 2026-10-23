@@ -1,4 +1,4 @@
-import { daysBetween, eachDate, eachWeek } from './dates';
+import { daysBetween, eachDate, eachWeek, todayInTimeZone } from './dates';
 
 export type BenchmarkId = 'SPX' | 'NDX' | 'BALANCED_60_40';
 
@@ -7,6 +7,8 @@ export type BenchmarkDef = {
   label: string;
   /** Stooq daily symbol, no API key. */
   stooq: string;
+  /** Yahoo chart symbol used when Stooq serves a bot wall. */
+  yahoo: string;
   color: string;
 };
 
@@ -15,18 +17,21 @@ export const BENCHMARKS: Record<BenchmarkId, BenchmarkDef> = {
     id: 'SPX',
     label: 'S&P 500',
     stooq: '^spx',
+    yahoo: '^GSPC',
     color: '#c2410c',
   },
   NDX: {
     id: 'NDX',
     label: 'Nasdaq 100',
     stooq: '^ndx',
+    yahoo: '^NDX',
     color: '#7c3aed',
   },
   BALANCED_60_40: {
     id: 'BALANCED_60_40',
     label: '60/40',
     stooq: '^spx',
+    yahoo: '^GSPC',
     color: '#0f766e',
   },
 };
@@ -43,6 +48,42 @@ export const BENCHMARK_STALE_MS = 20 * 60 * 60 * 1000;
 export function stooqDailyUrl(stooqSymbol: string): string {
   const encoded = encodeURIComponent(stooqSymbol);
   return `https://stooq.com/q/d/l/?s=${encoded}&i=d`;
+}
+
+export function yahooChartUrl(
+  yahooSymbol: string,
+  period1: number,
+  period2: number,
+): string {
+  const encoded = encodeURIComponent(yahooSymbol);
+  return `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?period1=${period1}&period2=${period2}&interval=1d`;
+}
+
+export function unixSecondsToIsoDate(seconds: number): string {
+  return todayInTimeZone(new Date(seconds * 1000), 'America/New_York');
+}
+
+export function parseYahooChart(payload: unknown): IndexBar[] {
+  const root = payload as {
+    chart?: {
+      result?: Array<{
+        timestamp?: number[];
+        indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+      }>;
+    };
+  };
+  const result = root.chart?.result?.[0];
+  const timestamps = result?.timestamp;
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (!timestamps || !closes) return [];
+  const out: IndexBar[] = [];
+  for (let i = 0; i < timestamps.length; i += 1) {
+    const close = closes[i];
+    if (close == null || !Number.isFinite(close) || close <= 0) continue;
+    out.push({ asOf: unixSecondsToIsoDate(timestamps[i]), close });
+  }
+  out.sort((a, b) => a.asOf.localeCompare(b.asOf));
+  return out;
 }
 
 export function parseStooqCsv(csv: string): IndexBar[] {

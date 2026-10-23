@@ -16,9 +16,12 @@ import {
   DAILY_BENCHMARK_SPAN_DAYS,
   DEFAULT_BENCHMARK,
   parseStooqCsv,
+  parseYahooChart,
   sampleBenchmarkDates,
   stooqDailyUrl,
+  yahooChartUrl,
   type BenchmarkId,
+  type IndexBar,
 } from './benchmarks';
 
 const UPSERT_BATCH = 400;
@@ -181,23 +184,63 @@ export const series = query({
   },
 });
 
+const YAHOO_CHUNK_SEC = 8 * 365 * 24 * 60 * 60;
+const YAHOO_HISTORY_START = 315532800; // 1980-01-01 UTC
+
+async function fetchPublicBars(
+  def: (typeof BENCHMARKS)[BenchmarkId],
+  lastAsOf: string | null,
+): Promise<{ source: string; bars: IndexBar[] }> {
+  const stooqUrl = stooqDailyUrl(def.stooq);
+  try {
+    const response = await fetch(stooqUrl, {
+      headers: { Accept: 'text/csv,text/plain' },
+    });
+    if (response.ok) {
+      const bars = parseStooqCsv(await response.text());
+      if (bars.length > 0) return { source: stooqUrl, bars };
+    }
+  } catch {
+    // Fall through to Yahoo — Stooq often serves a JS challenge to datacenter IPs.
+  }
+
+  const period2 = Math.floor(Date.now() / 1000);
+  let period1 = lastAsOf
+    ? Math.floor(Date.parse(`${lastAsOf}T00:00:00Z`) / 1000) - 14 * 24 * 60 * 60
+    : YAHOO_HISTORY_START;
+  const bars: IndexBar[] = [];
+  let source = yahooChartUrl(def.yahoo, period1, period2);
+  while (period1 < period2) {
+    const end = Math.min(period1 + YAHOO_CHUNK_SEC, period2);
+    source = yahooChartUrl(def.yahoo, period1, end);
+    const response = await fetch(source, {
+      headers: { Accept: 'application/json', 'User-Agent': 'alpha-finance-benchmarks' },
+    });
+    if (!response.ok) {
+      throw new Error(`Yahoo ${def.yahoo} HTTP ${response.status}`);
+    }
+    bars.push(...parseYahooChart(await response.json()));
+    period1 = end;
+  }
+  const seen = new Set<string>();
+  const unique = bars.filter((bar) => {
+    if (seen.has(bar.asOf)) return false;
+    seen.add(bar.asOf);
+    return true;
+  });
+  unique.sort((a, b) => a.asOf.localeCompare(b.asOf));
+  return { source, bars: unique };
+}
+
 async function fetchAndCache(
   ctx: ActionCtx,
   symbol: BenchmarkId,
 ): Promise<{ symbol: string; fetched: number; inserted: number }> {
   const def = BENCHMARKS[symbol] ?? BENCHMARKS.SPX;
-  const url = stooqDailyUrl(def.stooq);
-  const response = await fetch(url, {
-    headers: { Accept: 'text/csv,text/plain' },
-  });
-  if (!response.ok) {
-    throw new Error(`Stooq ${def.stooq} HTTP ${response.status}`);
-  }
-  const csv = await response.text();
-  const bars = parseStooqCsv(csv);
   const last = (await ctx.runQuery(internal.finance.market.lastAsOf, {
     symbol: def.id,
   })) as string | null;
+  const { source: url, bars } = await fetchPublicBars(def, last);
   const fresh = last ? bars.filter((bar) => bar.asOf > last) : bars;
   let inserted = 0;
   for (let i = 0; i < fresh.length; i += UPSERT_BATCH) {

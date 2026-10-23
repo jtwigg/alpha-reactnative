@@ -6,9 +6,12 @@ import {
   closeOnOrBefore,
   indexFromX,
   parseStooqCsv,
+  parseYahooChart,
   rebaseClose,
   sampleBenchmarkDates,
   stooqDailyUrl,
+  unixSecondsToIsoDate,
+  yahooChartUrl,
 } from '../convex/finance/benchmarks';
 
 const CSV = [
@@ -22,6 +25,25 @@ const CSV = [
 describe('Stooq parse and rebase', () => {
   it('builds the public daily URL without a key', () => {
     expect(stooqDailyUrl('^spx')).toBe('https://stooq.com/q/d/l/?s=%5Espx&i=d');
+    expect(yahooChartUrl('^GSPC', 1, 2)).toBe(
+      'https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?period1=1&period2=2&interval=1d',
+    );
+  });
+
+  it('parses a Yahoo chart payload on New York dates', () => {
+    const bars = parseYahooChart({
+      chart: {
+        result: [
+          {
+            timestamp: [1636992000, 1792701108],
+            indicators: { quote: [{ close: [4682.5, 6712, null] }] },
+          },
+        ],
+      },
+    });
+    expect(unixSecondsToIsoDate(1636992000)).toBe('2021-11-15');
+    expect(bars[0]).toEqual({ asOf: '2021-11-15', close: 4682.5 });
+    expect(bars[1].close).toBe(6712);
   });
 
   it('parses a Stooq daily CSV', () => {
