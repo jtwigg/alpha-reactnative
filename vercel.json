@@ -3,5 +3,12 @@
   "framework": null,
   "installCommand": "pnpm install",
   "buildCommand": "pnpm --filter @rn-monorepo/reactnative export:web",
-  "outputDirectory": "packages/reactnative/dist"
+  "outputDirectory": "packages/reactnative/dist",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/((?!_expo(?:/|$)|assets(?:/|$)).*)",
+      "destination": "/index.html"
+    }
+  ]
 }
