@@ -3,7 +3,8 @@ import { StyleSheet, View } from 'react-native';
 
 import { classRows } from '@/components/finance/chart-tooltip';
 import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
-import { LegendItem } from '@/components/finance/ui';
+import { LegendChip } from '@/components/finance/legend-chip';
+import { useSeriesHighlight } from '@/hooks/use-series-highlight';
 import { classColor, classLabel } from '@/lib/finance-coverage';
 import type { ChartPoint } from '../../../server/convex/finance/series';
 
@@ -21,6 +22,7 @@ export function ClassChart({
     [points],
   );
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
+  const highlight = useSeriesHighlight();
   const series = useMemo<ChartSeries[]>(
     () =>
       classes.map((className) => ({
@@ -45,10 +47,17 @@ export function ClassChart({
         includeZero
         height={200}
         tooltipRows={(index) => classRows(points[index].byClass)}
+        highlight={highlight}
       />
       <View style={styles.legend}>
         {classes.map((className) => (
-          <LegendItem key={className} color={classColor(className)} label={classLabel(className)} />
+          <LegendChip
+            key={className}
+            seriesKey={className}
+            label={classLabel(className)}
+            color={classColor(className)}
+            highlight={highlight}
+          />
         ))}
       </View>
     </View>

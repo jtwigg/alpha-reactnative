@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 12,
   },
-  toggles: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  toggles: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', flexShrink: 1 },
   navigator: { gap: 6, marginTop: 4 },
   note: { textAlign: 'right' },
 });

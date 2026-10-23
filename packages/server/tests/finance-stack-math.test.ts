@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildStack, dragWindow, loanShare, normalizeStack, shade, windowIndexes } from '../../reactnative/lib/stack-math';
+import {
+  buildStack,
+  dragWindow,
+  loanShare,
+  normalizeStack,
+  seriesAtValue,
+  shade,
+  windowIndexes,
+  withoutSeries,
+} from '../../reactnative/lib/stack-math';
 
 const COLORS = {
   cash: '#16a34a',
@@ -83,5 +92,22 @@ describe('stack math', () => {
     expect(pct.series).toEqual([]);
     expect(pct.covered).toEqual([false]);
     expect(loanShare(empty, 0)).toBeNull();
+  });
+
+  it('recomputes totals without hidden series', () => {
+    const model = buildStack({ accounts, level: 'group', includeLoans: true, groupColors: COLORS });
+    const trimmed = withoutSeries(model, new Set(['investments', 'liability']));
+    expect(trimmed.series.map((s) => s.key)).toEqual(['cash', 'real_estate']);
+    expect(trimmed.positive).toEqual([100, 500, 600]);
+    expect(trimmed.negative).toEqual([0, 0, 0]);
+    expect(normalizeStack(trimmed).series[0].values).toEqual([100, 100, 100]);
+  });
+
+  it('finds the bar segment under a tapped value', () => {
+    const model = buildStack({ accounts, level: 'group', includeLoans: true, groupColors: COLORS });
+    expect(seriesAtValue(model, 1, 250)).toBe('cash');
+    expect(seriesAtValue(model, 1, 1_000)).toBe('investments');
+    expect(seriesAtValue(model, 1, -100)).toBe('liability');
+    expect(seriesAtValue(model, 1, 5_000)).toBeNull();
   });
 });

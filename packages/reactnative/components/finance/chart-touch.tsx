@@ -10,6 +10,9 @@ import {
 
 import { indexFromX } from '../../../server/convex/finance/benchmarks';
 
+const TAP_MS = 300;
+const TAP_SLOP = 10;
+
 /**
  * Press-and-drag (hover on web) surface. Children never receive touches, so
  * `locationX` is always relative to this frame rather than a child line view.
@@ -21,6 +24,7 @@ export function ChartTouch({
   height,
   onScrub,
   onWidth,
+  onTap,
   children,
 }: {
   count: number;
@@ -29,9 +33,12 @@ export function ChartTouch({
   height: number;
   onScrub: (index: number | null) => void;
   onWidth?: (width: number) => void;
+  /** Quick press without dragging; `y` is relative to this frame. */
+  onTap?: (index: number, y: number) => void;
   children: React.ReactNode;
 }) {
   const widthRef = useRef(1);
+  const press = useRef<{ t: number; x: number; y: number; moved: boolean } | null>(null);
   const lastIndex = useRef<number | null>(null);
 
   const onLayout = useCallback(
@@ -60,7 +67,25 @@ export function ChartTouch({
   );
 
   const grant = (event: GestureResponderEvent) => {
-    emit(fromX(event.nativeEvent.locationX));
+    const { locationX, locationY } = event.nativeEvent;
+    press.current = { t: Date.now(), x: locationX, y: locationY, moved: false };
+    emit(fromX(locationX));
+  };
+
+  const move = (event: GestureResponderEvent) => {
+    const { locationX, locationY } = event.nativeEvent;
+    const start = press.current;
+    if (start && Math.hypot(locationX - start.x, locationY - start.y) > TAP_SLOP) start.moved = true;
+    emit(fromX(locationX));
+  };
+
+  const release = () => {
+    const start = press.current;
+    press.current = null;
+    if (onTap && start && !start.moved && Date.now() - start.t < TAP_MS) {
+      onTap(fromX(start.x), start.y);
+    }
+    emit(null);
   };
 
   const webProps =
@@ -88,9 +113,12 @@ export function ChartTouch({
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={grant}
-      onResponderMove={grant}
-      onResponderRelease={() => emit(null)}
-      onResponderTerminate={() => emit(null)}
+      onResponderMove={move}
+      onResponderRelease={release}
+      onResponderTerminate={() => {
+        press.current = null;
+        emit(null);
+      }}
       accessibilityHint="Press and drag to see values by day"
       {...webProps}>
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
