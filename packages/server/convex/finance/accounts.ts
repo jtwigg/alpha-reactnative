@@ -5,11 +5,13 @@ import { requireAllowedIdentity } from '../allowlist';
 import {
   ACCOUNT_LIST_CAP,
   HOLDINGS_CAP,
+  SPARKLINE_POINTS,
   accountHistory,
   clampPageSize,
   groupAccounts,
   holdingsView,
   institutionLabel,
+  sparklineRows,
   toListRow,
   typeLabel,
 } from './accountModel';
@@ -21,6 +23,7 @@ import {
   loadAccountEnds,
   loadChartSnapshots,
   rangeWindow,
+  strideChartDates,
   type RangeKey,
 } from './series';
 import {
@@ -78,6 +81,59 @@ export const list = query({
       );
     }
     return groupAccounts(rows);
+  },
+});
+
+const sparklineRowValidator = v.object({
+  sourceId: v.string(),
+  values: v.array(v.union(v.number(), v.null())),
+  change: v.number(),
+  changePct: v.union(v.number(), v.null()),
+  tone: v.union(v.literal('good'), v.literal('bad'), v.literal('flat')),
+});
+
+/**
+ * Downsampled balance lines for every account over one range, in a single
+ * query. Each account costs two end reads plus one at-or-before probe per
+ * grid date; the grid shrinks when there are many accounts so the total stays
+ * under the read budget.
+ */
+export const sparklines = query({
+  args: { range: rangeKeyValidator, refreshNonce: v.optional(v.number()) },
+  returns: v.object({
+    range: rangeKeyValidator,
+    asOf: v.string(),
+    dates: v.array(v.string()),
+    rows: v.array(sparklineRowValidator),
+    documentsRead: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    const range = args.range as RangeKey;
+    if (!(RANGE_KEYS as readonly string[]).includes(range)) {
+      throw new Error('Invalid range');
+    }
+    const accounts = await ctx.db.query('accounts').take(ACCOUNT_LIST_CAP);
+    const accountIds = accounts.map((row) => row.sourceId);
+    const lookup = snapshotLookup(ctx);
+    const ends = await loadAccountEnds(lookup, accountIds);
+    const asOf = ends.maxAsOf ?? todayInTimeZone();
+    const window = rangeWindow(range, asOf, ends.firstAsOf);
+    const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
+    const chart = await loadChartSnapshots(
+      lookup,
+      accountIds,
+      dates,
+      CONVEX_QUERY_READ_BUDGET - accounts.length,
+      ends,
+    );
+    return {
+      range,
+      asOf,
+      dates,
+      rows: sparklineRows({ accounts, snapshots: chart.snapshots, dates }),
+      documentsRead: chart.documentsRead + accounts.length,
+    };
   },
 });
 

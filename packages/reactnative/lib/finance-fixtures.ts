@@ -6,15 +6,21 @@ import {
   accountHistory,
   groupAccounts,
   holdingsView,
+  SPARKLINE_POINTS,
   institutionLabel,
+  sparklineRows,
   toListRow,
   typeLabel,
   type AccountListModel,
   type AccountRecord,
   type HoldingsModel,
+  type SparklineRow,
 } from '../../server/convex/finance/accountModel';
 import {
   buildNetWorthModel,
+  chartDates,
+  rangeWindow,
+  strideChartDates,
   type NetWorthPageModel,
   type RangeKey,
   type SeriesAccount,
@@ -248,6 +254,13 @@ export function demoAccountList(): AccountListModel {
   return groupAccounts(
     accounts.map((account) => toListRow(demoRecord(account.sourceId)!, latestFor(account.sourceId))),
   );
+}
+
+export function demoAccountSparklines(range: RangeKey): { dates: string[]; rows: SparklineRow[] } {
+  const earliest = snapshots.reduce<string | null>((min, row) => (min == null || row.asOf < min ? row.asOf : min), null);
+  const window = rangeWindow(range, AS_OF, earliest);
+  const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
+  return { dates, rows: sparklineRows({ accounts, snapshots, dates }) };
 }
 
 export function demoAccountDetail(sourceId: string, range: RangeKey): DemoAccountDetail | null {

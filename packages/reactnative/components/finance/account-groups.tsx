@@ -1,6 +1,6 @@
 import { useRouter, type Href } from 'expo-router';
 import { Fragment } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import {
   Avatar,
@@ -12,13 +12,16 @@ import {
   TABULAR,
   useFinancePalette,
 } from '@/components/finance/ui';
+import { Sparkline } from '@/components/finance/sparkline';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
+import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 import type {
   AccountGroup,
   AccountGroupKey,
   AccountListModel,
   AccountListRow,
+  ChangeTone,
+  SparklineRow,
 } from '../../../server/convex/finance/accountModel';
 
 export const GROUP_COLORS: Record<AccountGroupKey, string> = {
@@ -34,7 +37,21 @@ export function accountHref(sourceId: string, demo: boolean): Href {
   return (demo ? `${base}?demo=1` : base) as Href;
 }
 
-export function AccountGroups({ model, demo }: { model: AccountListModel; demo: boolean }) {
+export type AccountTrends = {
+  /** undefined while loading; rows missing from the map have no trend. */
+  rows: Map<string, SparklineRow> | undefined;
+  rangeLabel: string;
+};
+
+export function AccountGroups({
+  model,
+  demo,
+  trends,
+}: {
+  model: AccountListModel;
+  demo: boolean;
+  trends?: AccountTrends;
+}) {
   if (model.groups.length === 0) {
     return (
       <Card>
@@ -48,13 +65,13 @@ export function AccountGroups({ model, demo }: { model: AccountListModel; demo: 
   return (
     <View style={styles.groups}>
       {model.groups.map((group) => (
-        <GroupCard key={group.key} group={group} demo={demo} />
+        <GroupCard key={group.key} group={group} demo={demo} trends={trends} />
       ))}
     </View>
   );
 }
 
-function GroupCard({ group, demo }: { group: AccountGroup; demo: boolean }) {
+function GroupCard({ group, demo, trends }: { group: AccountGroup; demo: boolean; trends?: AccountTrends }) {
   const palette = useFinancePalette();
   const color = GROUP_COLORS[group.key];
   return (
@@ -80,20 +97,35 @@ function GroupCard({ group, demo }: { group: AccountGroup; demo: boolean }) {
       {group.accounts.map((account, index) => (
         <Fragment key={account.sourceId}>
           {index > 0 ? <Divider inset={66} /> : null}
-          <AccountRow account={account} color={color} demo={demo} />
+          <AccountRow account={account} color={color} demo={demo} trends={trends} />
         </Fragment>
       ))}
     </Card>
   );
 }
 
-function AccountRow({ account, color, demo }: { account: AccountListRow; color: string; demo: boolean }) {
+function AccountRow({
+  account,
+  color,
+  demo,
+  trends,
+}: {
+  account: AccountListRow;
+  color: string;
+  demo: boolean;
+  trends?: AccountTrends;
+}) {
   const router = useRouter();
   const palette = useFinancePalette();
+  const { width } = useWindowDimensions();
+  const compact = width < 560;
+  const trend = trends?.rows?.get(account.sourceId);
+  const trendText =
+    trend && trend.changePct != null ? `, ${formatPct(trend.changePct)} ${trends?.rangeLabel ?? ''}` : '';
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${account.name}, ${formatUsd(account.signedBalance)}`}
+      accessibilityLabel={`${account.name}, ${formatUsd(account.signedBalance)}${trendText}`}
       onPress={() => router.push(accountHref(account.sourceId, demo))}
       style={(state) => {
         const hovered = (state as { hovered?: boolean }).hovered;
@@ -105,7 +137,7 @@ function AccountRow({ account, color, demo }: { account: AccountListRow; color: 
           <FText variant="body" style={styles.name} numberOfLines={1}>
             {account.name}
           </FText>
-          {account.mask ? (
+          {account.mask && !compact ? (
             <FText variant="caption" tone="subtle">
               ••{account.mask}
             </FText>
@@ -113,11 +145,18 @@ function AccountRow({ account, color, demo }: { account: AccountListRow; color: 
         </View>
         <View style={styles.rowMeta}>
           <FText variant="caption" tone="muted" numberOfLines={1} style={styles.metaText}>
+            {compact && account.mask ? `••${account.mask} · ` : ''}
             {account.institution} · {account.type}
           </FText>
           {account.isManual ? <Badge label="Manual" /> : null}
         </View>
+        {compact ? (
+          <FText variant="caption" tone="subtle">
+            Updated {formatCoverageDate(account.lastUpdated)}
+          </FText>
+        ) : null}
       </View>
+      {trends && !compact ? <TrendCell trends={trends} trend={trend} sparkWidth={width >= 720 ? 96 : 72} /> : null}
       <View style={styles.rowRight}>
         <FText
           variant="body"
@@ -125,12 +164,58 @@ function AccountRow({ account, color, demo }: { account: AccountListRow; color: 
           style={[styles.balance, TABULAR]}>
           {formatUsd(account.signedBalance)}
         </FText>
-        <FText variant="caption" tone="subtle">
-          {formatCoverageDate(account.lastUpdated)}
-        </FText>
+        {compact ? (
+          trends ? <TrendCell trends={trends} trend={trend} sparkWidth={44} inline /> : null
+        ) : (
+          <FText variant="caption" tone="subtle">
+            {formatCoverageDate(account.lastUpdated)}
+          </FText>
+        )}
       </View>
       <IconSymbol name="chevron.right" size={18} color={palette.subtle} />
     </Pressable>
+  );
+}
+
+function toneColor(tone: ChangeTone, palette: ReturnType<typeof useFinancePalette>): string {
+  if (tone === 'good') return palette.positive;
+  if (tone === 'bad') return palette.negative;
+  return palette.subtle;
+}
+
+/** Stacked (sparkline over %) beside the balance, or inline under it on narrow screens. */
+function TrendCell({
+  trends,
+  trend,
+  sparkWidth,
+  inline = false,
+}: {
+  trends: AccountTrends;
+  trend: SparklineRow | undefined;
+  sparkWidth: number;
+  inline?: boolean;
+}) {
+  const palette = useFinancePalette();
+  const sparkHeight = inline ? 16 : 26;
+  const layout = inline ? styles.trendInline : [styles.trend, { width: sparkWidth }];
+  if (trends.rows === undefined) {
+    return (
+      <View style={layout}>
+        <View
+          style={[styles.sparkSkeleton, { width: sparkWidth, height: sparkHeight, backgroundColor: palette.chip }]}
+        />
+        <View style={[styles.pctSkeleton, { backgroundColor: palette.chip }]} />
+      </View>
+    );
+  }
+  const color = trend ? toneColor(trend.tone, palette) : palette.subtle;
+  return (
+    <View style={layout}>
+      <Sparkline values={trend?.values ?? []} color={color} width={sparkWidth} height={sparkHeight} />
+      <Text style={[styles.pct, TABULAR, { color }]} numberOfLines={1}>
+        {trend && trend.changePct != null ? formatPct(trend.changePct) : '—'}
+      </Text>
+    </View>
   );
 }
 
@@ -163,4 +248,9 @@ const styles = StyleSheet.create({
   metaText: { flexShrink: 1 },
   rowRight: { alignItems: 'flex-end', gap: 3 },
   balance: { fontWeight: '600' },
+  trend: { alignItems: 'flex-end', gap: 2 },
+  trendInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sparkSkeleton: { borderRadius: 5, opacity: 0.6 },
+  pctSkeleton: { width: 34, height: 10, borderRadius: 4, opacity: 0.6 },
+  pct: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
 });
