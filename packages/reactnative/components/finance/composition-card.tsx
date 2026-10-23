@@ -9,7 +9,7 @@ import { StackedChart } from '@/components/finance/stacked-chart';
 import { Card, FText, SectionHeader, Segmented, StateMessage, TogglePill, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { demoStack } from '@/lib/finance-fixtures';
-import { buildStack, windowIndexes, type StackLevel } from '@/lib/stack-math';
+import { buildStack, windowIndexes, type StackLevel, type StackMode } from '@/lib/stack-math';
 import { RANGE_KEYS, rangeWindow, type RangeKey } from '../../../server/convex/finance/series';
 
 type Window = { from: string; to: string };
@@ -17,6 +17,8 @@ type StackData = ReturnType<typeof demoStack>;
 
 const LEVEL_LABELS: Record<StackLevel, string> = { group: 'Groups', account: 'Accounts' };
 const LEVELS: readonly StackLevel[] = ['group', 'account'];
+const MODE_LABELS: Record<StackMode, string> = { absolute: 'Absolute', normalized: '100%' };
+const MODES: readonly StackMode[] = ['absolute', 'normalized'];
 
 /** Stacked composition chart with a navigator strip over the full history. */
 export function CompositionCard({
@@ -32,6 +34,9 @@ export function CompositionCard({
   const palette = useFinancePalette();
   const [level, setLevel] = useState<StackLevel>('group');
   const [includeLoans, setIncludeLoans] = useState(true);
+  const [mode, setMode] = useState<StackMode>('absolute');
+  const normalized = mode === 'normalized';
+  const stackLoans = includeLoans || normalized;
   const [committed, setCommitted] = useState<Window | null>(null);
   const [preview, setPreview] = useState<[number, number] | null>(null);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
@@ -86,9 +91,9 @@ export function CompositionCard({
   const model = useMemo(
     () =>
       shown
-        ? buildStack({ accounts: shown.data.accounts, level, includeLoans, groupColors: GROUP_COLORS })
+        ? buildStack({ accounts: shown.data.accounts, level, includeLoans: stackLoans, groupColors: GROUP_COLORS })
         : null,
-    [includeLoans, level, shown],
+    [level, shown, stackLoans],
   );
   const overviewLine = useMemo(() => {
     if (!overview) return [];
@@ -96,7 +101,7 @@ export function CompositionCard({
     return m.net.map((value, i) => (m.covered[i] ? value : null));
   }, [includeLoans, overview]);
 
-  useEffect(() => setScrubIndex(null), [shown, level, includeLoans]);
+  useEffect(() => setScrubIndex(null), [shown, level, includeLoans, mode]);
 
   const preset = useMemo<RangeKey | null>(() => {
     if (!overview || !window) return null;
@@ -141,14 +146,18 @@ export function CompositionCard({
           }}
         />
         <View style={styles.toggles}>
+          <Segmented options={MODES} value={mode} onChange={setMode} labels={MODE_LABELS} accessibilityLabel="Scale" />
           <Segmented options={LEVELS} value={level} onChange={setLevel} labels={LEVEL_LABELS} accessibilityLabel="Stack by" />
-          <TogglePill label="Loans" value={includeLoans} onChange={setIncludeLoans} color={GROUP_COLORS.liability} />
+          {normalized ? null : (
+            <TogglePill label="Loans" value={includeLoans} onChange={setIncludeLoans} color={GROUP_COLORS.liability} />
+          )}
         </View>
       </View>
       {shown && model ? (
         <StackedChart
           dates={shown.data.dates}
           model={model}
+          mode={mode}
           scrubIndex={scrubIndex}
           onScrub={setScrubIndex}
           netLabel={includeLoans ? 'Net worth' : 'Assets'}
@@ -175,7 +184,11 @@ export function CompositionCard({
         <FText variant="caption" tone="subtle" style={styles.note}>
           {shown?.coarse && !preview && live ? 'Loading detail… ' : ''}
           {shown?.data.step === 'day' ? 'Daily' : 'Weekly'} bars
-          {includeLoans ? ' · loans stack below zero' : ' · assets only'}
+          {normalized
+            ? ' · share of gross assets; loans shown separately'
+            : includeLoans
+              ? ' · loans stack below zero'
+              : ' · assets only'}
         </FText>
       </View>
     </Card>

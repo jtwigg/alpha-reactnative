@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStack, dragWindow, shade, windowIndexes } from '../../reactnative/lib/stack-math';
+import { buildStack, dragWindow, loanShare, normalizeStack, shade, windowIndexes } from '../../reactnative/lib/stack-math';
 
 const COLORS = {
   cash: '#16a34a',
@@ -56,5 +56,32 @@ describe('stack math', () => {
     expect(dragWindow(2, 6, 'end', -10, 10)).toEqual([2, 3]);
     expect(dragWindow(2, 6, 'body', 10, 10)).toEqual([5, 9]);
     expect(dragWindow(2, 6, 'body', -10, 10)).toEqual([0, 4]);
+  });
+
+  it('normalizes assets to 100% per bar and reports loans as a share of gross assets', () => {
+    const model = buildStack({ accounts, level: 'group', includeLoans: true, groupColors: COLORS });
+    const pct = normalizeStack(model);
+    expect(pct.series.map((s) => s.key)).toEqual(['cash', 'investments', 'real_estate']);
+    for (let i = 0; i < 3; i += 1) {
+      const sum = pct.series.reduce((total, s) => total + s.values[i], 0);
+      expect(sum).toBeCloseTo(100);
+    }
+    expect(pct.series[0].values[1]).toBeCloseTo((500 / 1_600) * 100);
+    expect(pct.negative).toEqual([0, 0, 0]);
+    expect(loanShare(model, 0)).toBe(0);
+    expect(loanShare(model, 2)).toBeCloseTo(300 / 1_800);
+  });
+
+  it('leaves bars empty where there are no assets', () => {
+    const empty = buildStack({
+      accounts: [{ sourceId: 'loan', name: 'Loan', class: 'liability', group: 'liability', values: [500] }],
+      level: 'account',
+      includeLoans: true,
+      groupColors: COLORS,
+    });
+    const pct = normalizeStack(empty);
+    expect(pct.series).toEqual([]);
+    expect(pct.covered).toEqual([false]);
+    expect(loanShare(empty, 0)).toBeNull();
   });
 });
