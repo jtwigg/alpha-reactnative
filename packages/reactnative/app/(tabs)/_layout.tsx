@@ -1,8 +1,8 @@
-import { Redirect } from 'expo-router';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
+import { AccessDenied } from '@/components/access-denied';
 import { HapticTab } from '@/components/haptic-tab';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -13,7 +13,7 @@ import { isClerkConfigured } from '@/lib/convex';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { isLoading, isAuthenticated } = useStoreUser();
+  const { isLoading, isAuthenticated, isDenied } = useStoreUser();
 
   if (isClerkConfigured() && isLoading) {
     return (
@@ -21,6 +21,10 @@ export default function TabLayout() {
         <ActivityIndicator size="large" />
       </ThemedView>
     );
+  }
+
+  if (isDenied) {
+    return <AccessDenied />;
   }
 
   if (!isAuthenticated) {
