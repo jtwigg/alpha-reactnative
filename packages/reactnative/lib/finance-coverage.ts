@@ -56,12 +56,61 @@ export function isBeforeCoverage(
   return asOf < start;
 }
 
+export const CLASS_LABELS: Record<string, string> = {
+  cash: 'Cash',
+  credit: 'Credit',
+  liability: 'Loans',
+  investments: 'Investments',
+  real_estate: 'Home',
+};
+
+export const CLASS_COLORS: Record<string, string> = {
+  cash: '#1a7f37',
+  credit: '#cf222e',
+  liability: '#9a3412',
+  investments: '#0a7ea4',
+  real_estate: '#6e40c9',
+};
+
+export function classLabel(className: string): string {
+  return CLASS_LABELS[className] ?? className;
+}
+
+export function classColor(className: string): string {
+  return CLASS_COLORS[className] ?? '#687076';
+}
+
 export function formatUsd(amount: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(amount);
+}
+
+export function formatUsdSigned(amount: number): string {
+  const abs = formatUsd(Math.abs(amount));
+  if (amount > 0) return `+${abs}`;
+  if (amount < 0) return `−${abs}`;
+  return abs;
+}
+
+export function formatPct(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return '—';
+  const pct = value * 100;
+  const body = `${Math.abs(pct).toFixed(1)}%`;
+  if (pct > 0) return `+${body}`;
+  if (pct < 0) return `−${body}`;
+  return body;
+}
+
+export function formatSynced(ms: number | null): string {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 export function formatCoverageDate(iso: string): string {

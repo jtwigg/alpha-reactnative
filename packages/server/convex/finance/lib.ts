@@ -53,24 +53,55 @@ export function decidePlainWrite(
 }
 
 /**
- * Equal-or-higher incoming precedence wins. Lower incoming never overwrites.
- * Same hash + same-or-lower is unchanged; higher precedence with same
- * business fields except source still updates (source is hashed).
+ * Pusher is master against the stored row: a sent row overwrites the same
+ * key. Exception: interpolated never overwrites a non-interpolated row
+ * (fillGaps and interpolated ingest). Intra-batch collisions are resolved
+ * separately with `selectBatchWinner` (manual > observed > reconstructed >
+ * interpolated; later row wins ties).
  */
 export function decideSnapshotWrite(
   existing: { source: SnapshotSource; contentHash: string } | null,
   incoming: { source: SnapshotSource; contentHash: string },
 ): RowStatus {
   if (existing === null) return 'inserted';
-  const incomingRank = SNAPSHOT_PRECEDENCE[incoming.source];
-  const existingRank = SNAPSHOT_PRECEDENCE[existing.source];
-  if (incomingRank < existingRank) {
+  if (incoming.source === 'interpolated' && existing.source !== 'interpolated') {
     return 'skipped_lower_precedence';
   }
   if (existing.contentHash === incoming.contentHash) {
     return 'unchanged';
   }
   return 'updated';
+}
+
+export function snapshotRank(source: SnapshotSource): number {
+  return SNAPSHOT_PRECEDENCE[source];
+}
+
+/**
+ * Keep the highest-precedence item. On a tie, the later index wins.
+ * `losers` are original indexes that lost.
+ */
+export function selectBatchWinner<T>(
+  items: readonly T[],
+  rank: (item: T, index: number) => number,
+): { winner: T; winnerIndex: number; loserIndexes: number[] } {
+  if (items.length === 0) {
+    throw new Error('selectBatchWinner: empty group');
+  }
+  let winnerIndex = 0;
+  let best = rank(items[0], 0);
+  for (let i = 1; i < items.length; i += 1) {
+    const value = rank(items[i], i);
+    if (value >= best) {
+      best = value;
+      winnerIndex = i;
+    }
+  }
+  const loserIndexes: number[] = [];
+  for (let i = 0; i < items.length; i += 1) {
+    if (i !== winnerIndex) loserIndexes.push(i);
+  }
+  return { winner: items[winnerIndex], winnerIndex, loserIndexes };
 }
 
 export type InterpolatedPoint = {

@@ -25,4 +25,8 @@ describe('finance reads (e2e)', () => {
   it('rejects unauthenticated netWorth', async () => {
     await expect(client.query(api.finance.queries.netWorth)).rejects.toThrow();
   });
+
+  it('rejects unauthenticated page', async () => {
+    await expect(client.query(api.finance.queries.page, {})).rejects.toThrow();
+  });
 });

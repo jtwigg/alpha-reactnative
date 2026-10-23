@@ -8,48 +8,39 @@ export function CoverageLegend() {
     <View style={styles.card}>
       <ThemedText type="defaultSemiBold">History coverage</ThemedText>
       <ThemedText style={styles.lead}>
-        Investment coverage begins {formatCoverageDate(FINANCE_COVERAGE.investments.start)}{' '}
-        and {formatCoverageDate(FINANCE_COVERAGE.investments.lateStart)} for some accounts.
-        Those balances were held flat before coverage — that stretch is not a gain.
+        Accounts are left out of totals until their first stored point — they
+        are never drawn as $0. Gaps after that are bridged with a lighter dashed
+        interpolated line. Manual rows (home, mortgage) can extend history
+        further back than a provider feed.
       </ThemedText>
 
       <View style={styles.timeline} accessibilityLabel="Coverage timeline">
-        <View style={[styles.band, styles.bandPartial]} />
-        <View style={[styles.band, styles.bandMixed]} />
-        <View style={[styles.band, styles.bandFull]} />
+        <View style={[styles.band, styles.bandHome]} />
+        <View style={[styles.band, styles.bandCash]} />
+        <View style={[styles.band, styles.bandInvest]} />
+        <View style={[styles.band, styles.bandLate]} />
       </View>
       <View style={styles.axis}>
+        <ThemedText style={styles.tick}>Manual home</ThemedText>
         <ThemedText style={styles.tick}>Oct 2025 cash</ThemedText>
         <ThemedText style={styles.tick}>Jul 31 2026</ThemedText>
         <ThemedText style={styles.tick}>Oct 12 2026</ThemedText>
       </View>
 
-      <View style={styles.swatches}>
-        <Swatch color="#d0d7de" label="Held flat / partial data" />
-        <Swatch color="#9ec5e8" label="Investments (some accounts)" />
-        <Swatch color="#0a7ea4" label="Covered history" />
-      </View>
-
       <View style={styles.rows}>
         <CoverageRow
+          title="Home & loans"
+          detail="Manual snapshots. History can start years before Plaid."
+        />
+        <CoverageRow
           title="Cash & credit"
-          detail={`Starts ${formatCoverageDate(FINANCE_COVERAGE.cash.start)}. ${FINANCE_COVERAGE.cash.note}`}
+          detail={`Provider coverage from ${formatCoverageDate(FINANCE_COVERAGE.cash.start)}.`}
         />
         <CoverageRow
           title="Investments"
-          detail={FINANCE_COVERAGE.investments.note}
+          detail={`Most accounts ${formatCoverageDate(FINANCE_COVERAGE.investments.start)}; some ${formatCoverageDate(FINANCE_COVERAGE.investments.lateStart)}.`}
         />
-        <CoverageRow title="Real estate" detail={FINANCE_COVERAGE.real_estate.note} />
       </View>
-    </View>
-  );
-}
-
-function Swatch({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.swatch}>
-      <View style={[styles.swatchChip, { backgroundColor: color }]} />
-      <ThemedText style={styles.swatchLabel}>{label}</ThemedText>
     </View>
   );
 }
@@ -81,19 +72,16 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   band: { flex: 1 },
-  bandPartial: { flex: 3, backgroundColor: '#d0d7de' },
-  bandMixed: { flex: 1, backgroundColor: '#9ec5e8' },
-  bandFull: { flex: 1.2, backgroundColor: '#0a7ea4' },
+  bandHome: { flex: 2.4, backgroundColor: '#d8c7f0' },
+  bandCash: { flex: 1.4, backgroundColor: '#c6e6d0' },
+  bandInvest: { flex: 0.8, backgroundColor: '#9ec5e8' },
+  bandLate: { flex: 0.35, backgroundColor: '#0a7ea4' },
   axis: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
   },
   tick: { fontSize: 11, opacity: 0.7, flex: 1 },
-  swatches: { gap: 6, marginTop: 4 },
-  swatch: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  swatchChip: { width: 12, height: 12, borderRadius: 3 },
-  swatchLabel: { fontSize: 13, opacity: 0.8 },
   rows: { gap: 10, marginTop: 4 },
   row: { gap: 2 },
   detail: { fontSize: 13, opacity: 0.75, lineHeight: 18 },

@@ -39,6 +39,7 @@ const SNAPSHOT_GOLDEN =
 
 const ACCOUNT_FIELDS = {
   sourceId: 'acc_1',
+  provider: 'plaid',
   connectionId: 'conn_plaid',
   class: 'investments',
   name: 'Brokerage',
@@ -56,6 +57,7 @@ const ACCOUNT_CANONICAL = [
   'finance.v1',
   'accounts',
   'sourceId=acc_1',
+  'provider=plaid',
   'connectionId=conn_plaid',
   'class=investments',
   'name=Brokerage',
@@ -70,7 +72,7 @@ const ACCOUNT_CANONICAL = [
 ].join('\n');
 
 const ACCOUNT_GOLDEN =
-  '7f1b7605514c18d31ef3643ea8de8bacbf78970d826ff7f332fcc405c8f75e62';
+  '54f4a0c53ae58ffe21b7706f11fc28f20578cab01dc9dde2c6bb4099191ca06c';
 
 describe('money / integer formatting', () => {
   it('formats money to 8 fixed decimals', () => {
@@ -141,6 +143,7 @@ describe('canonicalizeFinanceRow', () => {
   it('uses declared field order for every table', () => {
     expect([...FINANCE_FIELD_ORDER.accounts]).toEqual([
       'sourceId',
+      'provider',
       'connectionId',
       'class',
       'name',

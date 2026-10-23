@@ -13,7 +13,9 @@
  *   3. Line 2 is the table name (`accounts` | `balance_snapshots` |
  *      `transactions` | `holdings`).
  *   4. Then one `name=value` line per business field, in the **declared**
- *      order for that table (not sorted at runtime).
+ *      order for that table (not sorted at runtime). Accounts include
+ *      `provider` immediately after `sourceId`; manual accounts hash
+ *      `connectionId=null`.
  *   5. Value encoding:
  *        - missing / undefined / null → the 4-byte ASCII token `null`
  *        - string → UTF-8 as-is after `\r` and `\n` are replaced with space
@@ -84,6 +86,7 @@ export const SNAPSHOT_PRECEDENCE: Record<SnapshotSource, number> = {
 
 const ACCOUNT_FIELDS = [
   'sourceId',
+  'provider',
   'connectionId',
   'class',
   'name',

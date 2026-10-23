@@ -25,7 +25,8 @@ export default defineSchema({
 
   accounts: defineTable({
     sourceId: v.string(),
-    connectionId: v.string(),
+    provider: v.string(),
+    connectionId: v.optional(v.string()),
     class: v.string(),
     name: v.string(),
     mask: v.optional(v.string()),
@@ -38,7 +39,9 @@ export default defineSchema({
     coverageStart: v.optional(v.string()),
     updatedAt: v.number(),
     contentHash: v.string(),
-  }).index('by_sourceId', ['sourceId']),
+  })
+    .index('by_sourceId', ['sourceId'])
+    .index('by_class', ['class']),
 
   balance_snapshots: defineTable({
     accountId: v.string(),

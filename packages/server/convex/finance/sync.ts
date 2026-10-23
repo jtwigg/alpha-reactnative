@@ -289,6 +289,7 @@ export const exportBucket = internalQuery({
             updatedAt: row.updatedAt,
             sourceId: row.sourceId,
             accountId: row.sourceId,
+            provider: row.provider,
             connectionId: row.connectionId,
             class: row.class,
             name: row.name,

@@ -344,4 +344,8 @@ npx convex run finance/sync:exportBucket '{"table":"balance_snapshots","accountI
 
 Each upsert takes `{ items: [...] }` (cap 500). The pusher is master: a sent row overwrites the stored row for the same key. Within one batch, if keys collide, the highest-precedence snapshot is kept (**manual > observed > reconstructed > interpolated**). Dedup keys: accounts + transactions by `sourceId`; snapshots by `accountId+asOf`; holdings by `accountId+symbol+asOf`. Manual assets use `provider: "manual"` (no `connectionId`) and snapshot `source: "manual"`.
 
-Reads use the same `ALLOWED_EMAILS` / `ALLOWED_USER_IDS` guard as the rest of the app. Investment coverage starts **31 Jul 2026** (some accounts **12 Oct 2026**). Charts draw continuous lines and do not treat an account as $0 before its first point.
+Reads (`isAllowed`, `accounts`, `snapshots`, `holdings`, `netWorth`, `page`) use `requireAllowedIdentity` — the same `ALLOWED_EMAILS` / `ALLOWED_USER_IDS` default-deny as the rest of the app. There is no `FINANCE_ALLOWED_USER_IDS`.
+
+`contentHash` is SHA-256 (lowercase hex) of `finance.v1` + table + declared fields (`accounts`: sourceId, provider, connectionId, class, name, mask, type, subtype, currentBalance, availableBalance, currency, syncedAt, coverageStart). Missing values are the token `null`. Money is 8 fixed decimals. `finance/sync:digest` buckets by `(table, accountId, YYYY-MM)`; `bucketHash` is SHA-256 of that bucket's content hashes sorted and joined by LF.
+
+Investment coverage starts **31 Jul 2026** (some accounts **12 Oct 2026**). Charts draw continuous lines. Gaps are a lighter dashed interpolated segment. An account is omitted from totals until its first stored point — never treated as $0 — and a coverage marker is shown instead of a step. The Net Worth page is display-only.

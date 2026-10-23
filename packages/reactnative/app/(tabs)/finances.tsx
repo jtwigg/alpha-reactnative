@@ -1,31 +1,46 @@
 import { useQuery } from 'convex/react';
+import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AccountTable } from '@/components/finance/account-table';
+import { Breakdown } from '@/components/finance/breakdown';
+import { ClassChart } from '@/components/finance/class-chart';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
+import { NetWorthChart } from '@/components/finance/net-worth-chart';
+import { RangePills } from '@/components/finance/range-pills';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
-import {
-  coverageForClass,
-  formatCoverageDate,
-  formatUsd,
-  isBeforeCoverage,
-} from '@/lib/finance-coverage';
+import { formatPct, formatUsd, formatUsdSigned } from '@/lib/finance-coverage';
+import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
+import { demoNetWorthPage } from '@/lib/finance-fixtures';
+import type { RangeKey } from '../../../server/convex/finance/series';
 
 export default function FinancesScreen() {
-  if (!isClerkConfigured()) {
+  const demo = useFinanceDemo();
+  if (!isClerkConfigured() && !demo && !isFinanceDemoFlag()) {
     return null;
   }
-  return <NetWorthPage />;
+  return <NetWorthPage demo={demo} />;
 }
 
-function NetWorthPage() {
-  const allowed = useQuery(api.finance.queries.isAllowed);
-  const netWorth = useQuery(api.finance.queries.netWorth, allowed ? {} : 'skip');
+function NetWorthPage({ demo }: { demo: boolean }) {
+  const [range, setRange] = useState<RangeKey>('All');
+  const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
+  const live = useQuery(
+    api.finance.queries.page,
+    allowed ? { range } : 'skip',
+  );
 
-  if (allowed === undefined) {
+  const data = useMemo(() => {
+    if (allowed && live && live.accounts.length > 0) return live;
+    if (demo) return demoNetWorthPage(range);
+    return live;
+  }, [allowed, demo, live, range]);
+
+  if (!demo && allowed === undefined) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -33,12 +48,12 @@ function NetWorthPage() {
     );
   }
 
-  if (!allowed) {
+  if (!demo && allowed === false) {
     return (
       <ThemedView style={styles.flex}>
         <SafeAreaView style={styles.flex} edges={['top']}>
           <View style={styles.header}>
-            <ThemedText type="title">Finances</ThemedText>
+            <ThemedText type="title">Personal finances</ThemedText>
             <ThemedText style={styles.muted}>This section is not available for this account.</ThemedText>
           </View>
         </SafeAreaView>
@@ -46,7 +61,7 @@ function NetWorthPage() {
     );
   }
 
-  if (netWorth === undefined) {
+  if (!data) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -54,85 +69,42 @@ function NetWorthPage() {
     );
   }
 
-  const classes = Object.entries(netWorth.byClass).sort(([a], [b]) => a.localeCompare(b));
+  const usingDemo = demo && !(allowed && live && live.accounts.length > 0);
+  const positive = data.change >= 0;
 
   return (
     <ThemedView style={styles.flex}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <ScrollView contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Net worth</ThemedText>
-          <ThemedText style={styles.headline}>{formatUsd(netWorth.total)}</ThemedText>
+          {usingDemo ? (
+            <View style={styles.demoBanner}>
+              <ThemedText style={styles.demoText}>
+                Fixture data for layout only — invented accounts, not real balances.
+              </ThemedText>
+            </View>
+          ) : null}
+
+          <ThemedText style={styles.headline}>{formatUsd(data.headline)}</ThemedText>
+          <ThemedText style={[styles.delta, { color: positive ? '#1a7f37' : '#cf222e' }]}>
+            {formatUsdSigned(data.change)} ({formatPct(data.changePct)}) · {range}
+          </ThemedText>
           <ThemedText style={styles.muted}>
-            Signed total by class (credit / liability as negative). History is only as
-            complete as the coverage bands below.
+            Continuous totals. An account is omitted until its first point, so
+            coverage changes are marked instead of a $0 step. Display-only —
+            Finance writes every row.
           </ThemedText>
 
+          <RangePills value={range} onChange={setRange} />
+          <NetWorthChart points={data.points} markers={data.coverageMarkers} />
+          <ClassChart points={data.points} />
           <CoverageLegend />
-
-          <ThemedText type="subtitle" style={styles.section}>
-            By class
-          </ThemedText>
-          {classes.length === 0 ? (
-            <ThemedText style={styles.muted}>No accounts ingested yet.</ThemedText>
-          ) : (
-            classes.map(([className, amount]) => {
-              const coverage = coverageForClass(className);
-              return (
-                <View key={className} style={styles.classRow}>
-                  <View style={styles.classText}>
-                    <ThemedText type="defaultSemiBold">{coverage.label}</ThemedText>
-                    {coverage.start ? (
-                      <ThemedText style={styles.small}>
-                        Coverage from {formatCoverageDate(coverage.start)}
-                        {'lateStart' in coverage && coverage.lateStart
-                          ? ` (some accounts ${formatCoverageDate(coverage.lateStart)})`
-                          : ''}
-                      </ThemedText>
-                    ) : (
-                      <ThemedText style={styles.small}>{coverage.note}</ThemedText>
-                    )}
-                  </View>
-                  <ThemedText type="defaultSemiBold">{formatUsd(amount)}</ThemedText>
-                </View>
-              );
-            })
-          )}
+          <Breakdown assets={data.assets} liabilities={data.liabilities} byClass={data.byClass} />
 
           <ThemedText type="subtitle" style={styles.section}>
             Accounts
           </ThemedText>
-          {netWorth.accounts.length === 0 ? (
-            <ThemedText style={styles.muted}>
-              Ingest accounts with `npx convex run finance/ingest:upsertAccounts`.
-            </ThemedText>
-          ) : (
-            netWorth.accounts.map((account) => {
-              const snap = account.latestSnapshot;
-              const asOf = snap?.asOf;
-              const coverageStart =
-                account.coverageStart ??
-                (account.class === 'investments' ? '2026-07-31' : undefined);
-              const partial = isBeforeCoverage(asOf, account.class, coverageStart);
-              return (
-                <View key={account.sourceId} style={styles.account}>
-                  <View style={styles.accountTop}>
-                    <ThemedText type="defaultSemiBold">{account.name}</ThemedText>
-                    <ThemedText>{formatUsd(snap?.balance ?? account.currentBalance)}</ThemedText>
-                  </View>
-                  <ThemedText style={styles.small}>
-                    {coverageForClass(account.class).label}
-                    {asOf ? ` · as of ${formatCoverageDate(asOf)}` : ' · current balance only'}
-                    {snap?.source ? ` · ${snap.source}` : ''}
-                  </ThemedText>
-                  {partial ? (
-                    <View style={styles.badge}>
-                      <ThemedText style={styles.badgeText}>Partial data</ThemedText>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })
-          )}
+          <AccountTable accounts={data.accounts} />
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -142,41 +114,17 @@ function NetWorthPage() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scroll: { padding: 20, gap: 12, paddingBottom: 48 },
+  scroll: { padding: 20, gap: 14, paddingBottom: 56 },
   header: { padding: 20, gap: 8 },
-  headline: { fontSize: 36, fontWeight: '700', letterSpacing: -0.5 },
+  headline: { fontSize: 36, fontWeight: '700', letterSpacing: -0.6 },
+  delta: { fontSize: 16, fontWeight: '600' },
   muted: { opacity: 0.7, lineHeight: 20 },
-  section: { marginTop: 12 },
-  classRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#d0d7de',
-  },
-  classText: { flex: 1, gap: 2 },
-  small: { fontSize: 13, opacity: 0.7 },
-  account: {
-    borderWidth: 1,
-    borderColor: '#d0d7de',
-    borderRadius: 14,
-    padding: 12,
-    gap: 4,
-  },
-  accountTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  badge: {
-    alignSelf: 'flex-start',
+  section: { marginTop: 8 },
+  demoBanner: {
     backgroundColor: '#fff8c5',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    marginTop: 4,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  badgeText: { fontSize: 12, fontWeight: '600', color: '#7d4e00' },
+  demoText: { color: '#7d4e00', fontSize: 13, fontWeight: '600' },
 });

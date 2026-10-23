@@ -12,6 +12,8 @@ import {
   emptyUpsertCounts,
   planFillGaps,
   recordStatus,
+  selectBatchWinner,
+  snapshotRank,
 } from './lib';
 import {
   BATCH_CAP,
@@ -27,7 +29,8 @@ import {
 
 type AccountInput = {
   sourceId: string;
-  connectionId: string;
+  provider: string;
+  connectionId?: string;
   class: string;
   name: string;
   mask?: string;
@@ -76,14 +79,66 @@ function optionalDate(value: string | undefined, field: string): void {
   void field;
 }
 
+function omitUndefined<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out as T;
+}
+
+function assertAccountConnection(item: AccountInput): void {
+  if (item.provider === 'manual') return;
+  if (!item.connectionId) {
+    throw new Error('connectionId is required when provider is not manual');
+  }
+}
+
+function accountFields(item: AccountInput): AccountInput {
+  assertAccountConnection(item);
+  return omitUndefined({
+    ...item,
+    connectionId: item.provider === 'manual' ? undefined : item.connectionId,
+  });
+}
+
+function markBatchWinners<T>(
+  items: T[],
+  keyOf: (item: T) => string,
+  rank: (item: T, originalIndex: number) => number,
+): boolean[] {
+  const groups = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    const key = keyOf(item);
+    const list = groups.get(key) ?? [];
+    list.push(index);
+    groups.set(key, list);
+  });
+  const winners = items.map(() => false);
+  for (const indexes of groups.values()) {
+    const group = indexes.map((index) => items[index]);
+    const { winnerIndex } = selectBatchWinner(group, (item, local) =>
+      rank(item, indexes[local]),
+    );
+    winners[indexes[winnerIndex]] = true;
+  }
+  return winners;
+}
+
 /**
  * Admin write path. No HTTP action, no FINANCE_INGEST_SECRET.
+ * Finance (the external admin agent) is the only writer.
  *
  *   npx convex run finance/ingest:upsertSnapshots '{"items":[...]}'
  *   npx convex run finance/ingest:upsertAccounts '{"items":[...]}'
  *   npx convex run finance/ingest:upsertTransactions '{"items":[...]}'
  *   npx convex run finance/ingest:upsertHoldings '{"items":[...]}'
  *   npx convex run finance/ingest:fillGaps '{"accountId":"acc_1","from":"2026-07-31","to":"2026-10-12"}'
+ *
+ * Pusher is master: a sent row overwrites the stored row for the same key.
+ * Intra-batch key collisions keep the highest-precedence snapshot
+ * (manual > observed > reconstructed > interpolated). Interpolated rows
+ * never overwrite non-interpolated ones.
  *
  * After changing non-interpolated snapshots, re-run fillGaps for that
  * account and range so interpolated days recompute (this mutation deletes
@@ -96,9 +151,20 @@ export const upsertAccounts = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
-    for (const item of items) {
-      optionalDate(item.coverageStart, 'coverageStart');
-      const key = item.sourceId;
+    const lastWins = markBatchWinners(
+      items,
+      (item) => item.sourceId,
+      (_item, index) => index,
+    );
+    for (let i = 0; i < items.length; i += 1) {
+      const raw = items[i];
+      const key = raw.sourceId;
+      if (!lastWins[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
+      optionalDate(raw.coverageStart, 'coverageStart');
+      const item = accountFields(raw);
       const contentHash = await financeContentHash('accounts', item);
       const existing = await ctx.db
         .query('accounts')
@@ -107,7 +173,7 @@ export const upsertAccounts = internalMutation({
       const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
       recordStatus(counts, key, status);
       if (status === 'unchanged') continue;
-      const doc = { ...item, updatedAt: now, contentHash };
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
       if (existing) {
         await ctx.db.replace(existing._id, doc);
       } else {
@@ -125,13 +191,23 @@ export const upsertSnapshots = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
+    const winners = markBatchWinners(
+      items,
+      (item) => `${item.accountId}|${item.asOf}`,
+      (item) => snapshotRank(item.source),
+    );
     const seen = new Map<
       string,
       { _id?: Id<'balance_snapshots'>; source: SnapshotSource; contentHash: string }
     >();
-    for (const item of items) {
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
       parseIsoDate(item.asOf);
       const key = `${item.accountId}|${item.asOf}`;
+      if (!winners[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
       const contentHash = await financeContentHash('balance_snapshots', item);
       let existing = seen.get(key);
       if (!existing) {
@@ -158,7 +234,7 @@ export const upsertSnapshots = internalMutation({
         if (existing) seen.set(key, existing);
         continue;
       }
-      const doc = { ...item, updatedAt: now, contentHash };
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
       if (existing?._id) {
         await ctx.db.replace(existing._id, doc);
         seen.set(key, { _id: existing._id, source: item.source, contentHash });
@@ -178,9 +254,19 @@ export const upsertTransactions = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
-    for (const item of items) {
+    const lastWins = markBatchWinners(
+      items,
+      (item) => item.sourceId,
+      (_item, index) => index,
+    );
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
       parseIsoDate(item.date);
       const key = item.sourceId;
+      if (!lastWins[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
       const contentHash = await financeContentHash('transactions', item);
       const existing = await ctx.db
         .query('transactions')
@@ -189,7 +275,7 @@ export const upsertTransactions = internalMutation({
       const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
       recordStatus(counts, key, status);
       if (status === 'unchanged') continue;
-      const doc = { ...item, updatedAt: now, contentHash };
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
       if (existing) {
         await ctx.db.replace(existing._id, doc);
       } else {
@@ -207,9 +293,19 @@ export const upsertHoldings = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
-    for (const item of items) {
+    const lastWins = markBatchWinners(
+      items,
+      (item) => `${item.accountId}|${item.symbol}|${item.asOf}`,
+      (_item, index) => index,
+    );
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
       parseIsoDate(item.asOf);
       const key = `${item.accountId}|${item.symbol}|${item.asOf}`;
+      if (!lastWins[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
       const contentHash = await financeContentHash('holdings', item);
       const existing = await ctx.db
         .query('holdings')
@@ -223,7 +319,7 @@ export const upsertHoldings = internalMutation({
       const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
       recordStatus(counts, key, status);
       if (status === 'unchanged') continue;
-      const doc = { ...item, updatedAt: now, contentHash };
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
       if (existing) {
         await ctx.db.replace(existing._id, doc);
       } else {
@@ -310,7 +406,7 @@ export const fillGaps = internalMutation({
         counts.unchanged += 1;
         continue;
       }
-      const doc = { ...item, updatedAt: now, contentHash };
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
       if (existing) {
         await ctx.db.replace(existing._id, doc);
         counts.updated += 1;
@@ -367,7 +463,6 @@ async function loadAnchors(
   return anchors;
 }
 
-// Keep unused input types referenced for the report / future helpers.
 export type {
   AccountInput,
   SnapshotInput,

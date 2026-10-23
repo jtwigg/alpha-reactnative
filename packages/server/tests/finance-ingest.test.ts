@@ -10,7 +10,8 @@ import {
   assertBatchSize,
 } from '../convex/finance/lib';
 import { SNAPSHOT_PRECEDENCE } from '../convex/finance/hash';
-import { parseAllowedUserIds, isFinanceSubjectAllowed } from '../convex/finance/auth';
+import { selectBatchWinner, snapshotRank } from '../convex/finance/lib';
+import { evaluateAllowlist } from '../convex/allowlist';
 import { addDays, daysBetween, monthEnd, monthStart } from '../convex/finance/dates';
 import { BATCH_CAP } from '../convex/finance/validators';
 
@@ -27,32 +28,41 @@ describe('snapshot precedence', () => {
     ).toBe('inserted');
   });
 
-  it('skips a lower-precedence incoming row', () => {
-    expect(
-      decideSnapshotWrite(
-        { source: 'observed', contentHash: 'aaa' },
-        { source: 'reconstructed', contentHash: 'bbb' },
-      ),
-    ).toBe('skipped_lower_precedence');
+  it('lets the pusher overwrite a stored higher-precedence row', () => {
     expect(
       decideSnapshotWrite(
         { source: 'manual', contentHash: 'aaa' },
         { source: 'observed', contentHash: 'bbb' },
       ),
+    ).toBe('updated');
+    expect(
+      decideSnapshotWrite(
+        { source: 'observed', contentHash: 'aaa' },
+        { source: 'reconstructed', contentHash: 'bbb' },
+      ),
+    ).toBe('updated');
+  });
+
+  it('never lets interpolated overwrite a real row', () => {
+    expect(
+      decideSnapshotWrite(
+        { source: 'observed', contentHash: 'aaa' },
+        { source: 'interpolated', contentHash: 'bbb' },
+      ),
+    ).toBe('skipped_lower_precedence');
+    expect(
+      decideSnapshotWrite(
+        { source: 'manual', contentHash: 'aaa' },
+        { source: 'interpolated', contentHash: 'bbb' },
+      ),
     ).toBe('skipped_lower_precedence');
   });
 
-  it('updates when incoming is equal or higher precedence and hash differs', () => {
+  it('updates when the pusher sends a different hash', () => {
     expect(
       decideSnapshotWrite(
         { source: 'reconstructed', contentHash: 'aaa' },
         { source: 'reconstructed', contentHash: 'bbb' },
-      ),
-    ).toBe('updated');
-    expect(
-      decideSnapshotWrite(
-        { source: 'reconstructed', contentHash: 'aaa' },
-        { source: 'observed', contentHash: 'bbb' },
       ),
     ).toBe('updated');
     expect(
@@ -61,6 +71,19 @@ describe('snapshot precedence', () => {
         { source: 'manual', contentHash: 'bbb' },
       ),
     ).toBe('updated');
+  });
+
+  it('keeps the highest-precedence row inside one batch', () => {
+    const { winner } = selectBatchWinner(
+      [
+        { source: 'interpolated' as const },
+        { source: 'observed' as const },
+        { source: 'reconstructed' as const },
+        { source: 'observed' as const },
+      ],
+      (item) => snapshotRank(item.source),
+    );
+    expect(winner.source).toBe('observed');
   });
 
   it('is unchanged when hashes match and incoming is not lower', () => {
@@ -173,20 +196,18 @@ describe('fillGaps interpolation', () => {
 });
 
 describe('allowlist', () => {
-  it('parses comma-separated Clerk subjects', () => {
-    expect(parseAllowedUserIds(' user_1, user_2,,user_3 ')).toEqual([
-      'user_1',
-      'user_2',
-      'user_3',
-    ]);
-    expect(parseAllowedUserIds(undefined)).toEqual([]);
-    expect(parseAllowedUserIds('')).toEqual([]);
-  });
-
-  it('rejects subjects that are not listed', () => {
-    expect(isFinanceSubjectAllowed('user_1', 'user_1,user_2')).toBe(true);
-    expect(isFinanceSubjectAllowed('user_9', 'user_1,user_2')).toBe(false);
-    expect(isFinanceSubjectAllowed('user_1', undefined)).toBe(false);
+  it('reuses ALLOWED_EMAILS / ALLOWED_USER_IDS (default-deny)', () => {
+    const john = { subject: 'user_john', email: 'john.twigg@gmail.com' };
+    expect(evaluateAllowlist(john, {})).toMatchObject({ allowed: false });
+    expect(
+      evaluateAllowlist(john, { ALLOWED_EMAILS: 'john.twigg@gmail.com' }),
+    ).toMatchObject({ allowed: true, reason: 'email' });
+    expect(
+      evaluateAllowlist(
+        { subject: 'user_john', email: null },
+        { ALLOWED_USER_IDS: 'user_john' },
+      ),
+    ).toMatchObject({ allowed: true, reason: 'user_id' });
   });
 });
 
