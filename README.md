@@ -117,7 +117,7 @@ pnpm convex dev            # syncs schema, auth.config.ts, and functions
 | Convex env var | Value |
 | --- | --- |
 | `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **dev:posh-mink-581** (and on production later). |
-| `ALLOWED_EMAILS` | `john.twigg@gmail.com` (comma-separated later). Case-insensitive. **Default-deny if unset.** |
+| `ALLOWED_EMAILS` | `john.twigg@gmail.com` (comma-separated later). Case-insensitive. **Default-deny if unset.** Also gates finance reads. |
 | `ALLOWED_USER_IDS` | optional Clerk `user_…` ids if the session JWT has no `email` claim |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
 
@@ -326,3 +326,22 @@ npx eas-cli submit --profile production --platform ios --latest
 4. `users.store` upserts `{ tokenIdentifier, name, email }` so data can foreign-key `users._id` (allowlisted identities only).
 5. `messages.list` / `messages.send` load the current user and index by `userId`.
 6. Sign-in, sign-up (email verification code), Google, and sign-out are the same screens on both platforms.
+
+## Personal finances (Convex is the source of truth)
+
+Finance (an external admin agent) is the only writer. The app is display-only. There is **no** HTTP ingest path and **no** `FINANCE_INGEST_SECRET`.
+
+```sh
+cd packages/server
+npx convex run finance/ingest:upsertAccounts '{"items":[...]}'
+npx convex run finance/ingest:upsertSnapshots '{"items":[...]}'
+npx convex run finance/ingest:upsertTransactions '{"items":[...]}'
+npx convex run finance/ingest:upsertHoldings '{"items":[...]}'
+npx convex run finance/ingest:fillGaps '{"accountId":"acc_1","from":"2026-07-31","to":"2026-10-12"}'
+npx convex run finance/sync:digest '{"from":"2026-07","to":"2026-10"}'
+npx convex run finance/sync:exportBucket '{"table":"balance_snapshots","accountId":"acc_1","month":"2026-07"}'
+```
+
+Each upsert takes `{ items: [...] }` (cap 500). The pusher is master: a sent row overwrites the stored row for the same key. Within one batch, if keys collide, the highest-precedence snapshot is kept (**manual > observed > reconstructed > interpolated**). Dedup keys: accounts + transactions by `sourceId`; snapshots by `accountId+asOf`; holdings by `accountId+symbol+asOf`. Manual assets use `provider: "manual"` (no `connectionId`) and snapshot `source: "manual"`.
+
+Reads use the same `ALLOWED_EMAILS` / `ALLOWED_USER_IDS` guard as the rest of the app. Investment coverage starts **31 Jul 2026** (some accounts **12 Oct 2026**). Charts draw continuous lines and do not treat an account as $0 before its first point.
