@@ -114,6 +114,35 @@ export function buildStack(args: {
   return { series, positive, negative, net, covered };
 }
 
+export type StackMode = 'absolute' | 'normalized';
+
+/**
+ * 100% stacked view: each asset series as a percent of gross assets for that
+ * date. Loans are not part of the stack; read them with `loanShare`.
+ */
+export function normalizeStack(model: StackModel): StackModel {
+  const pct = (value: number, i: number) =>
+    model.positive[i] > 0 ? (Math.max(value, 0) / model.positive[i]) * 100 : 0;
+  const series = model.series
+    .filter((s) => s.group !== 'liability')
+    .map((s) => ({ ...s, values: s.values.map(pct) }));
+  const positive = model.positive.map((value) => (value > 0 ? 100 : 0));
+  return {
+    series,
+    positive,
+    negative: positive.map(() => 0),
+    net: positive,
+    covered: model.covered.map((covered, i) => covered && model.positive[i] > 0),
+  };
+}
+
+/** Loans owed as a share of gross assets, or null without assets. */
+export function loanShare(model: StackModel, index: number): number | null {
+  const gross = model.positive[index] ?? 0;
+  const owed = Math.max(0, -(model.negative[index] ?? 0));
+  return gross > 0 ? owed / gross : null;
+}
+
 /** Index window into `dates` covering [from, to]. */
 export function windowIndexes(dates: string[], from: string, to: string): [number, number] {
   if (dates.length === 0) return [0, 0];
