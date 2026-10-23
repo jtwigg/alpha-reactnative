@@ -1,14 +1,11 @@
 import { mutation, query, QueryCtx, MutationCtx } from './_generated/server';
 import { Doc } from './_generated/dataModel';
+import { requireAllowedIdentity } from './allowlist';
 
 type AuthCtx = QueryCtx | MutationCtx;
 
 export async function getIdentityOrThrow(ctx: AuthCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error('Not authenticated');
-  }
-  return identity;
+  return await requireAllowedIdentity(ctx);
 }
 
 export async function getCurrentUser(ctx: AuthCtx): Promise<Doc<'users'> | null> {
@@ -16,6 +13,7 @@ export async function getCurrentUser(ctx: AuthCtx): Promise<Doc<'users'> | null>
   if (!identity) {
     return null;
   }
+  await requireAllowedIdentity(ctx);
   return await ctx.db
     .query('users')
     .withIndex('by_token', (q) => q.eq('tokenIdentifier', identity.tokenIdentifier))

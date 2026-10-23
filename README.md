@@ -112,6 +112,8 @@ pnpm convex dev            # syncs schema, auth.config.ts, and functions
 | Convex env var | Value |
 | --- | --- |
 | `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **dev:posh-mink-581** (and on production later). |
+| `ALLOWED_EMAILS` | `john.twigg@gmail.com` (comma-separated later). Case-insensitive. **Default-deny if unset.** |
+| `ALLOWED_USER_IDS` | optional Clerk `user_…` ids if the session JWT has no `email` claim |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
 
 `packages/server/convex/auth.config.ts` defaults to that issuer (`applicationID: "convex"` matches the session token `aud`) and still honors `CLERK_JWT_ISSUER_DOMAIN` / `CLERK_FRONTEND_API_URL` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
@@ -308,12 +310,14 @@ npx eas-cli submit --profile production --platform ios --latest
 - [x] Vercel project root = repo root; public URL **https://alpha-theta-silk.vercel.app**. Set `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud` and the Clerk `pk_test_` key (web only)
 - [ ] Clerk: enable **Google** under [SSO connections](https://dashboard.clerk.com/apps/app_3L3Yo0NESQ48He3AynMeLsx1HTA/user-authentication/sso-connections) (shared credentials on this dev instance). Add redirect URLs `johnsapp://sso-callback`, `http://localhost:8081/sso-callback`, and `https://alpha-theta-silk.vercel.app/sso-callback`.
 - [ ] Add Vercel and native origins in the Clerk dashboard
+- [ ] Convex dashboard on **dev:posh-mink-581**: set `ALLOWED_EMAILS=john.twigg@gmail.com`. If `ctx.auth` identity has no `email`, also set `ALLOWED_USER_IDS` to John's Clerk `user_…` id (Users → john.twigg@gmail.com). Confirm Sessions → Claims includes `email`.
 - [ ] `nx run server:deploy` before pointing clients at prod Convex
 
 ## Auth model
 
 1. Expo wraps the tree in `ClerkProvider` + `ConvexProviderWithClerk` on iOS and web.
 2. After Clerk has a session, ConvexProviderWithClerk sees `sessionClaims.aud === "convex"` and calls `getToken()` **without** a JWT template (the default session token). Whisper HTTP uses the same helper.
-3. `users.store` upserts `{ tokenIdentifier, name, email }` so data can foreign-key `users._id`.
-4. `messages.list` / `messages.send` load the current user and index by `userId`.
-5. Sign-in, sign-up (email verification code), and sign-out are the same screens on both platforms.
+3. Every public Convex query/mutation/action (and Whisper HTTP) requires that identity's verified email in `ALLOWED_EMAILS` (or Clerk subject in `ALLOWED_USER_IDS`). Unset allowlists deny everyone. Signed-in users who are not listed see **Access not granted** and cannot load app data.
+4. `users.store` upserts `{ tokenIdentifier, name, email }` so data can foreign-key `users._id` (allowlisted identities only).
+5. `messages.list` / `messages.send` load the current user and index by `userId`.
+6. Sign-in, sign-up (email verification code), Google, and sign-out are the same screens on both platforms.

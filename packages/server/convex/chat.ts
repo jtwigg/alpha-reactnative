@@ -1,5 +1,6 @@
 import { action } from './_generated/server';
 import { v } from 'convex/values';
+import { requireAllowedIdentity } from './allowlist';
 
 const messageArg = v.object({
   role: v.union(v.literal('user'), v.literal('assistant')),
@@ -13,10 +14,7 @@ export const send = action({
     messages: v.array(messageArg),
   },
   handler: async (ctx, { messages }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('Not authenticated');
-    }
+    await requireAllowedIdentity(ctx);
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY is not set');

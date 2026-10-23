@@ -1,4 +1,4 @@
-import { useConvexAuth, useMutation } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 
 import { api } from '@/lib/api';
@@ -8,11 +8,13 @@ import type { Id } from '../../server/convex/_generated/dataModel';
 export function useStoreUser() {
   const clerkEnabled = isClerkConfigured();
   const { isLoading, isAuthenticated } = useConvexAuth();
+  const status = useQuery(api.access.status, clerkEnabled && isAuthenticated ? {} : 'skip');
   const [userId, setUserId] = useState<Id<'users'> | null>(null);
   const storeUser = useMutation(api.users.store);
+  const allowed = Boolean(status?.allowed);
 
   useEffect(() => {
-    if (!clerkEnabled || !isAuthenticated) {
+    if (!clerkEnabled || !isAuthenticated || !allowed) {
       setUserId(null);
       return;
     }
@@ -29,10 +31,15 @@ export function useStoreUser() {
     return () => {
       cancelled = true;
     };
-  }, [clerkEnabled, isAuthenticated, storeUser]);
+  }, [allowed, clerkEnabled, isAuthenticated, storeUser]);
 
   return {
-    isLoading: clerkEnabled && (isLoading || (isAuthenticated && userId === null)),
-    isAuthenticated: Boolean(isAuthenticated && userId),
+    isLoading:
+      clerkEnabled &&
+      (isLoading ||
+        (isAuthenticated && status === undefined) ||
+        (allowed && userId === null)),
+    isAuthenticated: Boolean(isAuthenticated && allowed && userId),
+    isDenied: Boolean(isAuthenticated && status && !status.allowed),
   };
 }

@@ -1,5 +1,6 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
+import { evaluateAllowlist } from './allowlist';
 
 const http = httpRouter();
 
@@ -34,8 +35,12 @@ http.route({
   method: 'POST',
   handler: httpAction(async (ctx, request) => {
     const identity = await ctx.auth.getUserIdentity();
+    const access = evaluateAllowlist(identity);
     if (!identity) {
       return jsonResponse({ error: 'Unauthorized' }, 401);
+    }
+    if (!access.allowed) {
+      return jsonResponse({ error: 'Forbidden' }, 403);
     }
 
     const apiKey = process.env.OPENAI_API_KEY;

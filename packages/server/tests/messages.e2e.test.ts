@@ -28,4 +28,11 @@ describe('messages (e2e)', () => {
   it('rejects unauthenticated greeting', async () => {
     await expect(client.query(api.users.greeting)).rejects.toThrow();
   });
+
+  it('access.status is denied when signed out', async () => {
+    expect(await client.query(api.access.status)).toMatchObject({
+      authenticated: false,
+      allowed: false,
+    });
+  });
 });
