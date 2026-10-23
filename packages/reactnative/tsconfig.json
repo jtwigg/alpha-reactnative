@@ -12,6 +12,10 @@
     "**/*.ts",
     "**/*.tsx",
     ".expo/types/**/*.ts",
-    "expo-env.d.ts"
+    "expo-env.d.ts",
+    "svg-web.d.ts",
+    "../server/convex/finance/series.ts",
+    "../server/convex/finance/dates.ts",
+    "../server/convex/finance/hash.ts"
   ]
 }

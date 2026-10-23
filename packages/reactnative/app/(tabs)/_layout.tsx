@@ -11,6 +11,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useStoreUser } from '@/hooks/use-store-user';
 import { isClerkConfigured } from '@/lib/convex';
+import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 
 export default function TabLayout() {
   if (isClerkConfigured()) {
@@ -22,12 +23,13 @@ export default function TabLayout() {
 function ClerkProtectedTabs() {
   const { isLoading, isAuthenticated, isDenied } = useStoreUser();
   const { stuck, diagnostic } = useConvexAuthStuck();
+  const demo = useFinanceDemo() || isFinanceDemoFlag();
 
-  if (stuck && diagnostic) {
+  if (stuck && diagnostic && !demo) {
     return <AuthStuck reason={diagnostic.reason} details={diagnostic.details} />;
   }
 
-  if (isLoading) {
+  if (isLoading && !demo) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -35,11 +37,11 @@ function ClerkProtectedTabs() {
     );
   }
 
-  if (isDenied) {
+  if (isDenied && !demo) {
     return <AccessDenied />;
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !demo) {
     return <Redirect href="/sign-in" />;
   }
 
@@ -68,6 +70,15 @@ function AppTabs() {
         options={{
           title: 'Chat',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="finances"
+        options={{
+          title: 'Finances',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="chart.line.uptrend.xyaxis" color={color} />
+          ),
         }}
       />
     </Tabs>
