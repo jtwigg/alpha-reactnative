@@ -1,6 +1,12 @@
 import { useQuery } from 'convex/react';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountTable } from '@/components/finance/account-table';
@@ -28,19 +34,44 @@ export default function FinancesScreen() {
 
 function NetWorthPage({ demo }: { demo: boolean }) {
   const [range, setRange] = useState<RangeKey>('All');
-  const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const allowed = useQuery(
+    api.finance.queries.isAllowed,
+    demo && !isClerkConfigured() ? 'skip' : undefined,
+  );
   const live = useQuery(
     api.finance.queries.page,
-    allowed ? { range } : 'skip',
+    allowed ? { range, refreshNonce } : 'skip',
   );
+  const [held, setHeld] = useState(live);
+
+  useEffect(() => {
+    if (live) setHeld(live);
+  }, [live]);
+
+  useEffect(() => {
+    if (refreshing && live !== undefined) {
+      setRefreshing(false);
+    }
+  }, [live, refreshNonce, refreshing]);
 
   const data = useMemo(() => {
-    if (allowed && live && live.accounts.length > 0) return live;
+    const source = live ?? held;
+    if (allowed && source && source.accounts.length > 0) return source;
     if (demo) return demoNetWorthPage(range);
-    return live;
-  }, [allowed, demo, live, range]);
+    return source;
+  }, [allowed, demo, held, live, range]);
 
-  if (!demo && allowed === undefined) {
+  const onRefresh = () => {
+    setRefreshing(true);
+    setRefreshNonce((nonce) => nonce + 1);
+    if (demo && !allowed) {
+      setRefreshing(false);
+    }
+  };
+
+  if (!demo && allowed === undefined && !held) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -69,13 +100,17 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     );
   }
 
-  const usingDemo = demo && !(allowed && live && live.accounts.length > 0);
+  const usingDemo = demo && !(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
   const positive = data.change >= 0;
 
   return (
     <ThemedView style={styles.flex}>
       <SafeAreaView style={styles.flex} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.scroll}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }>
           <ThemedText type="title">Net worth</ThemedText>
           {usingDemo ? (
             <View style={styles.demoBanner}>

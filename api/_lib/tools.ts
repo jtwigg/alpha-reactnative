@@ -106,6 +106,11 @@ export const exportBucketSchema = z.object({
 
 export const listAccountsSchema = z.object({});
 
+export const deleteAccountsSchema = z.object({
+  ids: z.array(z.string()).min(1).max(50),
+  mergedInto: z.string().optional().describe('Optional account that these ids were merged into'),
+});
+
 function asText(result: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -210,5 +215,16 @@ export function registerFinanceTools(
       inputSchema: listAccountsSchema,
     },
     call('list_accounts'),
+  );
+
+  tool(
+    'delete_accounts',
+    {
+      title: 'Delete accounts',
+      description:
+        'Delete accounts and all of their snapshots, transactions, and holdings. Max 50 ids. Indexed batched deletes; large accounts continue on the Convex scheduler. If mergedInto is set it is recorded on the response. Returns per-table delete counts.',
+      inputSchema: deleteAccountsSchema,
+    },
+    call('delete_accounts'),
   );
 }

@@ -44,6 +44,18 @@ describe('dispatchFinanceOp', () => {
     expect(runQuery).not.toHaveBeenCalled();
   });
 
+  it('routes delete_accounts to the ingest mutation', async () => {
+    const runMutation = vi.fn(async () => ({ accounts: 1 }));
+    const runQuery = vi.fn();
+    await dispatchFinanceOp(
+      { runMutation, runQuery },
+      'delete_accounts',
+      { ids: ['acc_1'], mergedInto: 'acc_keep' },
+    );
+    expect(runMutation).toHaveBeenCalledTimes(1);
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
   it('rejects unknown ops', async () => {
     await expect(
       dispatchFinanceOp({ runMutation: vi.fn(), runQuery: vi.fn() }, 'nope', {}),
@@ -127,6 +139,7 @@ describe('MCP handler', () => {
       expect(raw).toContain('get_digest');
       expect(raw).toContain('export_bucket');
       expect(raw).toContain('list_accounts');
+      expect(raw).toContain('delete_accounts');
 
       const called = await handler(
         new Request('http://localhost/api/mcp', {

@@ -10,6 +10,9 @@ export const FILL_GAPS_WRITE_CAP = 800;
 export const FILL_GAPS_READ_CAP = 800;
 /** Documents a digest/export query may read before returning a cursor. */
 export const CONVEX_QUERY_READ_BUDGET = 3200;
+export const DELETE_ACCOUNT_IDS_MAX = 50;
+export const DELETE_ROW_BATCH = 200;
+export const DELETE_WRITE_BUDGET = 800;
 
 export const snapshotSourceValidator = v.union(
   v.literal('manual'),
@@ -134,6 +137,29 @@ export const fillGapsResultValidator = v.object({
   continueFrom: v.union(v.string(), v.null()),
 });
 
+export const deleteCountsValidator = v.object({
+  accounts: v.number(),
+  snapshots: v.number(),
+  transactions: v.number(),
+  holdings: v.number(),
+});
+
+export const deleteAccountsArgsValidator = v.object({
+  ids: v.array(v.string()),
+  mergedInto: v.optional(v.string()),
+  counts: v.optional(deleteCountsValidator),
+});
+
+export const deleteAccountsResultValidator = v.object({
+  accounts: v.number(),
+  snapshots: v.number(),
+  transactions: v.number(),
+  holdings: v.number(),
+  mergedInto: v.union(v.string(), v.null()),
+  continue: v.boolean(),
+  remainingIds: v.array(v.string()),
+});
+
 export const digestArgsValidator = v.object({
   from: v.optional(v.string()),
   to: v.optional(v.string()),
@@ -238,6 +264,7 @@ export const netWorthResultValidator = v.object({
 export const pageArgsValidator = v.object({
   range: v.optional(rangeKeyValidator),
   asOf: v.optional(v.string()),
+  refreshNonce: v.optional(v.number()),
 });
 
 export const chartPointValidator = v.object({
