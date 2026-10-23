@@ -3,8 +3,9 @@ import { Link, Redirect } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { AuthButton, AuthError, AuthInput } from '@/components/auth/auth-fields';
+import { AuthButton, AuthDivider, AuthError, AuthInput } from '@/components/auth/auth-fields';
 import { AuthLayout } from '@/components/auth/auth-layout';
+import { GoogleButton } from '@/components/auth/google-button';
 import { ThemedText } from '@/components/themed-text';
 import { getClerkErrorMessage } from '@/lib/convex';
 
@@ -86,7 +87,9 @@ export function SignInForm() {
   }
 
   return (
-    <AuthLayout title="Sign in" subtitle="Welcome back. Use the email and password for your account.">
+    <AuthLayout title="Sign in" subtitle="Welcome back. Continue with Google or use email and password.">
+      <GoogleButton />
+      <AuthDivider />
       <View style={styles.fields}>
         <AuthInput
           value={emailAddress}

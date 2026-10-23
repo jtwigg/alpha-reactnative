@@ -3,8 +3,9 @@ import { Link, Redirect } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { AuthButton, AuthError, AuthInput } from '@/components/auth/auth-fields';
+import { AuthButton, AuthDivider, AuthError, AuthInput } from '@/components/auth/auth-fields';
 import { AuthLayout } from '@/components/auth/auth-layout';
+import { GoogleButton } from '@/components/auth/google-button';
 import { ThemedText } from '@/components/themed-text';
 import { getClerkErrorMessage } from '@/lib/convex';
 
@@ -80,7 +81,12 @@ export function SignUpForm() {
   }
 
   return (
-    <AuthLayout title="Create account" subtitle="Email and password. Clerk will send a verification code.">
+    <AuthLayout
+      title="Create account"
+      subtitle="Continue with Google or use email and password. Email sign-up sends a verification code."
+    >
+      <GoogleButton />
+      <AuthDivider />
       <View style={styles.fields}>
         <AuthInput
           value={emailAddress}

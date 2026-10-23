@@ -37,6 +37,39 @@ Also in the Clerk Dashboard: enable **email + password**, the **Native API**, an
 
 Users can only read or write their own `messages`. Chat and Whisper HTTP routes reject unauthenticated requests.
 
+## Google sign-in (Clerk SSO)
+
+Sign-in and sign-up show **Continue with Google** on iOS and web, next to the existing email/password flow. The app uses Clerk's current Expo helper (`useSSO` from `@clerk/expo/experimental`) with strategy `oauth_google` and redirect `johnsapp://sso-callback` (web uses the current origin + `/sso-callback`).
+
+On **development** Clerk instances, Google uses Clerk's **shared OAuth credentials**. No Google Cloud project is required for this app's current `pk_test_` instance.
+
+### What John must toggle in the Clerk dashboard
+
+1. **Enable Google for all users** (if the connection is not already on — this instance already returned `oauth_google.enabled: true` from Clerk's environment API):
+   - [SSO connections](https://dashboard.clerk.com/apps/app_3L3Yo0NESQ48He3AynMeLsx1HTA/user-authentication/sso-connections) (or [last-active SSO connections](https://dashboard.clerk.com/last-active?path=/user-authentication/sso-connections))
+   - **Add connection** → **For all users** → **Google**
+   - Leave **Use custom credentials** **off** on the development instance
+   - Keep **Enable for sign-up and sign-in** on
+2. **Allow the app redirect URLs** so Clerk can attach `rotating_token_nonce` after Google:
+   - [Redirect URLs / Paths](https://dashboard.clerk.com/last-active?path=/configure/paths)
+   - Add:
+     - `johnsapp://sso-callback`
+     - `http://localhost:8081/sso-callback`
+     - `https://<your-vercel-host>/sso-callback`
+3. **Native applications** (already needed for iOS):
+   - [Native applications](https://dashboard.clerk.com/last-active?path=/native-applications)
+   - Confirm the Expo app / scheme `johnsapp` is allowed
+
+A production Clerk instance (`pk_live_`) **does** need a Google Cloud OAuth client. Do not do that until you move off the development instance.
+
+### OTA vs new TestFlight
+
+| Change | Ship how |
+| --- | --- |
+| Continue with Google button, `useSSO`, `/sso-callback` | **OTA** (`pnpm update:preview` / `update:production`) — JS only. `expo-auth-session` is a JS helper. The existing foundation binary already has `scheme: johnsapp` and `expo-web-browser`. |
+| First ever TestFlight binary, or a binary built **before** the auth-foundation scheme/`expo-web-browser` | **New TestFlight** (`pnpm ios:testflight`) |
+| Switching to *native* Google (`useSignInWithGoogle` + `EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME` / Google Cloud iOS client) | **New TestFlight** — not used in this PR |
+
 ## Accounts John has to create (manual)
 
 Nothing in this PR can finish these for you. Do them in this order:
@@ -269,6 +302,7 @@ npx eas-cli submit --profile production --platform ios --latest
 - [ ] Do **not** submit for App Store review
 - [ ] Replace icon/splash placeholders before the first TestFlight build
 - [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud` and the Clerk `pk_test_` key (web only)
+- [ ] Clerk: enable **Google** under [SSO connections](https://dashboard.clerk.com/apps/app_3L3Yo0NESQ48He3AynMeLsx1HTA/user-authentication/sso-connections) (shared credentials on this dev instance). Add redirect URLs `johnsapp://sso-callback`, `http://localhost:8081/sso-callback`, and the Vercel `/sso-callback`.
 - [ ] Add Vercel and native origins in the Clerk dashboard
 - [ ] `nx run server:deploy` before pointing clients at prod Convex
 
