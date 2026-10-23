@@ -109,12 +109,10 @@ function NetWorthPage() {
             netWorth.accounts.map((account) => {
               const snap = account.latestSnapshot;
               const asOf = snap?.asOf;
-              const partial =
-                isBeforeCoverage(asOf, account.class, account.coverageStart) ||
-                (account.class === 'investments' &&
-                  !!asOf &&
-                  asOf < '2026-10-12' &&
-                  (account.coverageStart === '2026-10-12' || !account.coverageStart));
+              const coverageStart =
+                account.coverageStart ??
+                (account.class === 'investments' ? '2026-07-31' : undefined);
+              const partial = isBeforeCoverage(asOf, account.class, coverageStart);
               return (
                 <View key={account.sourceId} style={styles.account}>
                   <View style={styles.accountTop}>
