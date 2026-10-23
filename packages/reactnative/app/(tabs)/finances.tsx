@@ -1,28 +1,29 @@
 import { useAction, useQuery } from 'convex/react';
 import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountTable } from '@/components/finance/account-table';
-import { Breakdown } from '@/components/finance/breakdown';
+import { AccountGroups } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import {
+  Card,
+  DeltaBadge,
+  FText,
+  MAX_CONTENT_WIDTH,
+  SectionHeader,
+  StateMessage,
+  TABULAR,
+  TogglePill,
+  useFinancePalette,
+} from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
-import { formatPct, formatUsd, formatUsdSigned } from '@/lib/finance-coverage';
+import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
-import { demoNetWorthPage } from '@/lib/finance-fixtures';
+import { demoAccountList, demoNetWorthPage } from '@/lib/finance-fixtures';
 import {
   BENCHMARKS,
   BENCHMARK_STALE_MS,
@@ -30,6 +31,14 @@ import {
   benchmarkValuesForDates,
 } from '../../../server/convex/finance/benchmarks';
 import type { ChartPoint, CoverageMarker, RangeKey } from '../../../server/convex/finance/series';
+
+const RANGE_SUFFIX: Record<RangeKey, string> = {
+  '1M': 'past month',
+  '3M': 'past 3 months',
+  YTD: 'year to date',
+  '1Y': 'past year',
+  All: 'all time',
+};
 
 export default function FinancesScreen() {
   const demo = useFinanceDemo();
@@ -40,6 +49,7 @@ export default function FinancesScreen() {
 }
 
 function NetWorthPage({ demo }: { demo: boolean }) {
+  const palette = useFinancePalette();
   const [range, setRange] = useState<RangeKey>('All');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -49,28 +59,32 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     api.finance.queries.isAllowed,
     demo && !isClerkConfigured() ? 'skip' : undefined,
   );
-  const live = useQuery(
-    api.finance.queries.page,
-    allowed ? { range, refreshNonce } : 'skip',
-  );
+  const live = useQuery(api.finance.queries.page, allowed ? { range, refreshNonce } : 'skip');
+  const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
+  const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
 
   useEffect(() => {
     if (live) setHeld(live);
   }, [live]);
+  useEffect(() => {
+    if (liveAccounts) setHeldAccounts(liveAccounts);
+  }, [liveAccounts]);
 
   useEffect(() => {
-    if (refreshing && live !== undefined) {
+    if (refreshing && live !== undefined && liveAccounts !== undefined) {
       setRefreshing(false);
     }
-  }, [live, refreshNonce, refreshing]);
+  }, [live, liveAccounts, refreshing]);
 
+  const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
   const data = useMemo(() => {
     const source = live ?? held;
-    if (allowed && source && source.accounts.length > 0) return source;
+    if (hasLive) return source;
     if (demo) return demoNetWorthPage(range);
     return source;
-  }, [allowed, demo, held, live, range]);
+  }, [demo, hasLive, held, live, range]);
+  const accountList = hasLive ? (liveAccounts ?? heldAccounts) : demo ? demoAccountList() : (liveAccounts ?? heldAccounts);
 
   useEffect(() => {
     setScrubIndex(null);
@@ -80,101 +94,148 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     setRefreshing(true);
     setRefreshNonce((nonce) => nonce + 1);
     if (demo && !allowed) {
-      setRefreshing(false);
+      setTimeout(() => setRefreshing(false), 400);
     }
   };
 
   if (!demo && allowed === undefined && !held) {
     return (
-      <ThemedView style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: palette.page }]}>
         <ActivityIndicator size="large" />
-      </ThemedView>
+      </View>
     );
   }
 
   if (!demo && allowed === false) {
     return (
-      <ThemedView style={styles.flex}>
-        <SafeAreaView style={styles.flex} edges={['top']}>
-          <View style={styles.header}>
-            <ThemedText type="title">Personal finances</ThemedText>
-            <ThemedText style={styles.muted}>This section is not available for this account.</ThemedText>
-          </View>
-        </SafeAreaView>
-      </ThemedView>
+      <View style={[styles.centered, { backgroundColor: palette.page }]}>
+        <StateMessage title="Personal finances" body="This section is not available for this account." />
+      </View>
     );
   }
 
   if (!data) {
     return (
-      <ThemedView style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: palette.page }]}>
         <ActivityIndicator size="large" />
-      </ThemedView>
+      </View>
     );
   }
 
-  const usingDemo = demo && !(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
-  const positive = data.change >= 0;
+  const usingDemo = demo && !hasLive;
 
   return (
-    <ThemedView style={styles.flex}>
+    <View style={[styles.flex, { backgroundColor: palette.page }]}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <ScrollView
           contentContainerStyle={styles.scroll}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }>
-          <ThemedText type="title">Net worth</ThemedText>
-          {usingDemo ? (
-            <View style={styles.demoBanner}>
-              <ThemedText style={styles.demoText}>
-                Fixture data for layout only — invented accounts, not real balances.
-              </ThemedText>
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+          <View style={styles.column}>
+            <View style={styles.header}>
+              <FText variant="eyebrow" tone="muted">
+                Personal finances
+              </FText>
+              <FText variant="title">Net worth</FText>
             </View>
-          ) : null}
 
-          <ThemedText style={styles.headline}>{formatUsd(data.headline)}</ThemedText>
-          <ThemedText style={[styles.delta, { color: positive ? '#1a7f37' : '#cf222e' }]}>
-            {formatUsdSigned(data.change)} ({formatPct(data.changePct)}) · {range}
-          </ThemedText>
-          <ThemedText style={styles.muted}>
-            Continuous totals. An account is omitted until its first point, so
-            coverage changes are marked instead of a $0 step. Display-only —
-            Finance writes every row.
-          </ThemedText>
-
-          <View style={styles.toolbar}>
-            <RangePills value={range} onChange={setRange} />
-            {allowed ? (
-              <Pressable
-                onPress={() => setShowBenchmark((value) => !value)}
-                style={[styles.benchPill, showBenchmark && styles.benchPillOn]}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: showBenchmark }}
-                accessibilityLabel="S&P 500 overlay">
-                <ThemedText style={[styles.benchLabel, showBenchmark && styles.benchLabelOn]}>
-                  {BENCHMARKS.SPX.label}
-                </ThemedText>
-              </Pressable>
+            {usingDemo ? (
+              <View style={styles.demoBanner}>
+                <FText variant="caption" style={styles.demoText}>
+                  Sample data for layout only — invented accounts, not real balances.
+                </FText>
+              </View>
             ) : null}
-          </View>
-          <ChartBlock
-            points={data.points}
-            markers={data.coverageMarkers}
-            scrubIndex={scrubIndex}
-            onScrub={setScrubIndex}
-            showBenchmark={Boolean(allowed && showBenchmark)}
-          />
-          <CoverageLegend />
-          <Breakdown assets={data.assets} liabilities={data.liabilities} byClass={data.byClass} />
 
-          <ThemedText type="subtitle" style={styles.section}>
-            Accounts
-          </ThemedText>
-          <AccountTable accounts={data.accounts} />
+            <Card>
+              <View style={styles.heroTop}>
+                <View style={styles.heroValue}>
+                  <FText variant="display" style={TABULAR}>
+                    {formatUsd(data.headline)}
+                  </FText>
+                  <DeltaBadge amount={data.change} pct={data.changePct} suffix={RANGE_SUFFIX[range]} />
+                </View>
+                <FText variant="caption" tone="subtle">
+                  As of {formatCoverageDate(data.asOf)}
+                </FText>
+              </View>
+              <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
+                <Stat label="Assets" value={formatUsd(data.assets)} />
+                <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
+                <Stat label="Liabilities" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
+              </View>
+            </Card>
+
+            <Card>
+              <View style={styles.toolbar}>
+                <RangePills value={range} onChange={setRange} />
+                {allowed ? (
+                  <TogglePill
+                    label={BENCHMARKS.SPX.label}
+                    value={showBenchmark}
+                    onChange={setShowBenchmark}
+                    color={BENCHMARKS.SPX.color}
+                  />
+                ) : null}
+              </View>
+              <ChartBlock
+                points={data.points}
+                markers={data.coverageMarkers}
+                scrubIndex={scrubIndex}
+                onScrub={setScrubIndex}
+                showBenchmark={Boolean(allowed && showBenchmark)}
+              />
+            </Card>
+
+            <Card>
+              <SectionHeader
+                title="By class"
+                subtitle="A class starts on its first data point — never drawn as $0."
+              />
+              <ClassChart points={data.points} scrubIndex={scrubIndex} onScrub={setScrubIndex} />
+            </Card>
+
+            <View style={styles.section}>
+              <SectionHeader
+                title="Accounts"
+                subtitle="Tap an account for history, transactions and holdings."
+                right={
+                  accountList ? (
+                    <FText variant="headline" style={TABULAR}>
+                      {formatUsd(accountList.total)}
+                    </FText>
+                  ) : null
+                }
+              />
+              {accountList ? (
+                <AccountGroups model={accountList} demo={usingDemo} />
+              ) : (
+                <Card>
+                  <ActivityIndicator />
+                </Card>
+              )}
+            </View>
+
+            <CoverageLegend />
+            <FText variant="caption" tone="subtle" style={styles.footnote}>
+              Display-only. The Finance agent writes every row; this app never edits balances.
+            </FText>
+          </View>
         </ScrollView>
       </SafeAreaView>
-    </ThemedView>
+    </View>
+  );
+}
+
+function Stat({ label, value, negative }: { label: string; value: string; negative?: boolean }) {
+  return (
+    <View style={styles.stat}>
+      <FText variant="caption" tone="muted">
+        {label}
+      </FText>
+      <FText variant="headline" tone={negative ? 'negative' : 'text'} style={TABULAR}>
+        {value}
+      </FText>
+    </View>
   );
 }
 
@@ -191,27 +252,24 @@ function ChartBlock({
   onScrub: (index: number | null) => void;
   showBenchmark: boolean;
 }) {
-  const charts = (benchmark?: BenchmarkLine) => (
-    <>
-      <NetWorthChart
-        points={points}
-        markers={markers}
-        scrubIndex={scrubIndex}
-        onScrub={onScrub}
-        benchmark={benchmark}
-      />
-      <ClassChart points={points} scrubIndex={scrubIndex} onScrub={onScrub} />
-    </>
+  const chart = (benchmark?: BenchmarkLine) => (
+    <NetWorthChart
+      points={points}
+      markers={markers}
+      scrubIndex={scrubIndex}
+      onScrub={onScrub}
+      benchmark={benchmark}
+    />
   );
-  if (!showBenchmark) return charts();
+  if (!showBenchmark) return chart();
   return (
-    <SoftBoundary fallback={charts()}>
-      <LiveBenchmarkCharts points={points}>{charts}</LiveBenchmarkCharts>
+    <SoftBoundary fallback={chart()}>
+      <LiveBenchmarkChart points={points}>{chart}</LiveBenchmarkChart>
     </SoftBoundary>
   );
 }
 
-function LiveBenchmarkCharts({
+function LiveBenchmarkChart({
   points,
   children,
 }: {
@@ -244,18 +302,16 @@ function LiveBenchmarkCharts({
       market.bars,
     );
     if (values.every((value) => value == null)) return undefined;
-    return {
-      label: market.label,
-      color: market.color,
-      values,
-    };
+    return { label: market.label, color: market.color, values };
   }, [market, points]);
 
   return (
     <>
       {children(benchmark)}
       {market && market.bars.length === 0 ? (
-        <ThemedText style={styles.muted}>Loading {BENCHMARKS.SPX.label}…</ThemedText>
+        <FText variant="caption" tone="muted">
+          Loading {BENCHMARKS.SPX.label}…
+        </FText>
       ) : null}
     </>
   );
@@ -278,31 +334,34 @@ class SoftBoundary extends Component<
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scroll: { padding: 20, gap: 14, paddingBottom: 56 },
-  header: { padding: 20, gap: 8 },
-  headline: { fontSize: 36, fontWeight: '700', letterSpacing: -0.6 },
-  delta: { fontSize: 16, fontWeight: '600' },
-  muted: { opacity: 0.7, lineHeight: 20 },
-  section: { marginTop: 8 },
-  toolbar: { gap: 10 },
-  benchPill: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#d0d7de',
-    backgroundColor: '#fff',
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  scroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 56 },
+  column: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, alignSelf: 'center', gap: 16 },
+  header: { gap: 2, paddingHorizontal: 4 },
+  heroTop: { gap: 6 },
+  heroValue: { gap: 8 },
+  stats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 14,
   },
-  benchPillOn: { backgroundColor: '#c2410c', borderColor: '#c2410c' },
-  benchLabel: { fontSize: 13, fontWeight: '600', color: '#11181C' },
-  benchLabelOn: { color: '#fff' },
+  stat: { flex: 1, gap: 2 },
+  statDivider: { width: StyleSheet.hairlineWidth, alignSelf: 'stretch', marginHorizontal: 16 },
+  toolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  section: { gap: 12 },
+  footnote: { textAlign: 'center', paddingHorizontal: 12 },
   demoBanner: {
-    backgroundColor: '#fff8c5',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    backgroundColor: '#FFF4D6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
-  demoText: { color: '#7d4e00', fontSize: 13, fontWeight: '600' },
+  demoText: { color: '#7A4E00', fontWeight: '600' },
 });

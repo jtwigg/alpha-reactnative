@@ -17,6 +17,7 @@
     "../server/convex/finance/series.ts",
     "../server/convex/finance/dates.ts",
     "../server/convex/finance/hash.ts",
-    "../server/convex/finance/benchmarks.ts"
+    "../server/convex/finance/benchmarks.ts",
+    "../server/convex/finance/accountModel.ts"
   ]
 }

@@ -1,88 +1,82 @@
-import { StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { FINANCE_COVERAGE, formatCoverageDate } from '@/lib/finance-coverage';
+import { Card, FText, useFinancePalette } from '@/components/finance/ui';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { CLASS_COLORS, FINANCE_COVERAGE, formatCoverageDate } from '@/lib/finance-coverage';
 
 export function CoverageLegend() {
+  const palette = useFinancePalette();
+  const [open, setOpen] = useState(false);
   return (
-    <View style={styles.card}>
-      <ThemedText type="defaultSemiBold">History coverage</ThemedText>
-      <ThemedText style={styles.lead}>
-        Accounts are left out of totals until their first stored point — they
-        are never drawn as $0. Gaps after that are bridged with a lighter dashed
-        interpolated line. Manual rows (home, mortgage) can extend history
-        further back than a provider feed.
-      </ThemedText>
-
-      <View style={styles.timeline} accessibilityLabel="Coverage timeline">
-        <View style={[styles.band, styles.bandHome]} />
-        <View style={[styles.band, styles.bandCash]} />
-        <View style={[styles.band, styles.bandInvest]} />
-        <View style={[styles.band, styles.bandLate]} />
-      </View>
-      <View style={styles.axis}>
-        <ThemedText style={styles.tick}>Manual home</ThemedText>
-        <ThemedText style={styles.tick}>Oct 2025 cash</ThemedText>
-        <ThemedText style={styles.tick}>Jul 31 2026</ThemedText>
-        <ThemedText style={styles.tick}>Oct 12 2026</ThemedText>
-      </View>
-
-      <View style={styles.rows}>
-        <CoverageRow
-          title="Home & loans"
-          detail="Manual snapshots. History can start years before Plaid."
+    <Card padded={false}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((value) => !value)}
+        style={styles.header}>
+        <View style={styles.flex}>
+          <FText variant="headline">About history coverage</FText>
+          <FText variant="caption" tone="muted">
+            Why some lines start late or show dashed segments.
+          </FText>
+        </View>
+        <IconSymbol
+          name="chevron.right"
+          size={18}
+          color={palette.subtle}
+          style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}
         />
-        <CoverageRow
-          title="Cash & credit"
-          detail={`Provider coverage from ${formatCoverageDate(FINANCE_COVERAGE.cash.start)}.`}
-        />
-        <CoverageRow
-          title="Investments"
-          detail={`Most accounts ${formatCoverageDate(FINANCE_COVERAGE.investments.start)}; some ${formatCoverageDate(FINANCE_COVERAGE.investments.lateStart)}.`}
-        />
-      </View>
-    </View>
+      </Pressable>
+      {open ? (
+        <View style={styles.body}>
+          <FText variant="callout" tone="muted">
+            Accounts are left out of totals until their first stored point — never drawn as $0.
+            Gaps after that are bridged with a dashed interpolated line. Manual rows (home,
+            mortgage) can extend history further back than a provider feed.
+          </FText>
+          <CoverageRow
+            color={CLASS_COLORS.real_estate}
+            title="Home & loans"
+            detail="Manual snapshots. History can start years before the provider feed."
+          />
+          <CoverageRow
+            color={CLASS_COLORS.cash}
+            title="Cash & credit"
+            detail={`Provider coverage from ${formatCoverageDate(FINANCE_COVERAGE.cash.start)}.`}
+          />
+          <CoverageRow
+            color={CLASS_COLORS.investments}
+            title="Investments"
+            detail={`Most accounts from ${formatCoverageDate(FINANCE_COVERAGE.investments.start)}; some from ${formatCoverageDate(FINANCE_COVERAGE.investments.lateStart)}.`}
+          />
+        </View>
+      ) : null}
+    </Card>
   );
 }
 
-function CoverageRow({ title, detail }: { title: string; detail: string }) {
+function CoverageRow({ color, title, detail }: { color: string; title: string; detail: string }) {
   return (
     <View style={styles.row}>
-      <ThemedText type="defaultSemiBold">{title}</ThemedText>
-      <ThemedText style={styles.detail}>{detail}</ThemedText>
+      <View style={[styles.bar, { backgroundColor: color }]} />
+      <View style={styles.flex}>
+        <FText variant="callout" style={styles.title}>
+          {title}
+        </FText>
+        <FText variant="caption" tone="muted">
+          {detail}
+        </FText>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderWidth: 1,
-    borderColor: '#d0d7de',
-    borderRadius: 16,
-    padding: 16,
-    gap: 10,
-    backgroundColor: '#f6f8fa',
-  },
-  lead: { opacity: 0.8, fontSize: 14, lineHeight: 20 },
-  timeline: {
-    flexDirection: 'row',
-    height: 14,
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginTop: 4,
-  },
-  band: { flex: 1 },
-  bandHome: { flex: 2.4, backgroundColor: '#d8c7f0' },
-  bandCash: { flex: 1.4, backgroundColor: '#c6e6d0' },
-  bandInvest: { flex: 0.8, backgroundColor: '#9ec5e8' },
-  bandLate: { flex: 0.35, backgroundColor: '#0a7ea4' },
-  axis: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  tick: { fontSize: 11, opacity: 0.7, flex: 1 },
-  rows: { gap: 10, marginTop: 4 },
-  row: { gap: 2 },
-  detail: { fontSize: 13, opacity: 0.75, lineHeight: 18 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
+  body: { paddingHorizontal: 16, paddingBottom: 16, gap: 12 },
+  flex: { flex: 1, gap: 2 },
+  row: { flexDirection: 'row', gap: 10 },
+  bar: { width: 3, borderRadius: 2 },
+  title: { fontWeight: '600' },
 });
