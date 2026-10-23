@@ -6,7 +6,9 @@ export const DEFAULT_SENTRY_DSN =
   'https://208718c3494ccd1183983da6d1a06e7a@o4511655781335040.ingest.us.sentry.io/4512303348318208';
 
 const AMOUNT_KEY =
-  /amount|balance|value|worth|price|qty|quantity|dollars?|cents|holding|snapshot|net_?worth|market|cost/i;
+  /amount|balance|value|worth|price|qty|quantity|dollars?|cents|holding|snapshot|net_?worth|market|cost|cash|equity|liabilit|asset|txn|transaction|gain|pnl|allocat|units?|position|credit|debt|available|principal|interest|nav|total|byclass|series/i;
+
+const FINANCE_ROUTE = /\/finances(?:\/|$)|finance\/|net-?worth|\/api\/mcp/i;
 
 type Primitive = string | number | boolean;
 
@@ -57,6 +59,16 @@ function stripRequestBody(event: Sentry.Event): void {
   delete event.request.cookies;
 }
 
+function isFinanceSurface(event: Sentry.Event): boolean {
+  const url = event.request?.url ?? '';
+  const transaction = event.transaction ?? '';
+  return FINANCE_ROUTE.test(url) || FINANCE_ROUTE.test(transaction);
+}
+
+function redactCurrencyText(text: string): string {
+  return text.replace(/\$[\d,]+(?:\.\d+)?/g, '$[redacted]');
+}
+
 export function initSentry() {
   if (Sentry.getClient()) return;
 
@@ -74,9 +86,22 @@ export function initSentry() {
       stripRequestBody(event);
       if (event.extra) event.extra = scrubSensitive(event.extra) as typeof event.extra;
       if (event.contexts) event.contexts = scrubSensitive(event.contexts) as typeof event.contexts;
+      if (isFinanceSurface(event)) {
+        if (event.request) {
+          delete event.request.query_string;
+          delete event.request.data;
+        }
+        event.extra = undefined;
+      }
+      if (event.message) event.message = redactCurrencyText(event.message);
       return event;
     },
     beforeBreadcrumb(breadcrumb) {
+      const haystack = `${breadcrumb.message ?? ''} ${breadcrumb.category ?? ''} ${JSON.stringify(breadcrumb.data ?? {})}`;
+      if (FINANCE_ROUTE.test(haystack)) {
+        breadcrumb.data = undefined;
+        if (breadcrumb.message) breadcrumb.message = redactCurrencyText(breadcrumb.message);
+      }
       if (breadcrumb.data) {
         breadcrumb.data = scrubSensitive(breadcrumb.data) as typeof breadcrumb.data;
       }
@@ -85,6 +110,9 @@ export function initSentry() {
     beforeSendLog(log) {
       if (log.attributes) {
         log.attributes = scrubSensitive(log.attributes) as typeof log.attributes;
+      }
+      if (typeof log.message === 'string') {
+        log.message = redactCurrencyText(log.message);
       }
       return log;
     },
