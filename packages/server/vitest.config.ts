@@ -10,5 +10,7 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 30_000,
     env: loadEnv('test', __dirname, ''),
+    // Local Convex + OPENAI_API_KEY. Run with: pnpm test:e2e
+    exclude: ['**/node_modules/**', '**/*.e2e.test.ts'],
   },
 });
