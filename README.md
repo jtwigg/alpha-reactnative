@@ -39,7 +39,12 @@ Users can only read or write their own `messages`. Chat and Whisper HTTP routes 
 
 ## Google sign-in (Clerk SSO)
 
-Sign-in and sign-up show **Continue with Google** on iOS and web, next to the existing email/password flow. The app uses Clerk's current Expo helper (`useSSO` from `@clerk/expo/experimental`) with strategy `oauth_google` and redirect `johnsapp://sso-callback` (web uses the current origin + `/sso-callback`).
+Sign-in and sign-up show **Continue with Google** on iOS and web, next to the existing email/password flow.
+
+- **iOS** uses Clerk's Expo helper (`useSSO` from `@clerk/expo/experimental`) with strategy `oauth_google` and redirect `johnsapp://sso-callback`.
+- **Web** does **not** use that popup/`AuthSession` flow. After Google, a static Vercel export has no JS caller left to resume `openAuthSessionAsync`, so the old spinner never finished. Web uses Clerk's redirect API: `signIn.authenticateWithRedirect({ strategy: 'oauth_google', redirectUrl: '/sso-callback', redirectUrlComplete: '/' })`. `/sso-callback` calls `clerk.handleRedirectCallback` (the same thing `<AuthenticateWithRedirectCallback />` wraps in `@clerk/react`; `@clerk/expo` v4 does not re-export that component). If the callback does not finish in about 10 seconds, the page shows the Clerk state and a **Back to sign-in** link instead of spinning forever.
+
+This Clerk instance is in **restricted sign-up** mode. John's account (`john.twigg@gmail.com`) already exists. If Google returns a sign-in that must **transfer to sign-up** (OAuth identity not linked yet), the app shows that message instead of hanging. It does **not** create accounts or weaken the email allowlist.
 
 On **development** Clerk instances, Google uses Clerk's **shared OAuth credentials**. No Google Cloud project is required for this app's current `pk_test_` instance.
 
@@ -66,7 +71,7 @@ A production Clerk instance (`pk_live_`) **does** need a Google Cloud OAuth clie
 
 | Change | Ship how |
 | --- | --- |
-| Continue with Google button, `useSSO`, `/sso-callback` | **OTA** (`pnpm update:preview` / `update:production`) — JS only. `expo-auth-session` is a JS helper. The existing foundation binary already has `scheme: johnsapp` and `expo-web-browser`. |
+| Continue with Google button, native `useSSO`, web redirect `/sso-callback` | **OTA** (`pnpm update:preview` / `update:production`) — JS only. `expo-auth-session` is a JS helper. The existing foundation binary already has `scheme: johnsapp` and `expo-web-browser`. |
 | First ever TestFlight binary, or a binary built **before** the auth-foundation scheme/`expo-web-browser` | **New TestFlight** (`pnpm ios:testflight`) |
 | Switching to *native* Google (`useSignInWithGoogle` + `EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME` / Google Cloud iOS client) | **New TestFlight** — not used in this PR |
 

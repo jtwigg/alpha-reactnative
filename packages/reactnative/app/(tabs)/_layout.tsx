@@ -3,6 +3,7 @@ import React from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { AccessDenied } from '@/components/access-denied';
+import { AuthStuck, useConvexAuthStuck } from '@/components/auth/auth-stuck';
 import { HapticTab } from '@/components/haptic-tab';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -12,10 +13,21 @@ import { useStoreUser } from '@/hooks/use-store-user';
 import { isClerkConfigured } from '@/lib/convex';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-  const { isLoading, isAuthenticated, isDenied } = useStoreUser();
+  if (isClerkConfigured()) {
+    return <ClerkProtectedTabs />;
+  }
+  return <AppTabs />;
+}
 
-  if (isClerkConfigured() && isLoading) {
+function ClerkProtectedTabs() {
+  const { isLoading, isAuthenticated, isDenied } = useStoreUser();
+  const { stuck, diagnostic } = useConvexAuthStuck();
+
+  if (stuck && diagnostic) {
+    return <AuthStuck reason={diagnostic.reason} details={diagnostic.details} />;
+  }
+
+  if (isLoading) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -30,6 +42,12 @@ export default function TabLayout() {
   if (!isAuthenticated) {
     return <Redirect href="/sign-in" />;
   }
+
+  return <AppTabs />;
+}
+
+function AppTabs() {
+  const colorScheme = useColorScheme();
 
   return (
     <Tabs
