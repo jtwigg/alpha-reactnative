@@ -1,10 +1,25 @@
-import { addDays, daysBetween, eachDate, formatIsoDate, parseIsoDate } from './dates';
+import {
+  addDays,
+  daysBetween,
+  eachDate,
+  eachWeek,
+  parseIsoDate,
+  todayInTimeZone,
+} from './dates';
+import { CONVEX_QUERY_READ_BUDGET } from './validators';
 import { roundMoney, type SnapshotSource } from './hash';
 
 export const RANGE_KEYS = ['1M', '3M', 'YTD', '1Y', 'All'] as const;
 export type RangeKey = (typeof RANGE_KEYS)[number];
 
 export const CHART_POINT_CAP = 160;
+
+export const CHART_CLASSES = [
+  'cash',
+  'investments',
+  'real_estate',
+  'liability',
+] as const;
 
 export type SeriesAccount = {
   sourceId: string;
@@ -102,8 +117,7 @@ export function accountValueOnDay(
 ): { balance: number; source: SnapshotSource; interpolated: boolean } | null {
   const ordered = [...snaps].sort((a, b) => a.asOf.localeCompare(b.asOf));
   if (ordered.length === 0) {
-    if (day < current.asOf) return null;
-    return { balance: current.balance, source: 'observed', interpolated: false };
+    return null;
   }
   const first = ordered[0].asOf;
   if (day < first) return null;
@@ -142,6 +156,160 @@ export function accountValueOnDay(
   }
 
   return null;
+}
+
+export function chartStep(range: RangeKey): 'week' | 'day' {
+  return range === 'All' ? 'week' : 'day';
+}
+
+/** Weekly points for All, daily for 1Y / 3M / 1M / YTD. Always includes `to`. */
+export function chartDates(range: RangeKey, from: string, to: string): string[] {
+  parseIsoDate(from);
+  parseIsoDate(to);
+  if (to < from) return [];
+  return chartStep(range) === 'week' ? eachWeek(from, to) : eachDate(from, to);
+}
+
+export function strideChartDates(dates: string[], maxPoints: number): string[] {
+  if (dates.length <= maxPoints) return dates;
+  if (maxPoints <= 1) return [dates[dates.length - 1]];
+  const last = dates.length - 1;
+  const out: string[] = [];
+  for (let i = 0; i < maxPoints; i += 1) {
+    const index = Math.round((i * last) / (maxPoints - 1));
+    const date = dates[index];
+    if (out[out.length - 1] !== date) out.push(date);
+  }
+  return out;
+}
+
+export type SnapshotLookup = {
+  first: (accountId: string) => Promise<SeriesSnapshot | null>;
+  last: (accountId: string) => Promise<SeriesSnapshot | null>;
+  atOrBefore: (accountId: string, asOf: string) => Promise<SeriesSnapshot | null>;
+};
+
+export type AccountEnds = {
+  firstByAccount: Map<string, SeriesSnapshot>;
+  lastByAccount: Map<string, SeriesSnapshot>;
+  firstAsOf: string | null;
+  maxAsOf: string | null;
+  documentsRead: number;
+};
+
+export type LoadedChartSnapshots = AccountEnds & {
+  snapshots: SeriesSnapshot[];
+};
+
+export async function loadAccountEnds(
+  lookup: SnapshotLookup,
+  accountIds: string[],
+): Promise<AccountEnds> {
+  let documentsRead = 0;
+  const firstByAccount = new Map<string, SeriesSnapshot>();
+  const lastByAccount = new Map<string, SeriesSnapshot>();
+  for (const accountId of accountIds) {
+    const first = await lookup.first(accountId);
+    documentsRead += 1;
+    const last = await lookup.last(accountId);
+    documentsRead += 1;
+    if (first) firstByAccount.set(accountId, first);
+    if (last) lastByAccount.set(accountId, last);
+  }
+  const firstAsOf =
+    [...firstByAccount.values()].map((row) => row.asOf).sort()[0] ?? null;
+  const maxAsOf =
+    [...lastByAccount.values()].map((row) => row.asOf).sort().at(-1) ?? null;
+  return { firstByAccount, lastByAccount, firstAsOf, maxAsOf, documentsRead };
+}
+
+/**
+ * Per-account indexed reads. First/last plus at-or-before probes on the
+ * downsampled date grid. Never a capped table scan.
+ */
+export async function loadChartSnapshots(
+  lookup: SnapshotLookup,
+  accountIds: string[],
+  dates: string[],
+  budget = CONVEX_QUERY_READ_BUDGET,
+  ends?: AccountEnds,
+): Promise<LoadedChartSnapshots> {
+  const resolved = ends ?? (await loadAccountEnds(lookup, accountIds));
+  let documentsRead = resolved.documentsRead;
+  const { firstByAccount, lastByAccount, firstAsOf, maxAsOf } = resolved;
+
+  const remaining = Math.max(0, budget - documentsRead);
+  const maxDates =
+    accountIds.length === 0
+      ? dates.length
+      : Math.max(2, Math.floor(remaining / accountIds.length));
+  const sampled = strideChartDates(dates, maxDates);
+
+  const snapshots: SeriesSnapshot[] = [];
+  const seen = new Set<string>();
+  const add = (row: SeriesSnapshot) => {
+    const key = `${row.accountId}|${row.asOf}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    snapshots.push(row);
+  };
+
+  for (const row of firstByAccount.values()) add(row);
+  for (const row of lastByAccount.values()) add(row);
+
+  accountLoop: for (const accountId of accountIds) {
+    const first = firstByAccount.get(accountId);
+    const last = lastByAccount.get(accountId);
+    if (!first || !last) continue;
+    for (const date of sampled) {
+      if (documentsRead >= budget) break accountLoop;
+      if (date < first.asOf) continue;
+      if (date >= last.asOf) continue;
+      const row = await lookup.atOrBefore(accountId, date);
+      documentsRead += 1;
+      if (row) add(row);
+    }
+  }
+
+  return {
+    snapshots,
+    documentsRead,
+    firstByAccount,
+    lastByAccount,
+    firstAsOf,
+    maxAsOf,
+  };
+}
+
+export function memorySnapshotLookup(rows: SeriesSnapshot[]): SnapshotLookup {
+  const byAccount = new Map<string, SeriesSnapshot[]>();
+  for (const row of rows) {
+    const list = byAccount.get(row.accountId) ?? [];
+    list.push(row);
+    byAccount.set(row.accountId, list);
+  }
+  for (const list of byAccount.values()) {
+    list.sort((a, b) => a.asOf.localeCompare(b.asOf));
+  }
+  return {
+    async first(accountId) {
+      return byAccount.get(accountId)?.[0] ?? null;
+    },
+    async last(accountId) {
+      const list = byAccount.get(accountId);
+      return list?.[list.length - 1] ?? null;
+    },
+    async atOrBefore(accountId, asOf) {
+      const list = byAccount.get(accountId);
+      if (!list || list.length === 0) return null;
+      let found: SeriesSnapshot | null = null;
+      for (const row of list) {
+        if (row.asOf <= asOf) found = row;
+        else break;
+      }
+      return found;
+    },
+  };
 }
 
 export function downsamplePoints(
@@ -212,7 +380,10 @@ export function buildNetWorthModel(args: {
     .filter((value): value is string => Boolean(value))
     .sort()[0] ?? null;
   const window = rangeWindow(range, asOf, earliest);
-  const days = eachDate(window.from, window.to);
+  const days = strideChartDates(
+    chartDates(range, window.from, window.to),
+    CHART_POINT_CAP,
+  );
 
   const daily: ChartPoint[] = [];
   for (const day of days) {
@@ -296,5 +467,5 @@ export function buildNetWorthModel(args: {
 }
 
 export function todayIso(now = new Date()): string {
-  return formatIsoDate(now);
+  return todayInTimeZone(now);
 }
