@@ -1,3 +1,6 @@
+import * as WebBrowser from 'expo-web-browser';
+WebBrowser.maybeCompleteAuthSession();
+
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AuthLayout } from '@/components/auth/auth-layout';
