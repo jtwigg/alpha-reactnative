@@ -42,6 +42,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   active: { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' },
-  label: { fontSize: 13, fontWeight: '600' },
+  label: { fontSize: 13, fontWeight: '600', color: '#11181C' },
   activeLabel: { color: '#fff' },
 });

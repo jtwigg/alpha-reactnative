@@ -4,9 +4,9 @@ import { ThemedText } from '@/components/themed-text';
 import { classColor, classLabel, formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import type { ChartPoint, CoverageMarker } from '../../../server/convex/finance/series';
 
-const WIDTH = 360;
-const HEIGHT = 176;
-const PAD = { top: 16, right: 10, bottom: 28, left: 52 };
+const WIDTH = 720;
+const HEIGHT = 220;
+const PAD = { top: 18, right: 16, bottom: 32, left: 64 };
 
 function scale(points: ChartPoint[]) {
   const xs = points.map((point) => point.asOf);
@@ -66,7 +66,12 @@ function WebChart({
     <View style={styles.frame} accessibilityLabel="Net worth chart">
       {/* Web-only SVG. Native uses the sparkline fallback below. */}
       {Platform.OS === 'web' ? (
-        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width="100%" height={HEIGHT}>
+        <svg
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          width="100%"
+          height={HEIGHT}
+          preserveAspectRatio="none"
+          style={{ width: '100%', height: HEIGHT, display: 'block' }}>
           <line
             x1={PAD.left}
             x2={WIDTH - PAD.right}
@@ -104,16 +109,16 @@ function WebChart({
               strokeLinecap="round"
             />
           ) : null}
-          <text x={PAD.left} y={HEIGHT - 8} fontSize="10" fill="#687076">
+          <text x={PAD.left} y={HEIGHT - 10} fontSize="12" fill="#687076">
             {formatCoverageDate(first.asOf)}
           </text>
-          <text x={WIDTH - PAD.right} y={HEIGHT - 8} fontSize="10" fill="#687076" textAnchor="end">
+          <text x={WIDTH - PAD.right} y={HEIGHT - 10} fontSize="12" fill="#687076" textAnchor="end">
             {formatCoverageDate(last.asOf)}
           </text>
-          <text x={4} y={PAD.top + 4} fontSize="10" fill="#687076">
+          <text x={8} y={PAD.top + 6} fontSize="12" fill="#687076">
             {formatUsd(Math.max(...points.map((p) => p.total)))}
           </text>
-          <text x={4} y={HEIGHT - PAD.bottom} fontSize="10" fill="#687076">
+          <text x={8} y={HEIGHT - PAD.bottom} fontSize="12" fill="#687076">
             {formatUsd(Math.min(...points.map((p) => p.total)))}
           </text>
         </svg>

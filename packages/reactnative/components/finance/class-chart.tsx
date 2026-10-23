@@ -4,9 +4,9 @@ import { ThemedText } from '@/components/themed-text';
 import { classColor, classLabel } from '@/lib/finance-coverage';
 import type { ChartPoint } from '../../../server/convex/finance/series';
 
-const WIDTH = 360;
-const HEIGHT = 160;
-const PAD = { top: 12, right: 10, bottom: 20, left: 10 };
+const WIDTH = 720;
+const HEIGHT = 200;
+const PAD = { top: 16, right: 16, bottom: 24, left: 16 };
 
 export function ClassChart({ points }: { points: ChartPoint[] }) {
   const classes = Array.from(
@@ -50,7 +50,12 @@ export function ClassChart({ points }: { points: ChartPoint[] }) {
       </ThemedText>
       <View style={styles.frame}>
         {Platform.OS === 'web' ? (
-          <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width="100%" height={HEIGHT}>
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            width="100%"
+            height={HEIGHT}
+            preserveAspectRatio="none"
+            style={{ width: '100%', height: HEIGHT, display: 'block' }}>
             {paths.map((path) => (
               <g key={path.className}>
                 {path.solid ? (
