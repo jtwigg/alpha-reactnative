@@ -1,5 +1,7 @@
 import { Platform, StyleSheet, View } from 'react-native';
 
+import { ChartTooltip, classRows } from '@/components/finance/chart-tooltip';
+import { ChartTouch } from '@/components/finance/chart-touch';
 import { ThemedText } from '@/components/themed-text';
 import { classColor, classLabel } from '@/lib/finance-coverage';
 import type { ChartPoint } from '../../../server/convex/finance/series';
@@ -8,7 +10,15 @@ const WIDTH = 720;
 const HEIGHT = 200;
 const PAD = { top: 16, right: 16, bottom: 24, left: 16 };
 
-export function ClassChart({ points }: { points: ChartPoint[] }) {
+export function ClassChart({
+  points,
+  scrubIndex,
+  onScrub,
+}: {
+  points: ChartPoint[];
+  scrubIndex: number | null;
+  onScrub: (index: number | null) => void;
+}) {
   const classes = Array.from(
     new Set(points.flatMap((point) => Object.keys(point.byClass))),
   ).sort();
@@ -41,14 +51,24 @@ export function ClassChart({ points }: { points: ChartPoint[] }) {
     return { className, solid: solid.join(' '), dashed: dashed.join(' ') };
   });
 
+  const active = scrubIndex == null ? null : points[scrubIndex];
+  const hairX = x(scrubIndex ?? 0);
+
   return (
     <View style={styles.wrap}>
       <ThemedText type="defaultSemiBold">By class</ThemedText>
       <ThemedText style={styles.hint}>
         A class line starts on its first data point. Missing early history is
-        omitted, not drawn as $0.
+        omitted, not drawn as $0. Press and drag (hover on web) for a day.
       </ThemedText>
-      <View style={styles.frame}>
+      {active ? <ChartTooltip date={active.asOf} rows={classRows(active.byClass)} /> : null}
+      <ChartTouch
+        count={points.length}
+        padLeft={PAD.left}
+        padRight={PAD.right}
+        viewBoxWidth={WIDTH}
+        height={HEIGHT}
+        onScrub={onScrub}>
         {Platform.OS === 'web' ? (
           <svg
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -80,11 +100,34 @@ export function ClassChart({ points }: { points: ChartPoint[] }) {
                 ) : null}
               </g>
             ))}
+            {scrubIndex != null ? (
+              <line
+                x1={hairX}
+                x2={hairX}
+                y1={PAD.top}
+                y2={HEIGHT - PAD.bottom}
+                stroke="#11181C"
+                strokeWidth="1.2"
+              />
+            ) : null}
           </svg>
         ) : (
-          <View style={{ height: HEIGHT }} />
+          <View style={{ height: HEIGHT }}>
+            {scrubIndex != null ? (
+              <View
+                style={{
+                  position: 'absolute',
+                  left: `${((PAD.left + (scrubIndex / Math.max(points.length - 1, 1)) * (WIDTH - PAD.left - PAD.right)) / WIDTH) * 100}%`,
+                  top: 0,
+                  bottom: 0,
+                  width: 1,
+                  backgroundColor: '#11181C',
+                }}
+              />
+            ) : null}
+          </View>
         )}
-      </View>
+      </ChartTouch>
       <View style={styles.legend}>
         {classes.map((className) => (
           <View key={className} style={styles.swatch}>
@@ -100,13 +143,6 @@ export function ClassChart({ points }: { points: ChartPoint[] }) {
 const styles = StyleSheet.create({
   wrap: { gap: 8 },
   hint: { fontSize: 13, opacity: 0.7, lineHeight: 18 },
-  frame: {
-    borderWidth: 1,
-    borderColor: '#d0d7de',
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#f6f8fa',
-  },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   swatch: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 8, height: 8, borderRadius: 4 },

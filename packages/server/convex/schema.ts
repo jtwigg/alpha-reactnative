@@ -85,4 +85,18 @@ export default defineSchema({
   })
     .index('by_account_symbol_asOf', ['accountId', 'symbol', 'asOf'])
     .index('by_account_asOf', ['accountId', 'asOf']),
+
+  market_index_bars: defineTable({
+    symbol: v.string(),
+    asOf: v.string(),
+    close: v.number(),
+    fetchedAt: v.number(),
+  }).index('by_symbol_asOf', ['symbol', 'asOf']),
+
+  market_index_meta: defineTable({
+    symbol: v.string(),
+    source: v.string(),
+    refreshedAt: v.number(),
+    lastAsOf: v.optional(v.string()),
+  }).index('by_symbol', ['symbol']),
 });

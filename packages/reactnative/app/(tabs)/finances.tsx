@@ -1,7 +1,8 @@
-import { useQuery } from 'convex/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useAction, useQuery } from 'convex/react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -13,7 +14,7 @@ import { AccountTable } from '@/components/finance/account-table';
 import { Breakdown } from '@/components/finance/breakdown';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
-import { NetWorthChart } from '@/components/finance/net-worth-chart';
+import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -22,7 +23,13 @@ import { isClerkConfigured } from '@/lib/convex';
 import { formatPct, formatUsd, formatUsdSigned } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { demoNetWorthPage } from '@/lib/finance-fixtures';
-import type { RangeKey } from '../../../server/convex/finance/series';
+import {
+  BENCHMARKS,
+  BENCHMARK_STALE_MS,
+  DEFAULT_BENCHMARK,
+  benchmarkValuesForDates,
+} from '../../../server/convex/finance/benchmarks';
+import type { ChartPoint, CoverageMarker, RangeKey } from '../../../server/convex/finance/series';
 
 export default function FinancesScreen() {
   const demo = useFinanceDemo();
@@ -36,6 +43,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const [range, setRange] = useState<RangeKey>('All');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [showBenchmark, setShowBenchmark] = useState(false);
   const allowed = useQuery(
     api.finance.queries.isAllowed,
     demo && !isClerkConfigured() ? 'skip' : undefined,
@@ -62,6 +71,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     if (demo) return demoNetWorthPage(range);
     return source;
   }, [allowed, demo, held, live, range]);
+
+  useEffect(() => {
+    setScrubIndex(null);
+  }, [range]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -130,9 +143,28 @@ function NetWorthPage({ demo }: { demo: boolean }) {
             Finance writes every row.
           </ThemedText>
 
-          <RangePills value={range} onChange={setRange} />
-          <NetWorthChart points={data.points} markers={data.coverageMarkers} />
-          <ClassChart points={data.points} />
+          <View style={styles.toolbar}>
+            <RangePills value={range} onChange={setRange} />
+            {allowed ? (
+              <Pressable
+                onPress={() => setShowBenchmark((value) => !value)}
+                style={[styles.benchPill, showBenchmark && styles.benchPillOn]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: showBenchmark }}
+                accessibilityLabel="S&P 500 overlay">
+                <ThemedText style={[styles.benchLabel, showBenchmark && styles.benchLabelOn]}>
+                  {BENCHMARKS.SPX.label}
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
+          <ChartBlock
+            points={data.points}
+            markers={data.coverageMarkers}
+            scrubIndex={scrubIndex}
+            onScrub={setScrubIndex}
+            showBenchmark={Boolean(allowed && showBenchmark)}
+          />
           <CoverageLegend />
           <Breakdown assets={data.assets} liabilities={data.liabilities} byClass={data.byClass} />
 
@@ -146,6 +178,104 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   );
 }
 
+function ChartBlock({
+  points,
+  markers,
+  scrubIndex,
+  onScrub,
+  showBenchmark,
+}: {
+  points: ChartPoint[];
+  markers: CoverageMarker[];
+  scrubIndex: number | null;
+  onScrub: (index: number | null) => void;
+  showBenchmark: boolean;
+}) {
+  const charts = (benchmark?: BenchmarkLine) => (
+    <>
+      <NetWorthChart
+        points={points}
+        markers={markers}
+        scrubIndex={scrubIndex}
+        onScrub={onScrub}
+        benchmark={benchmark}
+      />
+      <ClassChart points={points} scrubIndex={scrubIndex} onScrub={onScrub} />
+    </>
+  );
+  if (!showBenchmark) return charts();
+  return (
+    <SoftBoundary fallback={charts()}>
+      <LiveBenchmarkCharts points={points}>{charts}</LiveBenchmarkCharts>
+    </SoftBoundary>
+  );
+}
+
+function LiveBenchmarkCharts({
+  points,
+  children,
+}: {
+  points: ChartPoint[];
+  children: (benchmark?: BenchmarkLine) => ReactNode;
+}) {
+  const from = points[0]?.asOf;
+  const to = points[points.length - 1]?.asOf;
+  const market = useQuery(
+    api.finance.market.series,
+    from && to ? { symbol: DEFAULT_BENCHMARK, from, to } : 'skip',
+  );
+  const ensureMarket = useAction(api.finance.market.ensure);
+
+  useEffect(() => {
+    if (market === undefined) return;
+    const stale =
+      market.bars.length === 0 ||
+      market.refreshedAt == null ||
+      Date.now() - market.refreshedAt > BENCHMARK_STALE_MS;
+    if (!stale) return;
+    void ensureMarket({ symbol: DEFAULT_BENCHMARK }).catch(() => undefined);
+  }, [ensureMarket, market]);
+
+  const benchmark = useMemo<BenchmarkLine | undefined>(() => {
+    if (!market || points.length === 0) return undefined;
+    const values = benchmarkValuesForDates(
+      points.map((point) => point.asOf),
+      points[0].total,
+      market.bars,
+    );
+    if (values.every((value) => value == null)) return undefined;
+    return {
+      label: market.label,
+      color: market.color,
+      values,
+    };
+  }, [market, points]);
+
+  return (
+    <>
+      {children(benchmark)}
+      {market && market.bars.length === 0 ? (
+        <ThemedText style={styles.muted}>Loading {BENCHMARKS.SPX.label}…</ThemedText>
+      ) : null}
+    </>
+  );
+}
+
+class SoftBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -155,6 +285,19 @@ const styles = StyleSheet.create({
   delta: { fontSize: 16, fontWeight: '600' },
   muted: { opacity: 0.7, lineHeight: 20 },
   section: { marginTop: 8 },
+  toolbar: { gap: 10 },
+  benchPill: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#d0d7de',
+    backgroundColor: '#fff',
+  },
+  benchPillOn: { backgroundColor: '#c2410c', borderColor: '#c2410c' },
+  benchLabel: { fontSize: 13, fontWeight: '600', color: '#11181C' },
+  benchLabelOn: { color: '#fff' },
   demoBanner: {
     backgroundColor: '#fff8c5',
     borderRadius: 10,
