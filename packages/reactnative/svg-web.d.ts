@@ -9,6 +9,7 @@ declare namespace React {
       defs: React.SVGProps<SVGDefsElement>;
       linearGradient: React.SVGProps<SVGLinearGradientElement>;
       stop: React.SVGProps<SVGStopElement>;
+      circle: React.SVGProps<SVGCircleElement>;
     }
   }
 }

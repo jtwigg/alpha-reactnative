@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  SPARKLINE_POINTS,
   TRANSACTIONS_PAGE_MAX,
   accountHistory,
+  changeTone,
   clampPageSize,
   displayAmount,
   groupAccounts,
@@ -9,6 +11,7 @@ import {
   groupKeyForClass,
   holdingsView,
   institutionLabel,
+  sparklineRows,
   toListRow,
   typeLabel,
   type AccountRecord,
@@ -215,6 +218,51 @@ describe('holdings and transactions helpers', () => {
   });
 });
 
+describe('sparkline model', () => {
+  it('treats a shrinking liability as good and a shrinking asset as bad', () => {
+    expect(changeTone('liability', -500)).toBe('good');
+    expect(changeTone('credit', 120)).toBe('bad');
+    expect(changeTone('loan', -1)).toBe('good');
+    expect(changeTone('investments', 900)).toBe('good');
+    expect(changeTone('cash', -50)).toBe('bad');
+    expect(changeTone('cash', 0)).toBe('flat');
+  });
+
+  it('leaves dates before coverage empty and measures change from the first covered point', () => {
+    const [loan, brk] = sparklineRows({
+      accounts: [
+        { sourceId: 'loan', class: 'liability' },
+        { sourceId: 'brk', class: 'investments' },
+      ],
+      snapshots: [
+        { accountId: 'loan', asOf: '2026-01-01', balance: 10_000, source: 'manual' },
+        { accountId: 'loan', asOf: '2026-01-21', balance: 8_000, source: 'manual' },
+        { accountId: 'brk', asOf: '2026-01-11', balance: 1_000, source: 'observed' },
+        { accountId: 'brk', asOf: '2026-01-21', balance: 1_250, source: 'observed' },
+      ],
+      dates: ['2026-01-01', '2026-01-11', '2026-01-21', '2026-01-31'],
+    });
+    expect(loan.values).toEqual([10_000, 9_000, 8_000, 8_000]);
+    expect(loan.change).toBe(-2_000);
+    expect(loan.changePct).toBeCloseTo(-0.2);
+    expect(loan.tone).toBe('good');
+    expect(brk.values).toEqual([null, 1_000, 1_250, 1_250]);
+    expect(brk.changePct).toBeCloseTo(0.25);
+    expect(brk.tone).toBe('good');
+  });
+
+  it('returns an empty line and no percent for an account without snapshots', () => {
+    const [row] = sparklineRows({
+      accounts: [{ sourceId: 'new', class: 'cash' }],
+      snapshots: [],
+      dates: ['2026-01-01', '2026-01-02'],
+    });
+    expect(row.values).toEqual([null, null]);
+    expect(row.changePct).toBeNull();
+    expect(row.tone).toBe('flat');
+  });
+});
+
 describe('account queries', () => {
   const env = { ...process.env };
   beforeEach(() => {
@@ -230,6 +278,7 @@ describe('account queries', () => {
       [accounts.detail, { sourceId: 'chk' }],
       [accounts.transactions, { sourceId: 'chk', paginationOpts: { numItems: 10, cursor: null } }],
       [accounts.holdings, { sourceId: 'chk' }],
+      [accounts.sparklines, { range: '1Y' }],
     ];
     for (const [fn, args] of calls) {
       await expect(run(fn, fakeCtx({}, null).ctx, args)).rejects.toThrow('Unauthorized');
@@ -347,5 +396,66 @@ describe('account queries', () => {
     expect(model.groups[0].accounts[0].balance).toBe(1_100);
     expect(model.total).toBe(1_100 - 9_000);
     expect(stats.reads).toBe(3);
+  });
+
+  it('batches downsampled sparklines that follow the selected range', async () => {
+    const snaps: Row[] = [];
+    let day = '2024-10-22';
+    for (let i = 0; i <= 730; i += 1) {
+      snaps.push(doc({ accountId: 'brk', asOf: day, balance: 10_000 + i * 10, source: 'observed', updatedAt: 1, contentHash: 'x' }));
+      snaps.push(doc({ accountId: 'loan', asOf: day, balance: 20_000 - i * 10, source: 'observed', updatedAt: 1, contentHash: 'x' }));
+      day = addDays(day, 1);
+    }
+    const { ctx, stats } = fakeCtx(
+      { accounts: [account('brk', 'investments', 0), account('loan', 'liability', 0)], balance_snapshots: snaps },
+      ALLOWED,
+    );
+    type Result = {
+      asOf: string;
+      dates: string[];
+      rows: Array<{ sourceId: string; values: Array<number | null>; changePct: number | null; tone: string }>;
+      documentsRead: number;
+    };
+    const year = (await run(accounts.sparklines, ctx, { range: '1Y' })) as Result;
+    expect(year.asOf).toBe('2026-10-22');
+    expect(year.dates).toHaveLength(SPARKLINE_POINTS);
+    expect(year.dates[0]).toBe('2025-10-22');
+    expect(year.dates.at(-1)).toBe('2026-10-22');
+    const [brk, loan] = year.rows;
+    expect(brk.values[0]).toBe(10_000 + 365 * 10);
+    expect(brk.values.at(-1)).toBe(10_000 + 730 * 10);
+    expect(brk.tone).toBe('good');
+    expect(loan.changePct).toBeLessThan(0);
+    expect(loan.tone).toBe('good');
+    expect(stats.reads).toBe(year.documentsRead);
+    expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
+
+    const month = (await run(accounts.sparklines, ctx, { range: '1M' })) as Result;
+    expect(month.dates[0]).toBe('2026-09-22');
+    expect(month.dates).toHaveLength(31);
+    expect(month.rows[0].changePct).toBeCloseTo(300 / (10_000 + 700 * 10));
+  });
+
+  it('keeps sparklines for 200 accounts under the read budget', async () => {
+    const list: Row[] = [];
+    const snaps: Row[] = [];
+    for (let a = 0; a < 200; a += 1) {
+      list.push(account(`acc${a}`, a % 5 === 0 ? 'liability' : 'cash', 0));
+      let day = '2025-10-22';
+      for (let w = 0; w <= 52; w += 1) {
+        snaps.push(doc({ accountId: `acc${a}`, asOf: day, balance: 1_000 + w, source: 'observed', updatedAt: 1, contentHash: 'x' }));
+        day = addDays(day, 7);
+      }
+    }
+    const { ctx, stats } = fakeCtx({ accounts: list, balance_snapshots: snaps }, ALLOWED);
+    const result = (await run(accounts.sparklines, ctx, { range: '1Y' })) as {
+      rows: Array<{ values: Array<number | null> }>;
+    };
+    expect(result.rows).toHaveLength(200);
+    expect(stats.reads).toBeLessThan(CONVEX_QUERY_READ_BUDGET);
+    for (const row of result.rows) {
+      expect(row.values.filter((v) => v != null).length).toBeGreaterThan(SPARKLINE_POINTS / 2);
+    }
+    expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
   });
 });

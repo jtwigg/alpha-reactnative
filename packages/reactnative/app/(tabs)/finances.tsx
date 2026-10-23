@@ -3,7 +3,7 @@ import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountGroups } from '@/components/finance/account-groups';
+import { AccountGroups, type AccountTrends } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
@@ -23,7 +23,7 @@ import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
 import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
-import { demoAccountList, demoNetWorthPage } from '@/lib/finance-fixtures';
+import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
 import {
   BENCHMARKS,
   BENCHMARK_STALE_MS,
@@ -38,6 +38,14 @@ const RANGE_SUFFIX: Record<RangeKey, string> = {
   YTD: 'year to date',
   '1Y': 'past year',
   All: 'all time',
+};
+
+const RANGE_LABEL: Record<RangeKey, string> = {
+  '1M': 'past month',
+  '3M': 'past 3 months',
+  YTD: 'year to date',
+  '1Y': 'past year',
+  All: 'full history',
 };
 
 export default function FinancesScreen() {
@@ -63,6 +71,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
+  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range, refreshNonce } : 'skip');
+  const [heldSparks, setHeldSparks] = useState(liveSparks);
 
   useEffect(() => {
     if (live) setHeld(live);
@@ -72,10 +82,14 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   }, [liveAccounts]);
 
   useEffect(() => {
-    if (refreshing && live !== undefined && liveAccounts !== undefined) {
+    if (liveSparks) setHeldSparks(liveSparks);
+  }, [liveSparks]);
+
+  useEffect(() => {
+    if (refreshing && live !== undefined && liveAccounts !== undefined && liveSparks !== undefined) {
       setRefreshing(false);
     }
-  }, [live, liveAccounts, refreshing]);
+  }, [live, liveAccounts, liveSparks, refreshing]);
 
   const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
   const data = useMemo(() => {
@@ -85,6 +99,16 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     return source;
   }, [demo, hasLive, held, live, range]);
   const accountList = hasLive ? (liveAccounts ?? heldAccounts) : demo ? demoAccountList() : (liveAccounts ?? heldAccounts);
+  const trends = useMemo<AccountTrends>(() => {
+    const sparks =
+      hasLive || !demo
+        ? (liveSparks ?? (heldSparks?.range === range ? heldSparks : undefined))
+        : demoAccountSparklines(range);
+    return {
+      rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
+      rangeLabel: RANGE_SUFFIX[range],
+    };
+  }, [demo, hasLive, heldSparks, liveSparks, range]);
 
   useEffect(() => {
     setScrubIndex(null);
@@ -197,7 +221,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
             <View style={styles.section}>
               <SectionHeader
                 title="Accounts"
-                subtitle="Tap an account for history, transactions and holdings."
+                subtitle={`Trend lines show the ${RANGE_LABEL[range]}. Tap an account for details.`}
                 right={
                   accountList ? (
                     <FText variant="headline" style={TABULAR}>
@@ -207,7 +231,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                 }
               />
               {accountList ? (
-                <AccountGroups model={accountList} demo={usingDemo} />
+                <AccountGroups model={accountList} demo={usingDemo} trends={trends} />
               ) : (
                 <Card>
                   <ActivityIndicator />

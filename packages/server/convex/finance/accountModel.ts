@@ -1,6 +1,7 @@
 import { todayInTimeZone } from './dates';
 import { roundMoney, type SnapshotSource } from './hash';
 import {
+  accountValueOnDay,
   buildNetWorthModel,
   signedAmount,
   type ChartPoint,
@@ -248,6 +249,65 @@ export function accountHistory(args: {
     changePct: model.changePct,
     firstAsOf: model.accounts[0]?.firstAsOf ?? null,
   };
+}
+
+export const SPARKLINE_POINTS = 40;
+
+export type ChangeTone = 'good' | 'bad' | 'flat';
+
+export type SparklineRow = {
+  sourceId: string;
+  values: Array<number | null>;
+  change: number;
+  changePct: number | null;
+  tone: ChangeTone;
+};
+
+/** Shrinking liabilities are good; for everything else growth is good. */
+export function changeTone(className: string, change: number): ChangeTone {
+  if (Math.abs(change) < 0.005) return 'flat';
+  const shrinkIsGood = groupKeyForClass(className) === 'liability';
+  return (change > 0) !== shrinkIsGood ? 'good' : 'bad';
+}
+
+/**
+ * Unsigned balance per date for each account. Values before an account's
+ * first snapshot are null. Change compares the first covered point in the
+ * range with the last point.
+ */
+export function sparklineRows(args: {
+  accounts: Array<{ sourceId: string; class: string }>;
+  snapshots: SeriesSnapshot[];
+  dates: string[];
+}): SparklineRow[] {
+  const byAccount = new Map<string, SeriesSnapshot[]>();
+  for (const row of args.snapshots) {
+    const list = byAccount.get(row.accountId) ?? [];
+    list.push(row);
+    byAccount.set(row.accountId, list);
+  }
+  return args.accounts.map((account) => {
+    const snaps = (byAccount.get(account.sourceId) ?? []).sort((a, b) => a.asOf.localeCompare(b.asOf));
+    const latest = snaps.at(-1);
+    const values = args.dates.map((day) => {
+      if (!latest) return null;
+      const hit = accountValueOnDay(snaps, day, latest);
+      return hit ? roundMoney(hit.balance) : null;
+    });
+    const covered = values.filter((value): value is number => value != null);
+    const start = covered[0];
+    const end = covered.at(-1);
+    const change = start == null || end == null ? 0 : roundMoney(end - start);
+    const changePct =
+      start == null || end == null || Math.abs(start) < 0.005 ? null : change / Math.abs(start);
+    return {
+      sourceId: account.sourceId,
+      values,
+      change,
+      changePct,
+      tone: changeTone(account.class, change),
+    };
+  });
 }
 
 const INFLOW = new Set(['credit', 'in', 'inflow', 'deposit', 'income']);
