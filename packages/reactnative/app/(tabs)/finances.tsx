@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountGroups, GROUP_COLORS, type AccountTrends } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
+import { CompositionCard } from '@/components/finance/composition-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
@@ -261,6 +262,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                 )}
               </Card>
             </View>
+
+            <CompositionCard live={hasLive} demo={usingDemo} refreshNonce={refreshNonce} />
 
             <Card>
               <SectionHeader

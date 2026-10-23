@@ -6,6 +6,8 @@ import {
   ACCOUNT_LIST_CAP,
   HOLDINGS_CAP,
   SPARKLINE_POINTS,
+  groupKeyForClass,
+  stackGrid,
   accountHistory,
   clampPageSize,
   groupAccounts,
@@ -16,7 +18,7 @@ import {
   toListRow,
   typeLabel,
 } from './accountModel';
-import { todayInTimeZone } from './dates';
+import { isIsoDate, todayInTimeZone } from './dates';
 import { snapshotLookup } from './queries';
 import {
   RANGE_KEYS,
@@ -150,6 +152,79 @@ export const sparklines = query({
       dates,
       rows,
       groups: groupSparklines(accounts, rows),
+      documentsRead: chart.documentsRead + accounts.length,
+    };
+  },
+});
+
+const groupKeyValidator = v.union(
+  v.literal('cash'),
+  v.literal('investments'),
+  v.literal('real_estate'),
+  v.literal('liability'),
+  v.literal('other'),
+);
+
+/**
+ * Per-account balances for the stacked composition chart. With no window it
+ * covers the full history (weekly), which drives the navigator overview;
+ * with `from`/`to` it returns the zoomed window (daily up to 120 days).
+ * Same per-account indexed probes and read budget as `sparklines`.
+ */
+export const stack = query({
+  args: {
+    from: v.optional(v.string()),
+    to: v.optional(v.string()),
+    refreshNonce: v.optional(v.number()),
+  },
+  returns: v.object({
+    asOf: v.string(),
+    firstAsOf: v.union(v.string(), v.null()),
+    from: v.string(),
+    to: v.string(),
+    step: v.union(v.literal('day'), v.literal('week')),
+    dates: v.array(v.string()),
+    accounts: v.array(
+      v.object({
+        sourceId: v.string(),
+        name: v.string(),
+        class: v.string(),
+        group: groupKeyValidator,
+        values: v.array(v.union(v.number(), v.null())),
+      }),
+    ),
+    documentsRead: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    for (const value of [args.from, args.to]) {
+      if (value !== undefined && !isIsoDate(value)) throw new Error('Invalid date');
+    }
+    const accounts = await ctx.db.query('accounts').take(ACCOUNT_LIST_CAP);
+    const accountIds = accounts.map((row) => row.sourceId);
+    const lookup = snapshotLookup(ctx);
+    const ends = await loadAccountEnds(lookup, accountIds);
+    const asOf = ends.maxAsOf ?? todayInTimeZone();
+    const grid = stackGrid({ firstAsOf: ends.firstAsOf, asOf, from: args.from, to: args.to });
+    const chart = await loadChartSnapshots(
+      lookup,
+      accountIds,
+      grid.dates,
+      CONVEX_QUERY_READ_BUDGET - accounts.length,
+      ends,
+    );
+    const rows = sparklineRows({ accounts, snapshots: chart.snapshots, dates: grid.dates });
+    return {
+      asOf,
+      firstAsOf: ends.firstAsOf,
+      ...grid,
+      accounts: accounts.map((account, index) => ({
+        sourceId: account.sourceId,
+        name: account.name,
+        class: account.class,
+        group: groupKeyForClass(account.class),
+        values: rows[index].values,
+      })),
       documentsRead: chart.documentsRead + accounts.length,
     };
   },

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   SPARKLINE_POINTS,
+  STACK_POINTS,
   TRANSACTIONS_PAGE_MAX,
   accountHistory,
   changeTone,
@@ -14,6 +15,7 @@ import {
   holdingsView,
   institutionLabel,
   sparklineRows,
+  stackGrid,
   toListRow,
   typeLabel,
   type AccountRecord,
@@ -320,6 +322,23 @@ describe('group sparklines and chart filter', () => {
   });
 });
 
+describe('stack grid', () => {
+  it('is weekly for long windows, daily up to 120 days, and clamped to the data', () => {
+    const all = stackGrid({ firstAsOf: '2019-01-01', asOf: '2026-10-23' });
+    expect(all.step).toBe('week');
+    expect(all.dates.length).toBeLessThanOrEqual(STACK_POINTS);
+    expect(all.dates[0]).toBe('2019-01-01');
+    expect(all.dates.at(-1)).toBe('2026-10-23');
+
+    const month = stackGrid({ firstAsOf: '2019-01-01', asOf: '2026-10-23', from: '2026-09-23', to: '2026-10-23' });
+    expect(month.step).toBe('day');
+    expect(month.dates).toHaveLength(31);
+
+    const clamped = stackGrid({ firstAsOf: '2026-01-01', asOf: '2026-10-23', from: '2010-01-01', to: '2030-01-01' });
+    expect([clamped.from, clamped.to]).toEqual(['2026-01-01', '2026-10-23']);
+  });
+});
+
 describe('account queries', () => {
   const env = { ...process.env };
   beforeEach(() => {
@@ -336,6 +355,7 @@ describe('account queries', () => {
       [accounts.transactions, { sourceId: 'chk', paginationOpts: { numItems: 10, cursor: null } }],
       [accounts.holdings, { sourceId: 'chk' }],
       [accounts.sparklines, { range: '1Y' }],
+      [accounts.stack, {}],
     ];
     for (const [fn, args] of calls) {
       await expect(run(fn, fakeCtx({}, null).ctx, args)).rejects.toThrow('Unauthorized');
@@ -517,5 +537,43 @@ describe('account queries', () => {
       expect(row.values.filter((v) => v != null).length).toBeGreaterThan(SPARKLINE_POINTS / 2);
     }
     expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
+  });
+
+  it('returns stack data for the full history and a zoomed window within the read budget', async () => {
+    const list: Row[] = [];
+    const snaps: Row[] = [];
+    for (let a = 0; a < 12; a += 1) {
+      list.push(account(`acc${a}`, a === 0 ? 'liability' : a % 2 ? 'cash' : 'investments', 0));
+      let day = '2016-10-23';
+      for (let d = 0; d < 3_650; d += 3) {
+        snaps.push(doc({ accountId: `acc${a}`, asOf: day, balance: 1_000 + d, source: 'observed', updatedAt: 1, contentHash: 'x' }));
+        day = addDays(day, 3);
+      }
+    }
+    const { ctx, stats } = fakeCtx({ accounts: list, balance_snapshots: snaps }, ALLOWED);
+    type Stack = {
+      from: string;
+      to: string;
+      step: string;
+      dates: string[];
+      accounts: Array<{ sourceId: string; group: string; values: Array<number | null> }>;
+    };
+    const overview = (await run(accounts.stack, ctx, {})) as Stack;
+    expect(stats.reads).toBeLessThan(CONVEX_QUERY_READ_BUDGET);
+    expect(overview.step).toBe('week');
+    expect(overview.from).toBe('2016-10-23');
+    expect(overview.accounts).toHaveLength(12);
+    expect(overview.accounts[0].group).toBe('liability');
+    expect(overview.accounts[1].values.every((v) => v != null)).toBe(true);
+
+    stats.reads = 0;
+    const zoom = (await run(accounts.stack, ctx, { from: '2026-06-01', to: '2026-07-01' })) as Stack;
+    expect(stats.reads).toBeLessThan(CONVEX_QUERY_READ_BUDGET);
+    expect(zoom.step).toBe('day');
+    expect(zoom.dates[0]).toBe('2026-06-01');
+    expect(zoom.dates).toHaveLength(31);
+    expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
+
+    await expect(run(accounts.stack, ctx, { from: 'June' })).rejects.toThrow('Invalid date');
   });
 });
