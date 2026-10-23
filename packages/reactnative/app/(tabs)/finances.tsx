@@ -3,7 +3,7 @@ import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountGroups, type AccountTrends } from '@/components/finance/account-groups';
+import { AccountGroups, CHANGE_MODES, type AccountTrends, type ChangeMode } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CompositionCard } from '@/components/finance/composition-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
@@ -24,9 +24,10 @@ import {
 import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
 import { useChartColors } from '@/lib/finance-colors';
-import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
+import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
+import { usePersistedChoice } from '@/lib/prefs';
 import { liveRange } from '@/lib/range-support';
 import {
   BENCHMARKS,
@@ -81,6 +82,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const colors = useChartColors();
   const { width: screenWidth } = useWindowDimensions();
   const [range, setRange] = useState<RangeKey>('All');
+  const [changeMode, setChangeMode] = usePersistedChoice<ChangeMode>('finance.changeMode', CHANGE_MODES, 'own');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
@@ -141,8 +143,9 @@ function NetWorthPage({ demo }: { demo: boolean }) {
       rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
       groups: sparks?.groups ? new Map(sparks.groups.map((row) => [row.key, row])) : undefined,
       rangeLabel: RANGE_SUFFIX[sparkRange],
+      mode: changeMode,
     };
-  }, [demo, hasLive, heldSparks, liveSparks, sparkRange]);
+  }, [changeMode, demo, hasLive, heldSparks, liveSparks, sparkRange]);
 
   useEffect(() => {
     setScrubIndex(null);
@@ -312,6 +315,18 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                   ) : null
                 }
               />
+              <View style={styles.modeRow}>
+                <Segmented
+                  options={CHANGE_MODES}
+                  value={changeMode}
+                  onChange={setChangeMode}
+                  labels={CHANGE_MODE_LABELS}
+                  accessibilityLabel="Account change"
+                />
+                <FText variant="caption" tone="subtle" style={styles.modeNote}>
+                  {changeMode === 'own' ? 'Each row’s own change' : weightedNote(trends)}
+                </FText>
+              </View>
               {accountList ? (
                 <AccountGroups
                   model={accountList}
@@ -359,6 +374,18 @@ const GROUP_PICKER_LABELS: Record<ChartGroup, string> = {
   liability: 'Loans',
   other: 'Other',
 };
+
+const CHANGE_MODE_LABELS: Record<ChangeMode, string> = { own: 'Own %', weighted: 'Weighted' };
+
+/** Group contributions sum to the net-worth change; say so with the total. */
+function weightedNote(trends: AccountTrends): string {
+  const groups = trends.groups ? [...trends.groups.values()] : [];
+  if (groups.length === 0 || groups.some((group) => !group.weighted)) {
+    return 'Share of the parent’s change, in percentage points';
+  }
+  const total = groups.reduce((sum, group) => sum + (group.weighted?.pct ?? 0), 0);
+  return `Points of change · accounts add up to their group, groups to net worth (${formatPct(total)}). Accounts that start mid-range count from their first balance.`;
+}
 
 function heroLabel(group: ChartGroup): string {
   return group === 'all' ? 'Net worth' : group === 'liability' ? 'Owed on loans' : GROUP_PICKER_LABELS[group];
@@ -492,6 +519,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   section: { gap: 12 },
+  modeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 },
+  modeNote: { flexShrink: 1 },
   footnote: { textAlign: 'center', paddingHorizontal: 12 },
   demoBanner: {
     backgroundColor: '#FFF4D6',

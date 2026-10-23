@@ -5,6 +5,7 @@ import { requireAllowedIdentity } from '../allowlist';
 import {
   ACCOUNT_LIST_CAP,
   HOLDINGS_CAP,
+  addContributions,
   SPARKLINE_POINTS,
   groupKeyForClass,
   stackGrid,
@@ -87,12 +88,22 @@ export const list = query({
   },
 });
 
+const toneValidator = v.union(v.literal('good'), v.literal('bad'), v.literal('flat'));
+
+/** `pct` is a fraction of the parent's start (group for accounts, net worth for groups). */
+const contributionValidator = v.object({
+  change: v.number(),
+  pct: v.union(v.number(), v.null()),
+  tone: toneValidator,
+});
+
 const sparklineRowValidator = v.object({
   sourceId: v.string(),
   values: v.array(v.union(v.number(), v.null())),
   change: v.number(),
   changePct: v.union(v.number(), v.null()),
-  tone: v.union(v.literal('good'), v.literal('bad'), v.literal('flat')),
+  tone: toneValidator,
+  weighted: contributionValidator,
 });
 
 const groupSparklineValidator = v.object({
@@ -106,7 +117,8 @@ const groupSparklineValidator = v.object({
   values: v.array(v.union(v.number(), v.null())),
   change: v.number(),
   changePct: v.union(v.number(), v.null()),
-  tone: v.union(v.literal('good'), v.literal('bad'), v.literal('flat')),
+  tone: toneValidator,
+  weighted: contributionValidator,
 });
 
 /**
@@ -146,12 +158,13 @@ export const sparklines = query({
       ends,
     );
     const rows = sparklineRows({ accounts, snapshots: chart.snapshots, dates });
+    const weighted = addContributions(accounts, rows, groupSparklines(accounts, rows));
     return {
       range,
       asOf,
       dates,
-      rows,
-      groups: groupSparklines(accounts, rows),
+      rows: weighted.rows,
+      groups: weighted.groups,
       documentsRead: chart.documentsRead + accounts.length,
     };
   },

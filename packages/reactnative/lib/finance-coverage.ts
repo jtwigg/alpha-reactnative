@@ -92,6 +92,17 @@ export function formatPct(value: number | null): string {
   return body;
 }
 
+/** Percentage points, e.g. a fraction 0.0123 → "+1.2 pp". */
+export function formatPp(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return '—';
+  const pp = value * 100;
+  const abs = Math.abs(pp);
+  const body = `${abs > 0 && abs < 0.1 ? abs.toFixed(2) : abs.toFixed(1)} pp`;
+  if (pp > 0) return `+${body}`;
+  if (pp < 0) return `−${body}`;
+  return body;
+}
+
 export function formatSynced(ms: number | null): string {
   if (!ms) return '—';
   return new Date(ms).toLocaleDateString('en-US', {

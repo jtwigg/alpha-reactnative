@@ -11,6 +11,7 @@ import {
   groupByDate,
   groupChartPoints,
   groupKeyForClass,
+  addContributions,
   groupSparklines,
   holdingsView,
   institutionLabel,
@@ -278,13 +279,16 @@ describe('group sparklines and chart filter', () => {
       { sourceId: 'brk', class: 'investments' },
       { sourceId: 'loan', class: 'liability' },
     ];
-    const row = (sourceId: string, values: Array<number | null>) => ({
-      sourceId,
-      values,
-      change: 0,
-      changePct: null,
-      tone: 'flat' as const,
-    });
+    const row = (sourceId: string, values: Array<number | null>) => {
+      const covered = values.filter((value): value is number => value != null);
+      return {
+        sourceId,
+        values,
+        change: (covered.at(-1) ?? 0) - (covered[0] ?? 0),
+        changePct: null,
+        tone: 'flat' as const,
+      };
+    };
     const groups = groupSparklines(accountsIn, [
       row('visa', [null, 500, 1_000]),
       row('loan', [9_000, 8_000, 7_000]),
@@ -296,11 +300,73 @@ describe('group sparklines and chart filter', () => {
     expect(groups.map((g) => g.key)).toEqual(['cash', 'investments', 'real_estate', 'liability']);
     const [cash, , home, loans] = groups;
     expect(cash.values).toEqual([100, 200, 1_000]);
+    // Late savings coverage adds to the line, not to the change: +200 on 800.
+    expect(cash.change).toBe(200);
+    expect(cash.changePct).toBeCloseTo(200 / 800);
     expect(cash.tone).toBe('good');
     expect(home.tone).toBe('flat');
     expect(loans.values).toEqual([9_000, 8_500, 8_000]);
-    expect(loans.changePct).toBeCloseTo(-1_000 / 9_000);
+    // Loan −2,000 plus card +500 since its first point, on 9,500 owed.
+    expect(loans.change).toBe(-1_500);
+    expect(loans.changePct).toBeCloseTo(-1_500 / 9_500);
     expect(loans.tone).toBe('good');
+  });
+
+  it('weights accounts by group start and groups by net-worth start so they add up', () => {
+    const accountsIn = [
+      { sourceId: 'chk', class: 'cash' },
+      { sourceId: 'sav', class: 'depository' },
+      { sourceId: 'brk', class: 'investments' },
+      { sourceId: 'loan', class: 'liability' },
+      { sourceId: 'visa', class: 'credit' },
+    ];
+    const rows = sparklineRows({
+      accounts: accountsIn,
+      snapshots: [
+        { accountId: 'chk', asOf: '2026-01-01', balance: 100, source: 'observed' },
+        { accountId: 'chk', asOf: '2026-01-21', balance: 300, source: 'observed' },
+        { accountId: 'sav', asOf: '2026-01-21', balance: 700, source: 'observed' },
+        { accountId: 'brk', asOf: '2026-01-01', balance: 2_000, source: 'observed' },
+        { accountId: 'brk', asOf: '2026-01-21', balance: 1_900, source: 'observed' },
+        { accountId: 'loan', asOf: '2026-01-01', balance: 1_000, source: 'manual' },
+        { accountId: 'loan', asOf: '2026-01-21', balance: 600, source: 'manual' },
+        { accountId: 'visa', asOf: '2026-01-01', balance: 50, source: 'observed' },
+        { accountId: 'visa', asOf: '2026-01-21', balance: 150, source: 'observed' },
+      ],
+      dates: ['2026-01-01', '2026-01-11', '2026-01-21'],
+    });
+    const { rows: weighted, groups } = addContributions(accountsIn, rows, groupSparklines(accountsIn, rows));
+    const byId = new Map(weighted.map((row) => [row.sourceId, row.weighted]));
+    const byKey = new Map(groups.map((group) => [group.key, group]));
+
+    // Cash: checking +200, savings starts late at 700 (no change). Base 800.
+    expect(byKey.get('cash')!.change).toBe(200);
+    expect(byId.get('chk')).toEqual({ change: 200, pct: 0.25, tone: 'good' });
+    expect(byId.get('sav')).toEqual({ change: 0, pct: 0, tone: 'flat' });
+    const sumWithin = (ids: string[]) => ids.reduce((acc, id) => acc + (byId.get(id)!.pct ?? 0), 0);
+    expect(sumWithin(['chk', 'sav'])).toBeCloseTo(byKey.get('cash')!.changePct!, 12);
+    expect(sumWithin(['loan', 'visa'])).toBeCloseTo(byKey.get('liability')!.changePct!, 12);
+    // Loan paid down (good), card grew (bad), measured against owed 1,050.
+    expect(byId.get('loan')).toMatchObject({ change: -400, tone: 'good' });
+    expect(byId.get('loan')!.pct).toBeCloseTo(-400 / 1_050);
+    expect(byId.get('visa')).toMatchObject({ change: 100, tone: 'bad' });
+
+    // Net-worth start = 800 + 2,000 − 1,050 = 1,750; Δ = 200 − 100 + 300 = 400.
+    const cash = byKey.get('cash')!.weighted;
+    const inv = byKey.get('investments')!.weighted;
+    const loans = byKey.get('liability')!.weighted;
+    expect(cash).toEqual({ change: 200, pct: 200 / 1_750, tone: 'good' });
+    expect(inv).toMatchObject({ change: -100, tone: 'bad' });
+    expect(loans).toMatchObject({ change: 300, tone: 'good' });
+    expect(cash.pct! + inv.pct! + loans.pct!).toBeCloseTo(400 / 1_750, 12);
+  });
+
+  it('returns flat, empty contributions when nothing is covered', () => {
+    const accountsIn = [{ sourceId: 'new', class: 'cash' }];
+    const rows = sparklineRows({ accounts: accountsIn, snapshots: [], dates: ['2026-01-01'] });
+    const out = addContributions(accountsIn, rows, groupSparklines(accountsIn, rows));
+    expect(out.rows[0].weighted).toEqual({ change: 0, pct: null, tone: 'flat' });
+    expect(out.groups[0].weighted).toEqual({ change: 0, pct: null, tone: 'flat' });
   });
 
   it('filters chart points to one group, trimming dates before it has data', () => {
@@ -490,8 +556,19 @@ describe('account queries', () => {
     type Result = {
       asOf: string;
       dates: string[];
-      rows: Array<{ sourceId: string; values: Array<number | null>; changePct: number | null; tone: string }>;
-      groups: Array<{ key: string; tone: string }>;
+      rows: Array<{
+        sourceId: string;
+        values: Array<number | null>;
+        changePct: number | null;
+        tone: string;
+        weighted: { change: number; pct: number | null; tone: string };
+      }>;
+      groups: Array<{
+        key: string;
+        tone: string;
+        changePct: number | null;
+        weighted: { change: number; pct: number | null; tone: string };
+      }>;
       documentsRead: number;
     };
     const year = (await run(accounts.sparklines, ctx, { range: '1Y' })) as Result;
@@ -507,6 +584,12 @@ describe('account queries', () => {
     expect(loan.tone).toBe('good');
     expect(year.groups.map((g) => g.key)).toEqual(['investments', 'liability']);
     expect(year.groups[1].tone).toBe('good');
+    // One account per group: weighted equals the group's own %.
+    expect(brk.weighted.pct).toBeCloseTo(year.groups[0].changePct!, 12);
+    expect(loan.weighted.tone).toBe('good');
+    // Loan paydown raises net worth: positive, good contribution.
+    expect(year.groups[1].weighted.change).toBeGreaterThan(0);
+    expect(year.groups[1].weighted.tone).toBe('good');
     expect(stats.reads).toBe(year.documentsRead);
     expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
 
