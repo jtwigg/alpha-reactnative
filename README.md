@@ -212,9 +212,11 @@ TestFlight (production) binaries download the update in the background and apply
 
 | Trigger | Channel |
 | --- | --- |
-| Push to `main` | `preview` |
+| Push to `main` | `preview` and `production` (TestFlight devices) |
 | Git tag `v*` (e.g. `v1.0.1`) | `production` (TestFlight devices) |
 | Actions → Run workflow | you pick `preview` or `production` |
+
+The job fails up front if any of `EXPO_TOKEN`, `EAS_PROJECT_ID`, `EXPO_PUBLIC_CONVEX_URL`, or `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is missing. A red **EAS Update** run means TestFlight devices did not get that commit.
 
 Vercel is unchanged: it still builds web from `vercel.json`. The workflow never runs `expo export --platform web`.
 

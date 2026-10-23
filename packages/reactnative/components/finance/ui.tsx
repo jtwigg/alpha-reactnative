@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Platform,
   Pressable,
@@ -304,6 +305,32 @@ export function TogglePill({
   );
 }
 
+/** Browsers have no RefreshControl, so web gets an explicit button; native relies on pull-to-refresh. */
+export function RefreshButton({ refreshing, onRefresh }: { refreshing: boolean; onRefresh: () => void }) {
+  const palette = useFinancePalette();
+  if (Platform.OS !== 'web') return null;
+  return (
+    <Pressable
+      onPress={refreshing ? undefined : onRefresh}
+      disabled={refreshing}
+      accessibilityRole="button"
+      accessibilityLabel={refreshing ? 'Refreshing' : 'Refresh'}
+      accessibilityState={{ busy: refreshing, disabled: refreshing }}
+      hitSlop={4}
+      style={({ pressed }) => [
+        styles.toggle,
+        { borderColor: palette.border, backgroundColor: pressed ? palette.chip : palette.card },
+      ]}>
+      {refreshing ? (
+        <ActivityIndicator size="small" color={palette.accent} style={styles.refreshSpinner} />
+      ) : (
+        <Text style={[styles.refreshGlyph, { color: palette.accent }]}>↻</Text>
+      )}
+      <Text style={[styles.toggleLabel, { color: palette.muted }]}>{refreshing ? 'Refreshing' : 'Refresh'}</Text>
+    </Pressable>
+  );
+}
+
 export function DeltaBadge({
   amount,
   pct,
@@ -473,6 +500,8 @@ const styles = StyleSheet.create({
   },
   toggleDot: { width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 },
   toggleLabel: { fontSize: 13, fontWeight: '600' },
+  refreshGlyph: { fontSize: 15, fontWeight: '700', lineHeight: 16 },
+  refreshSpinner: { transform: [{ scale: 0.7 }], width: 14, height: 14 },
   deltaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   delta: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   deltaText: { fontSize: 13, fontWeight: '700', ...TABULAR },

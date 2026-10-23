@@ -33,11 +33,17 @@ jobs:
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
     steps:
-      - name: Check for EXPO_TOKEN
+      - name: Check required secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "Add an EXPO_TOKEN repository secret (expo.dev/settings/access-tokens)."
-            echo "See the root README → Over-the-air updates."
+          missing=()
+          for name in EXPO_TOKEN EAS_PROJECT_ID EXPO_PUBLIC_CONVEX_URL EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. No OTA update was published, so TestFlight devices keep their old JS."
+            echo "Settings → Secrets and variables → Actions. See the root README → Over-the-air updates."
             exit 1
           fi
 
@@ -64,15 +70,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Resolve channel
+      - name: Resolve channels
         id: channel
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"
+            echo "names=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "name=production" >> "$GITHUB_OUTPUT"
+            echo "names=production" >> "$GITHUB_OUTPUT"
           else
-            echo "name=preview" >> "$GITHUB_OUTPUT"
+            # main is what family testers run, so TestFlight (production) gets it too.
+            echo "names=preview production" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish EAS Update
@@ -83,4 +90,6 @@ jobs:
           message="${UPDATE_MESSAGE:-ci update}"
           # eas update --message is a single string; collapse newlines from commit bodies
           message="${message//$'\n'/ / }"
-          eas update --channel "${{ steps.channel.outputs.name }}" --non-interactive --message "$message"
+          for channel in ${{ steps.channel.outputs.names }}; do
+            eas update --channel "$channel" --non-interactive --message "$message"
+          done
