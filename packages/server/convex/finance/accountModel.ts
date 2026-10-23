@@ -337,6 +337,11 @@ export type GroupSparklineRow = Omit<SparklineRow, 'sourceId'> & { key: AccountG
 /**
  * Sum of account lines per group (unsigned, so Loans is the amount owed).
  * A date is null until at least one account in the group has coverage.
+ *
+ * Change is the sum of each member's own change (first covered point to
+ * last), over the sum of their starting values. An account whose coverage
+ * begins mid-range adds to the line but not to the change: new coverage is
+ * not a gain.
  */
 export function groupSparklines(
   accounts: Array<{ sourceId: string; class: string }>,
@@ -364,9 +369,70 @@ export function groupSparklines(
         }
         return sum == null ? null : roundMoney(sum);
       });
-      const { change, changePct } = rangeChange(values);
+      const change = roundMoney(list.reduce((sum, row) => sum + row.change, 0));
+      const base = startTotal(list);
+      const changePct = Math.abs(base) < 0.005 ? null : change / Math.abs(base);
       return { key, values, change, changePct, tone: changeTone(key, change) };
     });
+}
+
+/** Share of a parent's change: `pct` is a fraction of the parent's start value. */
+export type Contribution = { change: number; pct: number | null; tone: ChangeTone };
+
+export type WeightedSparklines = {
+  rows: Array<SparklineRow & { weighted: Contribution }>;
+  groups: Array<GroupSparklineRow & { weighted: Contribution }>;
+};
+
+/** Sum of each row's first covered value: the capital the change is measured on. */
+function startTotal(rows: Array<{ values: Array<number | null> }>): number {
+  return rows.reduce((sum, row) => sum + (row.values.find((value) => value != null) ?? 0), 0);
+}
+
+function contribution(change: number, base: number, tone: ChangeTone): Contribution {
+  const rounded = roundMoney(change);
+  return {
+    change: rounded,
+    pct: Math.abs(base) < 0.005 ? null : rounded / Math.abs(base),
+    tone,
+  };
+}
+
+/**
+ * Weighted changes that add up exactly, on the same basis as the group's own
+ * change (each account from its own first covered point):
+ * - account: Δ / group start, where group start is the members' summed
+ *   starting values, so accounts sum to the group's %.
+ * - group: signed Δ / net-worth start (loans negative), so groups sum to the
+ *   net-worth change and a loan paydown is a positive contribution.
+ */
+export function addContributions(
+  accounts: Array<{ sourceId: string; class: string }>,
+  rows: SparklineRow[],
+  groups: GroupSparklineRow[],
+): WeightedSparklines {
+  const classOf = new Map(accounts.map((account) => [account.sourceId, account.class]));
+  const members = new Map<AccountGroupKey, SparklineRow[]>();
+  for (const row of rows) {
+    const key = groupKeyForClass(classOf.get(row.sourceId) ?? '');
+    members.set(key, [...(members.get(key) ?? []), row]);
+  }
+  const groupBase = new Map(groups.map((group) => [group.key, startTotal(members.get(group.key) ?? [])]));
+
+  const weightedRows = rows.map((row) => {
+    const className = classOf.get(row.sourceId) ?? '';
+    const base = groupBase.get(groupKeyForClass(className)) ?? 0;
+    return { ...row, weighted: contribution(row.change, base, changeTone(className, row.change)) };
+  });
+
+  const sign = (key: AccountGroupKey) => (key === 'liability' ? -1 : 1);
+  const netBase = groups.reduce((sum, group) => sum + sign(group.key) * (groupBase.get(group.key) ?? 0), 0);
+  const weightedGroups = groups.map((group) => {
+    const change = sign(group.key) * group.change;
+    return { ...group, weighted: contribution(change, netBase, changeTone('cash', change)) };
+  });
+
+  return { rows: weightedRows, groups: weightedGroups };
 }
 
 function rangeChange(values: Array<number | null>): { change: number; changePct: number | null } {

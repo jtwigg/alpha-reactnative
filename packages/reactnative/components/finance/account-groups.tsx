@@ -15,13 +15,15 @@ import {
 import { Sparkline } from '@/components/finance/sparkline';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useChartColors } from '@/lib/finance-colors';
-import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
+import { formatCompactUsd } from '@/lib/chart-math';
+import { formatCoverageDate, formatPct, formatPp, formatUsd, formatUsdSigned } from '@/lib/finance-coverage';
 import type {
   AccountGroup,
   AccountGroupKey,
   AccountListModel,
   AccountListRow,
   ChangeTone,
+  Contribution,
   GroupSparklineRow,
   SparklineRow,
 } from '../../../server/convex/finance/accountModel';
@@ -31,14 +33,40 @@ export function accountHref(sourceId: string, demo: boolean): Href {
   return (demo ? `${base}?demo=1` : base) as Href;
 }
 
+export type ChangeMode = 'own' | 'weighted';
+export const CHANGE_MODES: readonly ChangeMode[] = ['own', 'weighted'];
+
+/** `weighted` is missing when talking to a backend deployed before it existed. */
+type WithWeighted<T> = T & { weighted?: Contribution };
+
 export type AccountTrends = {
   /** undefined while loading; rows missing from the map have no trend. */
-  rows: Map<string, SparklineRow> | undefined;
-  groups: Map<AccountGroupKey, GroupSparklineRow> | undefined;
+  rows: Map<string, WithWeighted<SparklineRow>> | undefined;
+  groups: Map<AccountGroupKey, WithWeighted<GroupSparklineRow>> | undefined;
   rangeLabel: string;
+  mode: ChangeMode;
 };
 
-type TrendData = Pick<SparklineRow, 'values' | 'changePct' | 'tone'>;
+type TrendData = WithWeighted<Pick<SparklineRow, 'values' | 'change' | 'changePct' | 'tone'>>;
+
+type ShownChange = { pct: string; dollars: number | null; tone: ChangeTone };
+
+/** Own % change, or contribution to the parent's change in percentage points. */
+function shownChange(trend: TrendData | undefined, mode: ChangeMode): ShownChange | null {
+  if (!trend) return null;
+  if (mode === 'own') return { pct: formatPct(trend.changePct), dollars: trend.change, tone: trend.tone };
+  if (!trend.weighted) return { pct: '—', dollars: null, tone: 'flat' };
+  return { pct: formatPp(trend.weighted.pct), dollars: trend.weighted.change, tone: trend.weighted.tone };
+}
+
+function changeA11y(trend: TrendData | undefined, trends: AccountTrends | undefined, parent: string): string {
+  const shown = trends ? shownChange(trend, trends.mode) : null;
+  if (!shown || shown.pct === '—') return '';
+  const dollars = shown.dollars != null ? ` (${formatUsdSigned(shown.dollars)})` : '';
+  return trends!.mode === 'own'
+    ? `, ${shown.pct}${dollars} ${trends!.rangeLabel}`
+    : `, ${shown.pct}${dollars} of ${parent} change ${trends!.rangeLabel}`;
+}
 
 export function AccountGroups({
   model,
@@ -123,7 +151,7 @@ function GroupCard({
       {formatUsd(group.subtotal)}
     </FText>
   );
-  const pctText = trend?.changePct != null ? `, ${formatPct(trend.changePct)} ${trends?.rangeLabel ?? ''}` : '';
+  const pctText = changeA11y(trend, trends, 'net worth');
   return (
     <Card padded={false} style={selected ? { borderColor: color } : undefined}>
       <View
@@ -173,11 +201,13 @@ function GroupCard({
           {compact ? (
             <View style={styles.rowRight}>
               {subtotal}
-              {trends ? <TrendCell loading={loading} trend={trend} sparkWidth={44} inline /> : null}
+              {trends ? <TrendCell loading={loading} trend={trend} mode={trends.mode} sparkWidth={44} inline /> : null}
             </View>
           ) : (
             <View style={styles.groupRight}>
-              {trends ? <TrendCell loading={loading} trend={trend} sparkWidth={width >= 720 ? 96 : 72} /> : null}
+              {trends ? (
+                <TrendCell loading={loading} trend={trend} mode={trends.mode} sparkWidth={width >= 720 ? 96 : 72} />
+              ) : null}
               {subtotal}
             </View>
           )}
@@ -188,7 +218,7 @@ function GroupCard({
         : group.accounts.map((account, index) => (
             <Fragment key={account.sourceId}>
               {index > 0 ? <Divider inset={66} /> : null}
-              <AccountRow account={account} color={color} demo={demo} trends={trends} />
+              <AccountRow account={account} color={color} demo={demo} trends={trends} groupLabel={group.label} />
             </Fragment>
           ))}
     </Card>
@@ -200,19 +230,20 @@ function AccountRow({
   color,
   demo,
   trends,
+  groupLabel,
 }: {
   account: AccountListRow;
   color: string;
   demo: boolean;
   trends?: AccountTrends;
+  groupLabel: string;
 }) {
   const router = useRouter();
   const palette = useFinancePalette();
   const { width } = useWindowDimensions();
   const compact = width < 560;
   const trend = trends?.rows?.get(account.sourceId);
-  const trendText =
-    trend && trend.changePct != null ? `, ${formatPct(trend.changePct)} ${trends?.rangeLabel ?? ''}` : '';
+  const trendText = changeA11y(trend, trends, groupLabel);
   return (
     <Pressable
       accessibilityRole="button"
@@ -248,7 +279,12 @@ function AccountRow({
         ) : null}
       </View>
       {trends && !compact ? (
-        <TrendCell loading={trends.rows === undefined} trend={trend} sparkWidth={width >= 720 ? 96 : 72} />
+        <TrendCell
+          loading={trends.rows === undefined}
+          trend={trend}
+          mode={trends.mode}
+          sparkWidth={width >= 720 ? 96 : 72}
+        />
       ) : null}
       <View style={styles.rowRight}>
         <FText
@@ -258,7 +294,9 @@ function AccountRow({
           {formatUsd(account.signedBalance)}
         </FText>
         {compact ? (
-          trends ? <TrendCell loading={trends.rows === undefined} trend={trend} sparkWidth={44} inline /> : null
+          trends ? (
+            <TrendCell loading={trends.rows === undefined} trend={trend} mode={trends.mode} sparkWidth={44} inline />
+          ) : null
         ) : (
           <FText variant="caption" tone="subtle">
             {formatCoverageDate(account.lastUpdated)}
@@ -276,15 +314,17 @@ function toneColor(tone: ChangeTone, palette: ReturnType<typeof useFinancePalett
   return palette.subtle;
 }
 
-/** Stacked (sparkline over %) beside the balance, or inline under it on narrow screens. */
+/** Stacked (sparkline over % and $) beside the balance, or inline under it on narrow screens. */
 function TrendCell({
   loading,
   trend,
+  mode,
   sparkWidth,
   inline = false,
 }: {
   loading: boolean;
   trend: TrendData | undefined;
+  mode: ChangeMode;
   sparkWidth: number;
   inline?: boolean;
 }) {
@@ -301,15 +341,30 @@ function TrendCell({
       </View>
     );
   }
-  const color = trend ? toneColor(trend.tone, palette) : palette.subtle;
+  const shown = shownChange(trend, mode);
+  const color = shown ? toneColor(shown.tone, palette) : palette.subtle;
+  const dollars =
+    shown?.dollars == null ? null : inline ? signedCompact(shown.dollars) : formatUsdSigned(Math.round(shown.dollars));
   return (
     <View style={layout}>
       <Sparkline values={trend?.values ?? []} color={color} width={sparkWidth} height={sparkHeight} />
-      <Text style={[styles.pct, TABULAR, { color }]} numberOfLines={1}>
-        {trend && trend.changePct != null ? formatPct(trend.changePct) : '—'}
-      </Text>
+      <View style={inline ? styles.changeInline : styles.change}>
+        <Text style={[styles.pct, TABULAR, { color }]} numberOfLines={1}>
+          {shown?.pct ?? '—'}
+        </Text>
+        {dollars ? (
+          <Text style={[styles.dollars, TABULAR, { color }]} numberOfLines={1}>
+            {dollars}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
+}
+
+function signedCompact(amount: number): string {
+  if (Math.abs(amount) < 0.5) return '$0';
+  return amount > 0 ? `+${formatCompactUsd(amount)}` : formatCompactUsd(amount);
 }
 
 const styles = StyleSheet.create({
@@ -357,9 +412,12 @@ const styles = StyleSheet.create({
   metaText: { flexShrink: 1 },
   rowRight: { alignItems: 'flex-end', gap: 3 },
   balance: { fontWeight: '600' },
-  trend: { alignItems: 'flex-end', gap: 2 },
+  trend: { alignItems: 'flex-end', gap: 2, minWidth: 72 },
   trendInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sparkSkeleton: { borderRadius: 5, opacity: 0.6 },
   pctSkeleton: { width: 34, height: 10, borderRadius: 4, opacity: 0.6 },
   pct: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
+  dollars: { fontSize: 11, fontWeight: '500', opacity: 0.85 },
+  change: { alignItems: 'flex-end' },
+  changeInline: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
 });
