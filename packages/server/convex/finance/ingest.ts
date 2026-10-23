@@ -5,6 +5,7 @@ import type { Id } from '../_generated/dataModel';
 import { financeContentHash } from './hash';
 import type { SnapshotSource } from './hash';
 import { parseIsoDate } from './dates';
+import { fillGapsWindow } from './scan';
 import {
   assertBatchSize,
   decidePlainWrite,
@@ -17,6 +18,7 @@ import {
 } from './lib';
 import {
   BATCH_CAP,
+  FILL_GAPS_READ_CAP,
   FILL_GAPS_WRITE_CAP,
   accountInputValidator,
   fillGapsArgsValidator,
@@ -340,16 +342,21 @@ export const fillGaps = internalMutation({
       throw new Error('fillGaps: `to` must be on or after `from`');
     }
 
-    const anchors = await loadAnchors(ctx, accountId, from, to);
-    const planned = planFillGaps({ from, to, anchors });
+    const { windowTo, continueFrom: windowContinue } = fillGapsWindow(
+      from,
+      to,
+      FILL_GAPS_READ_CAP,
+    );
+    const anchors = await loadAnchors(ctx, accountId, from, windowTo);
+    const planned = planFillGaps({ from, to: windowTo, anchors });
     const plannedByDate = new Map(planned.map((point) => [point.asOf, point]));
 
     const existingRows = await ctx.db
       .query('balance_snapshots')
       .withIndex('by_account_asOf', (q) =>
-        q.eq('accountId', accountId).gte('asOf', from).lte('asOf', to),
+        q.eq('accountId', accountId).gte('asOf', from).lte('asOf', windowTo),
       )
-      .collect();
+      .take(FILL_GAPS_READ_CAP);
 
     const counts = {
       inserted: 0,
@@ -417,9 +424,37 @@ export const fillGaps = internalMutation({
       writes += 1;
     }
 
+    if (counts.continueFrom == null) {
+      counts.continueFrom = windowContinue;
+    }
     return counts;
   },
 });
+
+async function nearestNonInterpolated(
+  ctx: MutationCtx,
+  accountId: string,
+  fromExclusive: string,
+  direction: 'before' | 'after',
+): Promise<{ asOf: string; balance: number } | null> {
+  let cursor = fromExclusive;
+  for (let page = 0; page < 8; page += 1) {
+    const rows = await ctx.db
+      .query('balance_snapshots')
+      .withIndex('by_account_asOf', (q) =>
+        direction === 'before'
+          ? q.eq('accountId', accountId).lt('asOf', cursor)
+          : q.eq('accountId', accountId).gt('asOf', cursor),
+      )
+      .order(direction === 'before' ? 'desc' : 'asc')
+      .take(150);
+    if (rows.length === 0) return null;
+    const found = rows.find((row) => row.source !== 'interpolated');
+    if (found) return { asOf: found.asOf, balance: found.balance };
+    cursor = rows[rows.length - 1].asOf;
+  }
+  return null;
+}
 
 async function loadAnchors(
   ctx: MutationCtx,
@@ -427,39 +462,23 @@ async function loadAnchors(
   from: string,
   to: string,
 ): Promise<Array<{ asOf: string; balance: number }>> {
-  const prior = await ctx.db
-    .query('balance_snapshots')
-    .withIndex('by_account_asOf', (q) =>
-      q.eq('accountId', accountId).lt('asOf', from),
-    )
-    .order('desc')
-    .take(400);
-  const left = prior.find((row) => row.source !== 'interpolated');
-
-  const after = await ctx.db
-    .query('balance_snapshots')
-    .withIndex('by_account_asOf', (q) =>
-      q.eq('accountId', accountId).gt('asOf', to),
-    )
-    .order('asc')
-    .take(400);
-  const right = after.find((row) => row.source !== 'interpolated');
-
+  const left = await nearestNonInterpolated(ctx, accountId, from, 'before');
+  const right = await nearestNonInterpolated(ctx, accountId, to, 'after');
   const inside = await ctx.db
     .query('balance_snapshots')
     .withIndex('by_account_asOf', (q) =>
       q.eq('accountId', accountId).gte('asOf', from).lte('asOf', to),
     )
-    .collect();
+    .take(FILL_GAPS_READ_CAP);
 
   const anchors: Array<{ asOf: string; balance: number }> = [];
-  if (left) anchors.push({ asOf: left.asOf, balance: left.balance });
+  if (left) anchors.push(left);
   for (const row of inside) {
     if (row.source !== 'interpolated') {
       anchors.push({ asOf: row.asOf, balance: row.balance });
     }
   }
-  if (right) anchors.push({ asOf: right.asOf, balance: right.balance });
+  if (right) anchors.push(right);
   return anchors;
 }
 

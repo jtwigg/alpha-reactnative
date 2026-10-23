@@ -6,6 +6,10 @@ export const DIGEST_BUCKET_LIMIT_MAX = 200;
 export const EXPORT_PAGE_DEFAULT = 100;
 export const EXPORT_PAGE_MAX = 200;
 export const FILL_GAPS_WRITE_CAP = 800;
+/** Inclusive days loaded per fillGaps call so `.collect()` stays under Convex reads. */
+export const FILL_GAPS_READ_CAP = 800;
+/** Documents a digest/export query may read before returning a cursor. */
+export const CONVEX_QUERY_READ_BUDGET = 3200;
 
 export const snapshotSourceValidator = v.union(
   v.literal('manual'),

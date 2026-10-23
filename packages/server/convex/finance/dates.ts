@@ -119,3 +119,30 @@ export function monthInRange(
   if (toMonth && month > toMonth) return false;
   return true;
 }
+
+export function addMonths(monthOrDate: string, delta: number): string {
+  const month = monthOf(monthOrDate);
+  const year = Number(month.slice(0, 4));
+  const mon = Number(month.slice(5, 7));
+  const date = new Date(Date.UTC(year, mon - 1 + delta, 1));
+  const y = date.getUTCFullYear();
+  const mo = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${mo}`;
+}
+
+/** Inclusive YYYY-MM range. */
+export function eachMonth(fromMonth: string, toMonth: string): string[] {
+  const start = monthOf(fromMonth);
+  const end = monthOf(toMonth);
+  if (end < start) return [];
+  const out: string[] = [];
+  let cursor = start;
+  while (cursor <= end) {
+    out.push(cursor);
+    cursor = addMonths(cursor, 1);
+    if (out.length > 2400) {
+      throw new Error('eachMonth: span exceeds 200 years');
+    }
+  }
+  return out;
+}

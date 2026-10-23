@@ -6,13 +6,22 @@ import {
   isIsoMonth,
   monthEnd,
   monthFromTimestampMs,
-  monthInRange,
-  monthOf,
   monthStart,
   rangeBounds,
 } from './dates';
-import { decodeCursor, encodeCursor, formatFixedSum } from './lib';
+import { decodeCursor, encodeCursor } from './lib';
 import {
+  collectDigestPage,
+  decodeExportCursor,
+  applyExportCursor,
+  exportIndexStart,
+  TABLE_ORDER,
+  type DateIndexedTable,
+  type DigestCursor,
+  type DigestSource,
+} from './scan';
+import {
+  CONVEX_QUERY_READ_BUDGET,
   DIGEST_BUCKET_LIMIT_DEFAULT,
   DIGEST_BUCKET_LIMIT_MAX,
   EXPORT_PAGE_DEFAULT,
@@ -23,142 +32,131 @@ import {
   exportBucketResultValidator,
 } from './validators';
 
-type DigestCursor = {
-  table?: FinanceTable;
-  accountId?: string;
-  month?: string;
-};
-
-const TABLE_ORDER: FinanceTable[] = [
-  'accounts',
-  'balance_snapshots',
-  'transactions',
-  'holdings',
-];
-
-type BucketAcc = {
-  table: FinanceTable;
-  accountId: string;
-  month: string;
-  hashes: string[];
-  amounts: number[];
-};
-
-function bucketKey(table: FinanceTable, accountId: string, month: string) {
-  return `${table}|${accountId}|${month}`;
-}
-
-function afterCursor(
-  table: FinanceTable,
-  accountId: string,
-  month: string,
-  cursor: DigestCursor | null,
-): boolean {
-  if (!cursor?.table) return true;
-  const left = `${table}|${accountId}|${month}`;
-  const right = `${cursor.table}|${cursor.accountId ?? ''}|${cursor.month ?? ''}`;
-  return left > right;
-}
-
-async function loadAccountIds(
-  ctx: QueryCtx,
-  table: FinanceTable | undefined,
-  accountId: string | undefined,
-): Promise<string[]> {
-  if (accountId) return [accountId];
-  const ids = new Set<string>();
-  const accounts = await ctx.db.query('accounts').take(500);
-  for (const row of accounts) ids.add(row.sourceId);
-  const needSnapshots =
-    !table || table === 'balance_snapshots' || table === 'holdings' || table === 'transactions';
-  if (needSnapshots && ids.size === 0) {
-    const snaps = await ctx.db.query('balance_snapshots').take(2000);
-    for (const row of snaps) ids.add(row.accountId);
-    const txns = await ctx.db.query('transactions').take(2000);
-    for (const row of txns) ids.add(row.accountId);
-    const holds = await ctx.db.query('holdings').take(2000);
-    for (const row of holds) ids.add(row.accountId);
-  }
-  return [...ids].sort();
-}
-
-function rowMeta(
-  table: FinanceTable,
-  row: Record<string, unknown>,
-): { accountId: string; month: string; amount: number } {
-  if (table === 'accounts') {
-    return {
-      accountId: String(row.sourceId),
-      month: monthFromTimestampMs(Number(row.syncedAt)),
-      amount: Number(row.currentBalance),
-    };
-  }
-  if (table === 'balance_snapshots') {
-    return {
-      accountId: String(row.accountId),
-      month: monthOf(String(row.asOf)),
-      amount: Number(row.balance),
-    };
-  }
-  if (table === 'transactions') {
-    return {
-      accountId: String(row.accountId),
-      month: monthOf(String(row.date)),
-      amount: Number(row.amount),
-    };
-  }
-  return {
-    accountId: String(row.accountId),
-    month: monthOf(String(row.asOf)),
-    amount: Number(row.value),
-  };
-}
-
-async function rowsForAccount(
-  ctx: QueryCtx,
-  table: FinanceTable,
+function snapBounds(
+  q: { eq: (field: 'accountId', value: string) => Record<string, any> },
   accountId: string,
   fromDate?: string,
   toDate?: string,
-): Promise<Array<Record<string, unknown> & { contentHash: string }>> {
-  if (table === 'accounts') {
-    const row = await ctx.db
-      .query('accounts')
-      .withIndex('by_sourceId', (q) => q.eq('sourceId', accountId))
-      .unique();
-    return row ? [row] : [];
-  }
+) {
+  const base = q.eq('accountId', accountId);
+  if (fromDate && toDate) return base.gte('asOf', fromDate).lte('asOf', toDate);
+  if (fromDate) return base.gte('asOf', fromDate);
+  if (toDate) return base.lte('asOf', toDate);
+  return base;
+}
+
+function txnBounds(
+  q: { eq: (field: 'accountId', value: string) => Record<string, any> },
+  accountId: string,
+  fromDate?: string,
+  toDate?: string,
+) {
+  const base = q.eq('accountId', accountId);
+  if (fromDate && toDate) return base.gte('date', fromDate).lte('date', toDate);
+  if (fromDate) return base.gte('date', fromDate);
+  if (toDate) return base.lte('date', toDate);
+  return base;
+}
+
+async function firstLastDate(
+  ctx: QueryCtx,
+  table: DateIndexedTable,
+  accountId: string,
+  fromDate: string | undefined,
+  toDate: string | undefined,
+  order: 'asc' | 'desc',
+): Promise<string | null> {
   if (table === 'balance_snapshots') {
     const rows = await ctx.db
       .query('balance_snapshots')
-      .withIndex('by_account_asOf', (idx) => idx.eq('accountId', accountId))
-      .take(4000);
-    return rows.filter((row) => {
-      if (fromDate && row.asOf < fromDate) return false;
-      if (toDate && row.asOf > toDate) return false;
-      return true;
-    });
+      .withIndex('by_account_asOf', (q) =>
+        snapBounds(q, accountId, fromDate, toDate),
+      )
+      .order(order)
+      .take(1);
+    return rows[0]?.asOf ?? null;
   }
   if (table === 'transactions') {
     const rows = await ctx.db
       .query('transactions')
-      .withIndex('by_account_date', (idx) => idx.eq('accountId', accountId))
-      .take(4000);
-    return rows.filter((row) => {
-      if (fromDate && row.date < fromDate) return false;
-      if (toDate && row.date > toDate) return false;
-      return true;
-    });
+      .withIndex('by_account_date', (q) =>
+        txnBounds(q, accountId, fromDate, toDate),
+      )
+      .order(order)
+      .take(1);
+    return rows[0]?.date ?? null;
   }
   const rows = await ctx.db
     .query('holdings')
-    .withIndex('by_account_asOf', (idx) => idx.eq('accountId', accountId))
-    .take(4000);
-  return rows.filter((row) => {
-    if (fromDate && row.asOf < fromDate) return false;
-    if (toDate && row.asOf > toDate) return false;
-    return true;
-  });
+    .withIndex('by_account_asOf', (q) =>
+        snapBounds(q, accountId, fromDate, toDate),
+    )
+    .order(order)
+    .take(1);
+  return rows[0]?.asOf ?? null;
+}
+
+async function monthRows(
+  ctx: QueryCtx,
+  table: DateIndexedTable,
+  accountId: string,
+  month: string,
+) {
+  const fromDate = monthStart(month);
+  const toDate = monthEnd(month);
+  if (table === 'balance_snapshots') {
+    const rows = await ctx.db
+      .query('balance_snapshots')
+      .withIndex('by_account_asOf', (q) =>
+        snapBounds(q, accountId, fromDate, toDate),
+      )
+      .take(2000);
+    return rows.map((row) => ({ contentHash: row.contentHash, amount: row.balance }));
+  }
+  if (table === 'transactions') {
+    const rows = await ctx.db
+      .query('transactions')
+      .withIndex('by_account_date', (q) =>
+        txnBounds(q, accountId, fromDate, toDate),
+      )
+      .take(2000);
+    return rows.map((row) => ({ contentHash: row.contentHash, amount: row.amount }));
+  }
+  const rows = await ctx.db
+    .query('holdings')
+    .withIndex('by_account_asOf', (q) =>
+        snapBounds(q, accountId, fromDate, toDate),
+    )
+    .take(2000);
+  return rows.map((row) => ({ contentHash: row.contentHash, amount: row.value }));
+}
+
+function convexDigestSource(ctx: QueryCtx): DigestSource {
+  return {
+    async listAccountIds(accountId) {
+      if (accountId) return [accountId];
+      const accounts = await ctx.db.query('accounts').take(500);
+      return [...new Set(accounts.map((row) => row.sourceId))].sort();
+    },
+    async loadAccountBucket(accountId) {
+      const row = await ctx.db
+        .query('accounts')
+        .withIndex('by_sourceId', (q) => q.eq('sourceId', accountId))
+        .unique();
+      if (!row) return null;
+      return {
+        month: monthFromTimestampMs(row.syncedAt),
+        amount: row.currentBalance,
+        contentHash: row.contentHash,
+      };
+    },
+    firstDate: (table, accountId, fromDate, toDate) =>
+      firstLastDate(ctx, table, accountId, fromDate, toDate, 'asc'),
+    lastDate: (table, accountId, fromDate, toDate) =>
+      firstLastDate(ctx, table, accountId, fromDate, toDate, 'desc'),
+    rowsInMonth: (table, accountId, month) =>
+      monthRows(ctx, table, accountId, month),
+  };
 }
 
 /**
@@ -166,10 +164,10 @@ async function rowsForAccount(
  *
  *   npx convex run finance/sync:digest '{"from":"2026-07","to":"2026-10"}'
  *
- * `bucketHash` = SHA-256 of that bucket's row `contentHash` values sorted
- * lexicographically and joined by `\n` (no trailing newline).
- * `sum` is an 8-decimal string of balance (snapshots), amount
- * (transactions), value (holdings), or currentBalance (accounts).
+ * Walks indexed (accountId, asOf/date) ranges one month at a time and
+ * pages across accounts/buckets so a single call stays under Convex's
+ * document-read limit. `bucketHash` = SHA-256 of that bucket's row
+ * `contentHash` values sorted lexicographically and joined by `\n`.
  */
 export const digest = internalQuery({
   args: digestArgsValidator,
@@ -181,72 +179,23 @@ export const digest = internalQuery({
     );
     const bounds = rangeBounds(args.from, args.to);
     const cursor = decodeCursor<DigestCursor>(args.cursor);
-    const tables = args.table ? [args.table] : TABLE_ORDER;
-    const accountIds = await loadAccountIds(ctx, args.table, args.accountId);
-
-    const accum = new Map<string, BucketAcc>();
-    for (const table of tables) {
-      for (const accountId of accountIds) {
-        const rows = await rowsForAccount(
-          ctx,
-          table,
-          accountId,
-          bounds.fromDate,
-          bounds.toDate,
-        );
-        for (const row of rows) {
-          const meta = rowMeta(table, row);
-          if (!monthInRange(meta.month, bounds.fromMonth, bounds.toMonth)) {
-            continue;
-          }
-          if (!afterCursor(table, meta.accountId, meta.month, cursor)) {
-            continue;
-          }
-          const key = bucketKey(table, meta.accountId, meta.month);
-          const bucket = accum.get(key) ?? {
-            table,
-            accountId: meta.accountId,
-            month: meta.month,
-            hashes: [],
-            amounts: [],
-          };
-          bucket.hashes.push(row.contentHash);
-          bucket.amounts.push(meta.amount);
-          accum.set(key, bucket);
-        }
-      }
-    }
-
-    const sorted = [...accum.values()].sort((a, b) =>
-      bucketKey(a.table, a.accountId, a.month).localeCompare(
-        bucketKey(b.table, b.accountId, b.month),
-      ),
-    );
-    const page = sorted.slice(0, limit);
-    const buckets = [];
-    for (const bucket of page) {
-      buckets.push({
-        table: bucket.table,
-        accountId: bucket.accountId,
-        month: bucket.month,
-        count: bucket.hashes.length,
-        sum: formatFixedSum(bucket.amounts),
-        bucketHash: await bucketHash(bucket.hashes),
-      });
-    }
-    const last = page[page.length - 1];
-    const isDone = sorted.length <= limit;
+    const tables = args.table ? [args.table as FinanceTable] : TABLE_ORDER;
+    const page = await collectDigestPage(convexDigestSource(ctx), {
+      tables,
+      accountId: args.accountId,
+      fromDate: bounds.fromDate,
+      toDate: bounds.toDate,
+      cursor,
+      limit,
+      readBudget: CONVEX_QUERY_READ_BUDGET,
+      hash: bucketHash,
+    });
     return {
-      buckets,
-      continueCursor:
-        !isDone && last
-          ? encodeCursor({
-              table: last.table,
-              accountId: last.accountId,
-              month: last.month,
-            } satisfies DigestCursor)
-          : null,
-      isDone,
+      buckets: page.buckets,
+      continueCursor: page.continueCursor
+        ? encodeCursor(page.continueCursor)
+        : null,
+      isDone: page.isDone,
     };
   },
 });
@@ -268,9 +217,9 @@ export const exportBucket = internalQuery({
       throw new Error('exportBucket: month must be YYYY-MM');
     }
     const limit = exportLimit(args.limit);
-    const start = monthStart(args.month);
     const end = monthEnd(args.month);
-    const afterId = args.cursor ?? '';
+    const after = decodeExportCursor(args.cursor);
+    const indexStart = exportIndexStart(args.month, after);
 
     if (args.table === 'accounts') {
       const row = await ctx.db
@@ -312,17 +261,19 @@ export const exportBucket = internalQuery({
       const rows = await ctx.db
         .query('balance_snapshots')
         .withIndex('by_account_asOf', (q) =>
-          q.eq('accountId', args.accountId).gte('asOf', start).lte('asOf', end),
+          q.eq('accountId', args.accountId).gte('asOf', indexStart).lte('asOf', end),
         )
-        .take(4000);
-      const filtered = rows
-        .filter((row) => row._id > afterId)
-        .sort((a, b) => a._id.localeCompare(b._id));
-      const page = filtered.slice(0, limit);
-      const last = page[page.length - 1];
-      const isDone = filtered.length <= limit;
+        .take(Math.min(2000, limit + 200));
+      const paged = applyExportCursor(
+        rows,
+        (row) => row.asOf,
+        (row) => row._id,
+        after,
+        limit,
+      );
+      const last = paged.page[paged.page.length - 1];
       return {
-        rows: page.map((row) => ({
+        rows: paged.page.map((row) => ({
           table: 'balance_snapshots' as const,
           _id: row._id,
           contentHash: row.contentHash,
@@ -335,8 +286,11 @@ export const exportBucket = internalQuery({
           balance: row.balance,
           method: row.method,
         })),
-        continueCursor: !isDone && last ? last._id : null,
-        isDone,
+        continueCursor:
+          !paged.isDone && last
+            ? encodeCursor({ date: last.asOf, id: last._id })
+            : null,
+        isDone: paged.isDone,
       };
     }
 
@@ -344,17 +298,19 @@ export const exportBucket = internalQuery({
       const rows = await ctx.db
         .query('transactions')
         .withIndex('by_account_date', (q) =>
-          q.eq('accountId', args.accountId).gte('date', start).lte('date', end),
+          q.eq('accountId', args.accountId).gte('date', indexStart).lte('date', end),
         )
-        .take(4000);
-      const filtered = rows
-        .filter((row) => row._id > afterId)
-        .sort((a, b) => a._id.localeCompare(b._id));
-      const page = filtered.slice(0, limit);
-      const last = page[page.length - 1];
-      const isDone = filtered.length <= limit;
+        .take(Math.min(2000, limit + 200));
+      const paged = applyExportCursor(
+        rows,
+        (row) => row.date,
+        (row) => row._id,
+        after,
+        limit,
+      );
+      const last = paged.page[paged.page.length - 1];
       return {
-        rows: page.map((row) => ({
+        rows: paged.page.map((row) => ({
           table: 'transactions' as const,
           _id: row._id,
           contentHash: row.contentHash,
@@ -370,25 +326,30 @@ export const exportBucket = internalQuery({
           category: row.category,
           pending: row.pending,
         })),
-        continueCursor: !isDone && last ? last._id : null,
-        isDone,
+        continueCursor:
+          !paged.isDone && last
+            ? encodeCursor({ date: last.date, id: last._id })
+            : null,
+        isDone: paged.isDone,
       };
     }
 
     const rows = await ctx.db
       .query('holdings')
       .withIndex('by_account_asOf', (q) =>
-        q.eq('accountId', args.accountId).gte('asOf', start).lte('asOf', end),
+        q.eq('accountId', args.accountId).gte('asOf', indexStart).lte('asOf', end),
       )
-      .take(4000);
-    const filtered = rows
-      .filter((row) => row._id > afterId)
-      .sort((a, b) => a._id.localeCompare(b._id));
-    const page = filtered.slice(0, limit);
-    const last = page[page.length - 1];
-    const isDone = filtered.length <= limit;
+      .take(Math.min(2000, limit + 200));
+    const paged = applyExportCursor(
+      rows,
+      (row) => row.asOf,
+      (row) => row._id,
+      after,
+      limit,
+    );
+    const last = paged.page[paged.page.length - 1];
     return {
-      rows: page.map((row) => ({
+      rows: paged.page.map((row) => ({
         table: 'holdings' as const,
         _id: row._id,
         contentHash: row.contentHash,
@@ -399,8 +360,11 @@ export const exportBucket = internalQuery({
         value: row.value,
         asOf: row.asOf,
       })),
-      continueCursor: !isDone && last ? last._id : null,
-      isDone,
+      continueCursor:
+        !paged.isDone && last
+          ? encodeCursor({ date: last.asOf, id: last._id })
+          : null,
+      isDone: paged.isDone,
     };
   },
 });
