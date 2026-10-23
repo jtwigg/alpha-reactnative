@@ -2,9 +2,20 @@ import { query } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAllowedIdentity } from '../allowlist';
 import { isFinanceIdentityAllowed } from './auth';
-import { formatIsoDate } from './dates';
-import { RANGE_KEYS, buildNetWorthModel, type RangeKey } from './series';
+import { todayInTimeZone } from './dates';
 import {
+  RANGE_KEYS,
+  buildNetWorthModel,
+  chartDates,
+  loadAccountEnds,
+  loadChartSnapshots,
+  rangeWindow,
+  type RangeKey,
+  type SeriesSnapshot,
+  type SnapshotLookup,
+} from './series';
+import {
+  CONVEX_QUERY_READ_BUDGET,
   accountDocValidator,
   holdingsArgsValidator,
   holdingDocValidator,
@@ -14,6 +25,7 @@ import {
   snapshotDocValidator,
   snapshotsArgsValidator,
 } from './validators';
+import type { QueryCtx } from '../_generated/server';
 
 export const isAllowed = query({
   args: {},
@@ -140,6 +152,36 @@ export const netWorth = query({
   },
 });
 
+function snapshotLookup(ctx: QueryCtx): SnapshotLookup {
+  const one = async (
+    accountId: string,
+    order: 'asc' | 'desc',
+    toDate?: string,
+  ): Promise<SeriesSnapshot | null> => {
+    const rows = await ctx.db
+      .query('balance_snapshots')
+      .withIndex('by_account_asOf', (q) => {
+        const base = q.eq('accountId', accountId);
+        return toDate ? base.lte('asOf', toDate) : base;
+      })
+      .order(order)
+      .take(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      accountId: row.accountId,
+      asOf: row.asOf,
+      balance: row.balance,
+      source: row.source,
+    };
+  };
+  return {
+    first: (accountId) => one(accountId, 'asc'),
+    last: (accountId) => one(accountId, 'desc'),
+    atOrBefore: (accountId, asOf) => one(accountId, 'desc', asOf),
+  };
+}
+
 export const page = query({
   args: pageArgsValidator,
   returns: pageResultValidator,
@@ -149,9 +191,20 @@ export const page = query({
     if (!(RANGE_KEYS as readonly string[]).includes(range)) {
       throw new Error('Invalid range');
     }
-    const asOf = args.asOf ?? formatIsoDate(new Date());
     const accounts = await ctx.db.query('accounts').take(80);
-    const snapshots = await ctx.db.query('balance_snapshots').take(4000);
+    const accountIds = accounts.map((row) => row.sourceId);
+    const lookup = snapshotLookup(ctx);
+    const ends = await loadAccountEnds(lookup, accountIds);
+    const asOf = args.asOf ?? ends.maxAsOf ?? todayInTimeZone();
+    const window = rangeWindow(range, asOf, ends.firstAsOf);
+    const dates = chartDates(range, window.from, window.to);
+    const chart = await loadChartSnapshots(
+      lookup,
+      accountIds,
+      dates,
+      CONVEX_QUERY_READ_BUDGET,
+      ends,
+    );
     return buildNetWorthModel({
       accounts: accounts.map((row) => ({
         sourceId: row.sourceId,
@@ -163,12 +216,7 @@ export const page = query({
         syncedAt: row.syncedAt,
         coverageStart: row.coverageStart,
       })),
-      snapshots: snapshots.map((row) => ({
-        accountId: row.accountId,
-        asOf: row.asOf,
-        balance: row.balance,
-        source: row.source,
-      })),
+      snapshots: chart.snapshots,
       range,
       asOf,
     });

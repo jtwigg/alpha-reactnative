@@ -32,6 +32,12 @@ describe('accountValueOnDay', () => {
       accountValueOnDay(snaps, '2026-08-10', { balance: 999, asOf: '2026-10-23' }),
     ).toEqual({ balance: 400, source: 'observed', interpolated: false });
   });
+
+  it('does not invent a UTC-today point when an account has no snapshots', () => {
+    expect(
+      accountValueOnDay([], '2026-10-23', { balance: 50_000, asOf: '2026-10-23' }),
+    ).toBeNull();
+  });
 });
 
 describe('buildNetWorthModel', () => {
@@ -64,7 +70,7 @@ describe('buildNetWorthModel', () => {
     });
 
     const before = model.points.find((point) => point.asOf === '2026-07-15');
-    const onJoin = model.points.find((point) => point.asOf === '2026-08-01');
+    const onJoin = model.points.find((point) => point.asOf === '2026-08-05');
     expect(before?.total).toBe(500);
     expect(before?.byClass.investments).toBeUndefined();
     expect(onJoin?.total).toBe(700);

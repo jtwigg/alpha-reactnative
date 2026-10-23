@@ -31,6 +31,42 @@ export function formatIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+export const FINANCE_TIME_ZONE = 'America/Los_Angeles';
+
+/** Calendar date in `timeZone`. Never use UTC `toISOString().slice(0, 10)`. */
+export function todayInTimeZone(
+  now: Date = new Date(),
+  timeZone: string = FINANCE_TIME_ZONE,
+): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) {
+    throw new Error(`Could not format ${timeZone} date`);
+  }
+  return `${year}-${month}-${day}`;
+}
+
+export function eachWeek(from: string, to: string): string[] {
+  parseIsoDate(from);
+  parseIsoDate(to);
+  if (to < from) return [];
+  const out: string[] = [from];
+  let cursor = addDays(from, 7);
+  while (cursor < to) {
+    out.push(cursor);
+    cursor = addDays(cursor, 7);
+  }
+  if (out[out.length - 1] !== to) out.push(to);
+  return out;
+}
+
 export function addDays(iso: string, days: number): string {
   const date = parseIsoDate(iso);
   date.setUTCDate(date.getUTCDate() + days);
