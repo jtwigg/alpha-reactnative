@@ -8,8 +8,10 @@ import {
   holdingsView,
   SPARKLINE_POINTS,
   institutionLabel,
+  groupKeyForClass,
   groupSparklines,
   sparklineRows,
+  stackGrid,
   toListRow,
   typeLabel,
   type AccountListModel,
@@ -268,6 +270,25 @@ export function demoAccountSparklines(range: RangeKey): {
   const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
   const rows = sparklineRows({ accounts, snapshots, dates });
   return { dates, rows, groups: groupSparklines(accounts, rows) };
+}
+
+export function demoStack(from?: string, to?: string) {
+  const firstAsOf = snapshots.reduce<string | null>((min, row) => (min == null || row.asOf < min ? row.asOf : min), null);
+  const grid = stackGrid({ firstAsOf, asOf: AS_OF, from, to });
+  const rows = sparklineRows({ accounts, snapshots, dates: grid.dates });
+  return {
+    asOf: AS_OF,
+    firstAsOf,
+    ...grid,
+    accounts: accounts.map((account, index) => ({
+      sourceId: account.sourceId,
+      name: account.name,
+      class: account.class,
+      group: groupKeyForClass(account.class),
+      values: rows[index].values,
+    })),
+    documentsRead: 0,
+  };
 }
 
 export function demoAccountDetail(sourceId: string, range: RangeKey): DemoAccountDetail | null {

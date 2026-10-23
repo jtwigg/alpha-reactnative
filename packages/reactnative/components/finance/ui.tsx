@@ -178,7 +178,8 @@ export function Segmented<T extends string>({
   labels,
 }: {
   options: readonly T[];
-  value: T;
+  /** null when no option matches, e.g. a custom zoom window. */
+  value: T | null;
   onChange: (value: T) => void;
   accessibilityLabel?: string;
   labels?: Partial<Record<T, string>>;

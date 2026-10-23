@@ -1,0 +1,204 @@
+import { useQuery } from 'convex/react';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+
+import { GROUP_COLORS } from '@/components/finance/account-groups';
+import { RangeNavigator } from '@/components/finance/range-navigator';
+import { RangePills } from '@/components/finance/range-pills';
+import { StackedChart } from '@/components/finance/stacked-chart';
+import { Card, FText, SectionHeader, Segmented, StateMessage, TogglePill, useFinancePalette } from '@/components/finance/ui';
+import { api } from '@/lib/api';
+import { demoStack } from '@/lib/finance-fixtures';
+import { buildStack, windowIndexes, type StackLevel } from '@/lib/stack-math';
+import { RANGE_KEYS, rangeWindow, type RangeKey } from '../../../server/convex/finance/series';
+
+type Window = { from: string; to: string };
+type StackData = ReturnType<typeof demoStack>;
+
+const LEVEL_LABELS: Record<StackLevel, string> = { group: 'Groups', account: 'Accounts' };
+const LEVELS: readonly StackLevel[] = ['group', 'account'];
+
+/** Stacked composition chart with a navigator strip over the full history. */
+export function CompositionCard({
+  live,
+  demo,
+  refreshNonce,
+}: {
+  /** Allowlisted and the account list has live data. */
+  live: boolean;
+  demo: boolean;
+  refreshNonce: number;
+}) {
+  const palette = useFinancePalette();
+  const [level, setLevel] = useState<StackLevel>('group');
+  const [includeLoans, setIncludeLoans] = useState(true);
+  const [committed, setCommitted] = useState<Window | null>(null);
+  const [preview, setPreview] = useState<[number, number] | null>(null);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+
+  const liveOverview = useQuery(api.finance.accounts.stack, live ? { refreshNonce } : 'skip');
+  const demoOverview = useMemo(() => (demo ? demoStack() : undefined), [demo]);
+  const overview: StackData | undefined = live ? liveOverview : demoOverview;
+
+  const defaultWindow = useMemo<Window | null>(() => {
+    if (!overview) return null;
+    return rangeWindow('1Y', overview.asOf, overview.firstAsOf);
+  }, [overview]);
+  const window = committed ?? defaultWindow;
+
+  const liveDetail = useQuery(
+    api.finance.accounts.stack,
+    live && window ? { from: window.from, to: window.to, refreshNonce } : 'skip',
+  );
+  const [heldDetail, setHeldDetail] = useState<StackData | undefined>(undefined);
+  useEffect(() => {
+    if (liveDetail) setHeldDetail(liveDetail);
+  }, [liveDetail]);
+  const detail = useMemo<StackData | undefined>(() => {
+    if (!window) return undefined;
+    if (!live) return demo ? demoStack(window.from, window.to) : undefined;
+    const candidate = liveDetail ?? heldDetail;
+    return candidate && candidate.from === clampFrom(window, overview) && candidate.to === window.to
+      ? candidate
+      : undefined;
+  }, [demo, heldDetail, live, liveDetail, overview, window]);
+
+  const overviewIndexes = useMemo<[number, number] | null>(() => {
+    if (!overview || !window) return null;
+    return windowIndexes(overview.dates, window.from, window.to);
+  }, [overview, window]);
+  const navIndexes = preview ?? overviewIndexes;
+
+  const shown = useMemo(() => {
+    if (!overview || !navIndexes) return null;
+    if (!preview && detail) return { data: detail, coarse: false };
+    const [s, e] = navIndexes;
+    return {
+      data: {
+        ...overview,
+        dates: overview.dates.slice(s, e + 1),
+        accounts: overview.accounts.map((a) => ({ ...a, values: a.values.slice(s, e + 1) })),
+      },
+      coarse: true,
+    };
+  }, [detail, navIndexes, overview, preview]);
+
+  const model = useMemo(
+    () =>
+      shown
+        ? buildStack({ accounts: shown.data.accounts, level, includeLoans, groupColors: GROUP_COLORS })
+        : null,
+    [includeLoans, level, shown],
+  );
+  const overviewLine = useMemo(() => {
+    if (!overview) return [];
+    const m = buildStack({ accounts: overview.accounts, level: 'group', includeLoans, groupColors: GROUP_COLORS });
+    return m.net.map((value, i) => (m.covered[i] ? value : null));
+  }, [includeLoans, overview]);
+
+  useEffect(() => setScrubIndex(null), [shown, level, includeLoans]);
+
+  const preset = useMemo<RangeKey | null>(() => {
+    if (!overview || !window) return null;
+    return (
+      RANGE_KEYS.find((key) => {
+        const w = rangeWindow(key, overview.asOf, overview.firstAsOf);
+        return clampFrom(w, overview) === clampFrom(window, overview) && w.to === window.to;
+      }) ?? null
+    );
+  }, [overview, window]);
+
+  const header = (
+    <SectionHeader title="Composition" subtitle="What makes up your net worth over time. Drag the strip below to zoom." />
+  );
+
+  if (!overview) {
+    return (
+      <Card>
+        {header}
+        {live || demo ? <ActivityIndicator style={styles.loading} /> : null}
+      </Card>
+    );
+  }
+  if (overview.accounts.length === 0 || overview.dates.length === 0) {
+    return (
+      <Card>
+        {header}
+        <StateMessage title="No history yet" body="The chart fills in once balances are synced." />
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      {header}
+      <View style={styles.controls}>
+        <RangePills
+          value={preset}
+          onChange={(key) => {
+            setPreview(null);
+            setCommitted(rangeWindow(key, overview.asOf, overview.firstAsOf));
+          }}
+        />
+        <View style={styles.toggles}>
+          <Segmented options={LEVELS} value={level} onChange={setLevel} labels={LEVEL_LABELS} accessibilityLabel="Stack by" />
+          <TogglePill label="Loans" value={includeLoans} onChange={setIncludeLoans} color={GROUP_COLORS.liability} />
+        </View>
+      </View>
+      {shown && model ? (
+        <StackedChart
+          dates={shown.data.dates}
+          model={model}
+          scrubIndex={scrubIndex}
+          onScrub={setScrubIndex}
+          netLabel={includeLoans ? 'Net worth' : 'Assets'}
+        />
+      ) : null}
+      <View style={styles.navigator}>
+        {navIndexes ? (
+          <RangeNavigator
+            dates={overview.dates}
+            values={overviewLine}
+            start={navIndexes[0]}
+            end={navIndexes[1]}
+            color={palette.accent}
+            onChange={(s, e) => setPreview([s, e])}
+            onCommit={(s, e) => {
+              setPreview(null);
+              setCommitted({
+                from: overview.dates[s],
+                to: e >= overview.dates.length - 1 ? overview.asOf : overview.dates[e],
+              });
+            }}
+          />
+        ) : null}
+        <FText variant="caption" tone="subtle" style={styles.note}>
+          {shown?.coarse && !preview && live ? 'Loading detail… ' : ''}
+          {shown?.data.step === 'day' ? 'Daily' : 'Weekly'} bars
+          {includeLoans ? ' · loans stack below zero' : ' · assets only'}
+        </FText>
+      </View>
+    </Card>
+  );
+}
+
+function clampFrom(window: Window, overview: StackData | undefined): string {
+  const first = overview?.firstAsOf;
+  return first && window.from < first ? first : window.from;
+}
+
+const styles = StyleSheet.create({
+  loading: { paddingVertical: 32 },
+  controls: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  toggles: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  navigator: { gap: 6, marginTop: 4 },
+  note: { textAlign: 'right' },
+});

@@ -1,9 +1,10 @@
-import { todayInTimeZone } from './dates';
+import { daysBetween, eachDate, eachWeek, todayInTimeZone } from './dates';
 import { roundMoney, type SnapshotSource } from './hash';
 import {
   accountValueOnDay,
   buildNetWorthModel,
   signedAmount,
+  strideChartDates,
   type ChartPoint,
   type RangeKey,
   type SeriesSnapshot,
@@ -303,6 +304,32 @@ export function sparklineRows(args: {
       tone: changeTone(account.class, change),
     };
   });
+}
+
+export const STACK_POINTS = 120;
+export const STACK_DAILY_MAX_DAYS = 120;
+
+export type StackGrid = { from: string; to: string; step: 'day' | 'week'; dates: string[] };
+
+/**
+ * Date grid for the stacked chart. The window is clamped to the data extent;
+ * up to 120 days is daily, longer windows are weekly, and either is strided
+ * to at most STACK_POINTS dates.
+ */
+export function stackGrid(args: {
+  firstAsOf: string | null;
+  asOf: string;
+  from?: string;
+  to?: string;
+}): StackGrid {
+  const start = args.firstAsOf && args.firstAsOf < args.asOf ? args.firstAsOf : args.asOf;
+  const clamp = (value: string) => (value < start ? start : value > args.asOf ? args.asOf : value);
+  const to = clamp(args.to ?? args.asOf);
+  let from = clamp(args.from ?? start);
+  if (from > to) from = to;
+  const step = daysBetween(from, to) <= STACK_DAILY_MAX_DAYS ? 'day' : 'week';
+  const raw = step === 'day' ? eachDate(from, to) : eachWeek(from, to);
+  return { from, to, step, dates: strideChartDates(raw, STACK_POINTS) };
 }
 
 export type GroupSparklineRow = Omit<SparklineRow, 'sourceId'> & { key: AccountGroupKey };

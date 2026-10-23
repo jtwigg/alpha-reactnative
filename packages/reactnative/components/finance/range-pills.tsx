@@ -7,7 +7,7 @@ export function RangePills({
   value,
   onChange,
 }: {
-  value: RangeKey;
+  value: RangeKey | null;
   onChange: (range: RangeKey) => void;
 }) {
   return <Segmented options={RANGES} value={value} onChange={onChange} accessibilityLabel="Chart range" />;
