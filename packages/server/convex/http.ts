@@ -1,6 +1,7 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import { evaluateAllowlist } from './allowlist';
+import { financeServer } from './finance/gateway';
 
 const http = httpRouter();
 
@@ -70,6 +71,12 @@ http.route({
       headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   }),
+});
+
+http.route({
+  path: '/finance/server',
+  method: 'POST',
+  handler: financeServer,
 });
 
 export default http;

@@ -20,6 +20,11 @@
       "react-dom": "19.1.0"
     }
   },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "mcp-handler": "^2.1.1",
+    "zod": "^4.2.0"
+  },
   "devDependencies": {
     "@nx/expo": "^20.3.0",
     "@nx/js": "^20.3.0",

@@ -10,6 +10,7 @@
 
 import type * as access from "../access.js";
 import type * as chat from "../chat.js";
+import type * as finance_gateway from "../finance/gateway.js";
 import type * as finance_ingest from "../finance/ingest.js";
 import type * as finance_queries from "../finance/queries.js";
 import type * as finance_sync from "../finance/sync.js";
@@ -26,6 +27,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   access: typeof access;
   chat: typeof chat;
+  "finance/gateway": typeof finance_gateway;
   "finance/ingest": typeof finance_ingest;
   "finance/queries": typeof finance_queries;
   "finance/sync": typeof finance_sync;

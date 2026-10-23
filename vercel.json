@@ -5,9 +5,14 @@
   "buildCommand": "pnpm --filter @rn-monorepo/reactnative export:web",
   "outputDirectory": "packages/reactnative/dist",
   "cleanUrls": true,
+  "functions": {
+    "api/mcp.ts": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
-      "source": "/((?!_expo(?:/|$)|assets(?:/|$)).*)",
+      "source": "/((?!_expo(?:/|$)|assets(?:/|$)|api(?:/|$)).*)",
       "destination": "/index.html"
     }
   ]

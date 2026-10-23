@@ -120,6 +120,7 @@ pnpm convex dev            # syncs schema, auth.config.ts, and functions
 | `ALLOWED_EMAILS` | `john.twigg@gmail.com` (comma-separated later). Case-insensitive. **Default-deny if unset.** Also gates finance reads. |
 | `ALLOWED_USER_IDS` | optional Clerk `user_…` ids if the session JWT has no `email` claim |
 | `OPENAI_API_KEY` | optional, chat + Whisper |
+| `FINANCE_SERVER_SECRET` | server-to-server secret for `POST /finance/server` (same value on Vercel). **Not** a Convex deploy/admin key. |
 
 `packages/server/convex/auth.config.ts` defaults to that issuer (`applicationID: "convex"` matches the session token `aud`) and still honors `CLERK_JWT_ISSUER_DOMAIN` / `CLERK_FRONTEND_API_URL` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
 
@@ -223,7 +224,7 @@ Vercel is unchanged: it still builds web from `vercel.json`. The workflow never 
 
 **Public URL: [https://alpha-theta-silk.vercel.app](https://alpha-theta-silk.vercel.app)**
 
-Expo writes `sign-in.html` (and the same for other routes). `vercel.json` sets `cleanUrls: true` so `/sign-in` serves that file on refresh, and a fallback rewrite sends unknown paths to `/index.html` (not `/_expo` or `/assets`).
+Expo writes `sign-in.html` (and the same for other routes). `vercel.json` sets `cleanUrls: true` so `/sign-in` serves that file on refresh, and a fallback rewrite sends unknown paths to `/index.html` (not `/_expo`, `/assets`, or `/api`). The finance MCP lives at **`/api/mcp`**.
 
 | Vercel setting | Value |
 | --- | --- |
@@ -239,6 +240,9 @@ Expo writes `sign-in.html` (and the same for other routes). `vercel.json` sets `
 | --- | --- |
 | `EXPO_PUBLIC_CONVEX_URL` | `https://posh-mink-581.convex.cloud` |
 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk` |
+| `CONVEX_SITE_URL` | `https://posh-mink-581.convex.site` (HTTP actions). Optional if the cloud URL is set — MCP derives `.convex.site` from it. |
+| `FINANCE_MCP_TOKEN` | Bearer token for `/api/mcp`. Agents send `Authorization: Bearer <token>`. |
+| `FINANCE_SERVER_SECRET` | Same value as Convex `FINANCE_SERVER_SECRET`. Vercel uses it to call Convex; never a deploy key. |
 
 In Clerk, add `https://alpha-theta-silk.vercel.app` (and `http://localhost:8081`) under allowed origins / redirect URLs.
 
@@ -329,7 +333,7 @@ npx eas-cli submit --profile production --platform ios --latest
 
 ## Personal finances (Convex is the source of truth)
 
-Finance (an external admin agent) is the only writer. The app is display-only. There is **no** HTTP ingest path and **no** `FINANCE_INGEST_SECRET`.
+Finance (an external admin agent) is the only writer. The app is display-only. Agents should use the MCP server at **`/api/mcp`** (Bearer `FINANCE_MCP_TOKEN`) rather than Convex admin access. Internal `npx convex run finance/ingest:*` mutations remain for local/admin use. There is **no** `FINANCE_INGEST_SECRET` and **no** Convex deploy key on Vercel.
 
 ```sh
 cd packages/server
@@ -349,3 +353,15 @@ Reads (`isAllowed`, `accounts`, `snapshots`, `holdings`, `netWorth`, `page`) use
 `contentHash` is SHA-256 (lowercase hex) of `finance.v1` + table + declared fields (`accounts`: sourceId, provider, connectionId, class, name, mask, type, subtype, currentBalance, availableBalance, currency, syncedAt, coverageStart). Missing values are the token `null`. Money is 8 fixed decimals. `finance/sync:digest` buckets by `(table, accountId, YYYY-MM)`; `bucketHash` is SHA-256 of that bucket's content hashes sorted and joined by LF.
 
 Investment coverage starts **31 Jul 2026** (some accounts **12 Oct 2026**). Charts draw continuous lines. Gaps are a lighter dashed interpolated segment. An account is omitted from totals until its first stored point — never treated as $0 — and a coverage marker is shown instead of a step. The Net Worth page is display-only.
+
+### Finance MCP (Vercel `/api/mcp`)
+
+Streamable HTTP. Clients send `Authorization: Bearer $FINANCE_MCP_TOKEN`. The route calls Convex `POST $CONVEX_SITE_URL/finance/server` with `Authorization: Bearer $FINANCE_SERVER_SECRET`. That HTTP action wraps the existing internal ingest/sync functions.
+
+```
+https://alpha-theta-silk.vercel.app/api/mcp
+```
+
+Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`. Upsert batch cap 500; `fill_gaps` write cap 800.
+
+Local smoke (no deploy): unit tests in `packages/server/tests/finance-mcp.test.ts`. Against `vercel dev`, point the MCP inspector at `http://localhost:3000/api/mcp` with the bearer token.
