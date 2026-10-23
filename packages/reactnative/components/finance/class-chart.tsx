@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { classRows } from '@/components/finance/chart-tooltip';
+import { CompareCard } from '@/components/finance/compare-card';
 import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
 import { LegendChip } from '@/components/finance/legend-chip';
 import { useSeriesHighlight } from '@/hooks/use-series-highlight';
@@ -51,6 +52,17 @@ export function ClassChart({
         height={200}
         tooltipRows={(index) => classRows(points[index].byClass, classColor)}
         highlight={highlight}
+        renderCompare={(pair, clear) => (
+          <CompareCard
+            dates={dates}
+            pair={pair}
+            label="Net worth"
+            values={points.map((point) => point.total)}
+            breakdown={series.filter((s) => !highlight.hidden.has(s.key))}
+            breakdownTitle="Change by class · share of net worth"
+            onClose={clear}
+          />
+        )}
       />
       <View style={styles.legend}>
         {classes.map((className) => (

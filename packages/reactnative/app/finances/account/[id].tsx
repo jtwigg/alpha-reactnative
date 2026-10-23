@@ -1,7 +1,15 @@
 import { usePaginatedQuery, useQuery } from 'convex/react';
 import { Redirect, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 
 import {
   DetailsCard,
@@ -13,6 +21,7 @@ import {
 import { HeroValue } from '@/components/finance/hero-value';
 import { NetWorthChart } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
+import { useScrollLockRoot } from '@/components/finance/scroll-lock';
 import {
   Avatar,
   Badge,
@@ -104,6 +113,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   useEffect(() => {
     if (liveDetail !== undefined) setHeld(liveDetail);
   }, [liveDetail]);
+  const { scrollEnabled, ScrollLockProvider } = useScrollLockRoot();
   const { refreshing, onRefresh } = useRefreshSpinner(!live || liveDetail !== undefined, () =>
     setRefreshNonce((nonce) => nonce + 1),
   );
@@ -141,71 +151,68 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const shown = signedAmount(detail.class, balance);
 
   return (
-    <ScrollView
-      style={{ backgroundColor: palette.page }}
-      contentContainerStyle={styles.scroll}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-      <View style={styles.column}>
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <Avatar label={detail.name} color={color} />
-            <View style={styles.flex}>
-              <FText variant="eyebrow" tone="muted" numberOfLines={1}>
-                {detail.institution}
-                {detail.mask ? ` · ••${detail.mask}` : ''}
-              </FText>
-              <FText variant="title" numberOfLines={2}>
-                {detail.name}
-              </FText>
+    <ScrollLockProvider>
+      <ScrollView
+        scrollEnabled={scrollEnabled}
+        style={{ backgroundColor: palette.page }}
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        <View style={styles.column}>
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <Avatar label={detail.name} color={color} />
+              <View style={styles.flex}>
+                <FText variant="eyebrow" tone="muted" numberOfLines={1}>
+                  {detail.institution}
+                  {detail.mask ? ` · ••${detail.mask}` : ''}
+                </FText>
+                <FText variant="title" numberOfLines={2}>
+                  {detail.name}
+                </FText>
+              </View>
+              <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
             </View>
-            <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
+            <View style={styles.badges}>
+              <Badge label={detail.typeLabel} tone="accent" />
+              {detail.provider === 'manual' ? <Badge label="Manual" /> : null}
+            </View>
           </View>
-          <View style={styles.badges}>
-            <Badge label={detail.typeLabel} tone="accent" />
-            {detail.provider === 'manual' ? <Badge label="Manual" /> : null}
-          </View>
+
+          <Card style={styles.historyCard}>
+            <HeroValue
+              label={shown < 0 ? 'Balance owed' : 'Balance'}
+              points={detail.history.points}
+              scrubIndex={scrubIndex}
+              fallback={balance}
+              suffix={RANGE_SUFFIX[live ? liveRange(range) : range]}
+              invert={shown < 0}
+            />
+            <NetWorthChart
+              points={detail.history.points}
+              markers={[]}
+              scrubIndex={scrubIndex}
+              onScrub={setScrubIndex}
+              seriesLabel="Balance"
+              color={color}
+              height={width >= 720 ? 260 : 210}
+              headline
+              showMarkerNotes={false}
+              invert={shown < 0}
+            />
+            <RangePills value={range} onChange={setRange} stretch />
+          </Card>
+
+          <HoldingsSection key={`h-${refreshNonce}`} sourceId={sourceId} live={live} accountValue={balance} />
+          <TransactionsSection key={`t-${refreshNonce}`} sourceId={sourceId} live={live} />
+          <DetailsCard fields={accountFields(detail)} />
         </View>
-
-        <Card style={styles.historyCard}>
-          <HeroValue
-            label={shown < 0 ? 'Balance owed' : 'Balance'}
-            points={detail.history.points}
-            scrubIndex={scrubIndex}
-            fallback={balance}
-            suffix={RANGE_SUFFIX[live ? liveRange(range) : range]}
-            invert={shown < 0}
-          />
-          <NetWorthChart
-            points={detail.history.points}
-            markers={[]}
-            scrubIndex={scrubIndex}
-            onScrub={setScrubIndex}
-            seriesLabel="Balance"
-            color={color}
-            height={width >= 720 ? 260 : 210}
-            headline
-            showMarkerNotes={false}
-          />
-          <RangePills value={range} onChange={setRange} stretch />
-        </Card>
-
-        <HoldingsSection key={`h-${refreshNonce}`} sourceId={sourceId} live={live} accountValue={balance} />
-        <TransactionsSection key={`t-${refreshNonce}`} sourceId={sourceId} live={live} />
-        <DetailsCard fields={accountFields(detail)} />
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </ScrollLockProvider>
   );
 }
 
-function HoldingsSection({
-  sourceId,
-  live,
-  accountValue,
-}: {
-  sourceId: string;
-  live: boolean;
-  accountValue: number;
-}) {
+function HoldingsSection({ sourceId, live, accountValue }: { sourceId: string; live: boolean; accountValue: number }) {
   const liveHoldings = useQuery(
     api.finance.accounts.holdings,
     live ? { sourceId, accountValue: Math.abs(accountValue) } : 'skip',
@@ -226,11 +233,7 @@ function LiveTransactions({ sourceId }: { sourceId: string }) {
     { initialNumItems: PAGE_SIZE },
   );
   return (
-    <TransactionsCard
-      rows={results}
-      status={status as TransactionsStatus}
-      onLoadMore={() => loadMore(PAGE_SIZE)}
-    />
+    <TransactionsCard rows={results} status={status as TransactionsStatus} onLoadMore={() => loadMore(PAGE_SIZE)} />
   );
 }
 

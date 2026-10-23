@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
+import { CompareCard, PointBadge } from '@/components/finance/compare-card';
 import { LegendChip } from '@/components/finance/legend-chip';
 import { Reveal } from '@/components/finance/reveal';
 import { FText, TABULAR, useFinancePalette } from '@/components/finance/ui';
@@ -10,6 +11,7 @@ import { axisDateLabel, formatCompactUsd, niceTicks, spanInDays } from '@/lib/ch
 import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import { useSeriesHighlight, type SeriesHighlight } from '@/hooks/use-series-highlight';
+import type { ComparePair } from '@/lib/compare-math';
 import { seriesOpacity } from '@/lib/series-highlight';
 import {
   loanShare,
@@ -66,6 +68,7 @@ export function StackedChart({
   const { width: screenWidth } = useWindowDimensions();
   const sideLegend = screenWidth >= LEGEND_SIDE_MIN_WIDTH;
   const [width, setWidth] = useState(0);
+  const [compare, setCompare] = useState<ComparePair | null>(null);
   const count = dates.length;
   const normalized = mode === 'normalized';
   const highlight = useSeriesHighlight();
@@ -107,13 +110,9 @@ export function StackedChart({
 
   const dateIndex = scrubIndex ?? (count > 0 ? count - 1 : null);
   const span = count > 1 ? spanInDays(dates[0], dates[count - 1]) : 0;
-  const xLabels =
-    count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
+  const xLabels = count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
 
-  const assetsTopFirst = useMemo(
-    () => model.series.filter((s) => s.group !== 'liability').reverse(),
-    [model.series],
-  );
+  const assetsTopFirst = useMemo(() => model.series.filter((s) => s.group !== 'liability').reverse(), [model.series]);
 
   const onTap = (index: number, tapY: number) => {
     if (!geometry || !display.covered[index]) {
@@ -130,8 +129,20 @@ export function StackedChart({
     const share = (value: number) => formatShare(gross > 0 ? Math.abs(value) / gross : null);
     const row = (s: StackSeries): TooltipRow =>
       normalized
-        ? { key: s.key, label: s.label, color: s.color, value: share(s.values[index]), detail: formatUsd(Math.abs(s.values[index])) }
-        : { key: s.key, label: s.label, color: s.color, value: formatUsd(s.values[index]), detail: share(s.values[index]) };
+        ? {
+            key: s.key,
+            label: s.label,
+            color: s.color,
+            value: share(s.values[index]),
+            detail: formatUsd(Math.abs(s.values[index])),
+          }
+        : {
+            key: s.key,
+            label: s.label,
+            color: s.color,
+            value: formatUsd(s.values[index]),
+            detail: share(s.values[index]),
+          };
     const assetRows = assetsTopFirst
       .filter((s) => s.values[index] !== 0)
       .map(row)
@@ -159,6 +170,20 @@ export function StackedChart({
   };
 
   const hairX = geometry && scrubIndex != null ? geometry.center(scrubIndex) : null;
+  const dataToken = `${dates[0]}|${dates[count - 1]}|${count}|${seriesSignature}`;
+  useEffect(() => setCompare(null), [dataToken]);
+  const pair = compare && compare.b < count ? compare : null;
+  const compareSeries = useMemo(
+    () =>
+      model.series.map((s) => ({
+        key: s.key,
+        label: s.label,
+        color: s.color,
+        values: s.values.map((value, i) => (model.covered[i] ? value : null)),
+      })),
+    [model],
+  );
+  const netValues = useMemo(() => model.net.map((value, i) => (model.covered[i] ? value : null)), [model]);
 
   const chart = (
     <ChartTouch
@@ -168,7 +193,10 @@ export function StackedChart({
       height={height}
       onScrub={onScrub}
       onWidth={setWidth}
-      onTap={onTap}>
+      onTap={onTap}
+      compare={pair}
+      onCompare={setCompare}
+    >
       {geometry ? (
         <>
           {geometry.ticks.map((tick) => (
@@ -206,9 +234,24 @@ export function StackedChart({
           <Reveal
             token={`${dates[0]}|${dates[count - 1]}|${count}|${mode}|${seriesSignature}`}
             width={width}
-            height={height}>
+            height={height}
+          >
             <Bars model={display} geometry={geometry} active={active} />
           </Reveal>
+          {pair ? (
+            <View
+              style={[
+                styles.compareBand,
+                {
+                  left: geometry.center(pair.a) - geometry.slot / 2,
+                  width: geometry.center(pair.b) - geometry.center(pair.a) + geometry.slot,
+                  top: PAD.top,
+                  height: height - PAD.top - PAD.bottom,
+                  backgroundColor: palette.accent,
+                },
+              ]}
+            />
+          ) : null}
           {hairX != null && !normalized ? (
             <View
               style={[
@@ -222,6 +265,26 @@ export function StackedChart({
               ]}
             />
           ) : null}
+          {pair
+            ? (pair.a === pair.b ? [pair.a] : [pair.a, pair.b]).map((index, i) => (
+                <View key={`cmp-${i}`} style={StyleSheet.absoluteFill}>
+                  <View
+                    style={[
+                      styles.compareLine,
+                      {
+                        left: geometry.center(index) - 0.75,
+                        top: PAD.top,
+                        height: height - PAD.top - PAD.bottom,
+                        backgroundColor: palette.accent,
+                      },
+                    ]}
+                  />
+                  <View style={[styles.compareBadge, { left: geometry.center(index) - 9, top: PAD.top }]}>
+                    <PointBadge label={i === 0 ? 'A' : 'B'} color={palette.accent} />
+                  </View>
+                </View>
+              ))
+            : null}
           {xLabels.map((index, i) => (
             <Text
               key={`x-${index}`}
@@ -234,7 +297,8 @@ export function StackedChart({
                   : i === xLabels.length - 1
                     ? { right: PAD.right - 6, textAlign: 'right' }
                     : { left: geometry.center(index) - 40, width: 80, textAlign: 'center' },
-              ]}>
+              ]}
+            >
               {axisDateLabel(dates[index], span)}
             </Text>
           ))}
@@ -304,6 +368,17 @@ export function StackedChart({
           {legend}
         </>
       )}
+      {pair ? (
+        <CompareCard
+          dates={dates}
+          pair={pair}
+          label={netLabel}
+          values={netValues}
+          breakdown={compareSeries}
+          breakdownTitle={`Largest changes · share of ${netLabel.toLowerCase()}`}
+          onClose={() => setCompare(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -400,7 +475,8 @@ function StackLegend({
                 TABULAR,
                 { color: isLoan ? palette.negative : palette.text },
                 focused && styles.legendValueFocused,
-              ]}>
+              ]}
+            >
               {primary}
             </Text>
             {secondary ? (
@@ -447,6 +523,9 @@ const styles = StyleSheet.create({
   yLabel: { position: 'absolute', right: 0, width: 52, fontSize: 11, textAlign: 'right', ...TABULAR },
   xLabel: { position: 'absolute', fontSize: 11 },
   band: { position: 'absolute', borderRadius: 3 },
+  compareBand: { position: 'absolute', opacity: 0.1, borderRadius: 4 },
+  compareLine: { position: 'absolute', width: 1.5, opacity: 0.85 },
+  compareBadge: { position: 'absolute' },
   netTick: { position: 'absolute', height: 2, borderRadius: 1 },
   tooltip: { position: 'absolute', top: 4 },
   legendBelow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 4 },

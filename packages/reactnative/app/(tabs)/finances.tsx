@@ -10,6 +10,7 @@ import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { HeroValue, changeTone } from '@/components/finance/hero-value';
 import { CoverageMarkerNotes, NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
+import { useScrollLockRoot } from '@/components/finance/scroll-lock';
 import {
   Card,
   FText,
@@ -92,19 +93,13 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const [groupScrub, setGroupScrub] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const chartY = useRef(0);
-  const allowed = useQuery(
-    api.finance.queries.isAllowed,
-    demo && !isClerkConfigured() ? 'skip' : undefined,
-  );
+  const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
   const queryRange = liveRange(range);
   const live = useQuery(api.finance.queries.page, allowed ? { range: queryRange, refreshNonce } : 'skip');
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
-  const liveSparks = useQuery(
-    api.finance.accounts.sparklines,
-    allowed ? { range: queryRange, refreshNonce } : 'skip',
-  );
+  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range: queryRange, refreshNonce } : 'skip');
   const [heldSparks, setHeldSparks] = useState(liveSparks);
 
   useEffect(() => {
@@ -118,8 +113,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     if (liveSparks) setHeldSparks(liveSparks);
   }, [liveSparks]);
 
-  const { refreshing, onRefresh } = useRefreshSpinner(!allowed || (live !== undefined && liveAccounts !== undefined), () =>
-    setRefreshNonce((nonce) => nonce + 1),
+  const { scrollEnabled, ScrollLockProvider } = useScrollLockRoot();
+  const { refreshing, onRefresh } = useRefreshSpinner(
+    !allowed || (live !== undefined && liveAccounts !== undefined),
+    () => setRefreshNonce((nonce) => nonce + 1),
   );
 
   const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
@@ -131,7 +128,11 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     if (demo) return demoNetWorthPage(range);
     return source;
   }, [demo, hasLive, held, live, queryRange, range]);
-  const accountList = hasLive ? (liveAccounts ?? heldAccounts) : demo ? demoAccountList() : (liveAccounts ?? heldAccounts);
+  const accountList = hasLive
+    ? (liveAccounts ?? heldAccounts)
+    : demo
+      ? demoAccountList()
+      : (liveAccounts ?? heldAccounts);
   const sparkRange = hasLive || !demo ? queryRange : range;
   const trends = useMemo<AccountTrends>(() => {
     const sparks =
@@ -210,138 +211,143 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   return (
     <View style={[styles.flex, { backgroundColor: palette.page }]}>
       <SafeAreaView style={styles.flex} edges={['top']}>
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.scroll}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-          <View style={styles.column}>
-            <View style={styles.headerRow}>
-              <View style={styles.header}>
-                <FText variant="eyebrow" tone="muted">
-                  Personal finances
-                </FText>
-                <FText variant="title">Net worth</FText>
-                <FText variant="caption" tone="subtle">
-                  As of {formatCoverageDate(data.asOf)}
-                </FText>
-              </View>
-              <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
-            </View>
-
-            {usingDemo ? (
-              <View style={styles.demoBanner}>
-                <FText variant="caption" style={styles.demoText}>
-                  Sample data for layout only — invented accounts, not real balances.
-                </FText>
-              </View>
-            ) : null}
-
-            <View onLayout={(event) => (chartY.current = event.nativeEvent.layout.y)}>
-              <Card style={styles.heroCard}>
-                <HeroValue
-                  label={activeGroup === 'all' ? undefined : heroLabel(activeGroup)}
-                  points={chartPoints}
-                  scrubIndex={heroScrub}
-                  fallback={data.headline}
-                  suffix={RANGE_SUFFIX[range]}
-                  invert={activeGroup === 'liability'}
-                />
-                <ChartBlock
-                  points={chartPoints}
-                  markers={chartMarkers}
-                  scrubIndex={heroScrub}
-                  onScrub={activeGroup === 'all' ? setScrubIndex : setGroupScrub}
-                  showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
-                  seriesLabel={heroLabel(activeGroup)}
-                  color={lineColor}
-                  height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
-                />
-                <RangePills value={range} onChange={setRange} stretch />
-                {groupOptions.length > 2 || (allowed && activeGroup !== 'liability') ? (
-                  <View style={styles.toolbar}>
-                    {groupOptions.length > 2 ? (
-                      <Segmented
-                        options={groupOptions}
-                        value={activeGroup}
-                        onChange={setChartGroup}
-                        labels={GROUP_PICKER_LABELS}
-                        accessibilityLabel="Chart group"
-                      />
-                    ) : null}
-                    {allowed && activeGroup !== 'liability' ? (
-                      <TogglePill
-                        label={BENCHMARKS.SPX.label}
-                        value={showBenchmark}
-                        onChange={setShowBenchmark}
-                        color={colors.benchmark}
-                      />
-                    ) : null}
-                  </View>
-                ) : null}
-                <CoverageMarkerNotes markers={chartMarkers} />
-                <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
-                  <Stat label="Assets" value={formatUsd(data.assets)} />
-                  <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
-                  <Stat label="Loans" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
+        <ScrollLockProvider>
+          <ScrollView
+            ref={scrollRef}
+            scrollEnabled={scrollEnabled}
+            contentContainerStyle={styles.scroll}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          >
+            <View style={styles.column}>
+              <View style={styles.headerRow}>
+                <View style={styles.header}>
+                  <FText variant="eyebrow" tone="muted">
+                    Personal finances
+                  </FText>
+                  <FText variant="title">Net worth</FText>
+                  <FText variant="caption" tone="subtle">
+                    As of {formatCoverageDate(data.asOf)}
+                  </FText>
                 </View>
-              </Card>
-            </View>
-
-            <CompositionCard live={hasLive} demo={usingDemo} refreshNonce={refreshNonce} />
-
-            <Card>
-              <SectionHeader
-                title="By class"
-                subtitle="A class starts on its first data point — never drawn as $0."
-              />
-              <ClassChart points={data.points} scrubIndex={scrubIndex} onScrub={setScrubIndex} />
-            </Card>
-
-            <View style={styles.section}>
-              <SectionHeader
-                title="Accounts"
-                subtitle={`Trend lines show the ${RANGE_LABEL[sparkRange]}. Tap a group to chart it, or an account for details.`}
-                right={
-                  accountList ? (
-                    <FText variant="headline" style={TABULAR}>
-                      {formatUsd(accountList.total)}
-                    </FText>
-                  ) : null
-                }
-              />
-              <View style={styles.modeRow}>
-                <Segmented
-                  options={CHANGE_MODES}
-                  value={changeMode}
-                  onChange={setChangeMode}
-                  labels={CHANGE_MODE_LABELS}
-                  accessibilityLabel="Account change"
-                />
-                <FText variant="caption" tone="subtle" style={styles.modeNote}>
-                  {changeMode === 'own' ? 'Each row’s own change' : weightedNote(trends)}
-                </FText>
+                <RefreshButton refreshing={refreshing} onRefresh={onRefresh} />
               </View>
-              {accountList ? (
-                <AccountGroups
-                  model={accountList}
-                  demo={usingDemo}
-                  trends={trends}
-                  selectedGroup={activeGroup === 'all' ? null : activeGroup}
-                  onSelectGroup={selectGroupFromList}
-                />
-              ) : (
-                <Card>
-                  <ActivityIndicator />
-                </Card>
-              )}
-            </View>
 
-            <CoverageLegend />
-            <FText variant="caption" tone="subtle" style={styles.footnote}>
-              Display-only. The Finance agent writes every row; this app never edits balances.
-            </FText>
-          </View>
-        </ScrollView>
+              {usingDemo ? (
+                <View style={styles.demoBanner}>
+                  <FText variant="caption" style={styles.demoText}>
+                    Sample data for layout only — invented accounts, not real balances.
+                  </FText>
+                </View>
+              ) : null}
+
+              <View onLayout={(event) => (chartY.current = event.nativeEvent.layout.y)}>
+                <Card style={styles.heroCard}>
+                  <HeroValue
+                    label={activeGroup === 'all' ? undefined : heroLabel(activeGroup)}
+                    points={chartPoints}
+                    scrubIndex={heroScrub}
+                    fallback={data.headline}
+                    suffix={RANGE_SUFFIX[range]}
+                    invert={activeGroup === 'liability'}
+                  />
+                  <ChartBlock
+                    points={chartPoints}
+                    markers={chartMarkers}
+                    scrubIndex={heroScrub}
+                    onScrub={activeGroup === 'all' ? setScrubIndex : setGroupScrub}
+                    showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
+                    seriesLabel={heroLabel(activeGroup)}
+                    color={lineColor}
+                    height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
+                    invert={activeGroup === 'liability'}
+                  />
+                  <RangePills value={range} onChange={setRange} stretch />
+                  {groupOptions.length > 2 || (allowed && activeGroup !== 'liability') ? (
+                    <View style={styles.toolbar}>
+                      {groupOptions.length > 2 ? (
+                        <Segmented
+                          options={groupOptions}
+                          value={activeGroup}
+                          onChange={setChartGroup}
+                          labels={GROUP_PICKER_LABELS}
+                          accessibilityLabel="Chart group"
+                        />
+                      ) : null}
+                      {allowed && activeGroup !== 'liability' ? (
+                        <TogglePill
+                          label={BENCHMARKS.SPX.label}
+                          value={showBenchmark}
+                          onChange={setShowBenchmark}
+                          color={colors.benchmark}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
+                  <CoverageMarkerNotes markers={chartMarkers} />
+                  <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
+                    <Stat label="Assets" value={formatUsd(data.assets)} />
+                    <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
+                    <Stat label="Loans" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
+                  </View>
+                </Card>
+              </View>
+
+              <CompositionCard live={hasLive} demo={usingDemo} refreshNonce={refreshNonce} />
+
+              <Card>
+                <SectionHeader
+                  title="By class"
+                  subtitle="A class starts on its first data point — never drawn as $0."
+                />
+                <ClassChart points={data.points} scrubIndex={scrubIndex} onScrub={setScrubIndex} />
+              </Card>
+
+              <View style={styles.section}>
+                <SectionHeader
+                  title="Accounts"
+                  subtitle={`Trend lines show the ${RANGE_LABEL[sparkRange]}. Tap a group to chart it, or an account for details.`}
+                  right={
+                    accountList ? (
+                      <FText variant="headline" style={TABULAR}>
+                        {formatUsd(accountList.total)}
+                      </FText>
+                    ) : null
+                  }
+                />
+                <View style={styles.modeRow}>
+                  <Segmented
+                    options={CHANGE_MODES}
+                    value={changeMode}
+                    onChange={setChangeMode}
+                    labels={CHANGE_MODE_LABELS}
+                    accessibilityLabel="Account change"
+                  />
+                  <FText variant="caption" tone="subtle" style={styles.modeNote}>
+                    {changeMode === 'own' ? 'Each row’s own change' : weightedNote(trends)}
+                  </FText>
+                </View>
+                {accountList ? (
+                  <AccountGroups
+                    model={accountList}
+                    demo={usingDemo}
+                    trends={trends}
+                    selectedGroup={activeGroup === 'all' ? null : activeGroup}
+                    onSelectGroup={selectGroupFromList}
+                  />
+                ) : (
+                  <Card>
+                    <ActivityIndicator />
+                  </Card>
+                )}
+              </View>
+
+              <CoverageLegend />
+              <FText variant="caption" tone="subtle" style={styles.footnote}>
+                Display-only. The Finance agent writes every row; this app never edits balances.
+              </FText>
+            </View>
+          </ScrollView>
+        </ScrollLockProvider>
       </SafeAreaView>
     </View>
   );
@@ -394,6 +400,7 @@ function ChartBlock({
   seriesLabel,
   color,
   height,
+  invert,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -403,6 +410,7 @@ function ChartBlock({
   seriesLabel?: string;
   color?: string;
   height?: number;
+  invert?: boolean;
 }) {
   const chart = (benchmark?: BenchmarkLine) => (
     <NetWorthChart
@@ -416,6 +424,7 @@ function ChartBlock({
       height={height}
       headline
       showMarkerNotes={false}
+      invert={invert}
     />
   );
   if (!showBenchmark) return chart();
@@ -435,19 +444,14 @@ function LiveBenchmarkChart({
 }) {
   const from = points[0]?.asOf;
   const to = points[points.length - 1]?.asOf;
-  const market = useQuery(
-    api.finance.market.series,
-    from && to ? { symbol: DEFAULT_BENCHMARK, from, to } : 'skip',
-  );
+  const market = useQuery(api.finance.market.series, from && to ? { symbol: DEFAULT_BENCHMARK, from, to } : 'skip');
   const ensureMarket = useAction(api.finance.market.ensure);
   const benchmarkColor = useChartColors().benchmark;
 
   useEffect(() => {
     if (market === undefined) return;
     const stale =
-      market.bars.length === 0 ||
-      market.refreshedAt == null ||
-      Date.now() - market.refreshedAt > BENCHMARK_STALE_MS;
+      market.bars.length === 0 || market.refreshedAt == null || Date.now() - market.refreshedAt > BENCHMARK_STALE_MS;
     if (!stale) return;
     void ensureMarket({ symbol: DEFAULT_BENCHMARK }).catch(() => undefined);
   }, [ensureMarket, market]);
@@ -475,10 +479,7 @@ function LiveBenchmarkChart({
   );
 }
 
-class SoftBoundary extends Component<
-  { fallback: ReactNode; children: ReactNode },
-  { failed: boolean }
-> {
+class SoftBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
