@@ -15,7 +15,7 @@ export const FINANCE_COVERAGE = {
     note: 'Card history back to about October 2025.',
   },
   liability: {
-    label: 'Liabilities',
+    label: 'Loans',
     start: '2025-10-01',
     note: 'Liability history back to about October 2025 where a feed exists.',
   },

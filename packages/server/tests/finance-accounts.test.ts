@@ -8,7 +8,9 @@ import {
   displayAmount,
   groupAccounts,
   groupByDate,
+  groupChartPoints,
   groupKeyForClass,
+  groupSparklines,
   holdingsView,
   institutionLabel,
   sparklineRows,
@@ -18,6 +20,7 @@ import {
 } from '../convex/finance/accountModel';
 import * as accounts from '../convex/finance/accounts';
 import { addDays } from '../convex/finance/dates';
+import type { ChartPoint } from '../convex/finance/series';
 import { CONVEX_QUERY_READ_BUDGET } from '../convex/finance/validators';
 
 const INDEXES: Record<string, Record<string, string[]>> = {
@@ -263,6 +266,60 @@ describe('sparkline model', () => {
   });
 });
 
+describe('group sparklines and chart filter', () => {
+  it('sums account lines per group in Cash, Investments, Property, Loans order', () => {
+    const accountsIn = [
+      { sourceId: 'visa', class: 'credit' },
+      { sourceId: 'chk', class: 'cash' },
+      { sourceId: 'home', class: 'real_estate' },
+      { sourceId: 'sav', class: 'depository' },
+      { sourceId: 'brk', class: 'investments' },
+      { sourceId: 'loan', class: 'liability' },
+    ];
+    const row = (sourceId: string, values: Array<number | null>) => ({
+      sourceId,
+      values,
+      change: 0,
+      changePct: null,
+      tone: 'flat' as const,
+    });
+    const groups = groupSparklines(accountsIn, [
+      row('visa', [null, 500, 1_000]),
+      row('loan', [9_000, 8_000, 7_000]),
+      row('chk', [100, 200, 300]),
+      row('sav', [null, null, 700]),
+      row('brk', [1_000, 1_000, 1_000]),
+      row('home', [500_000, 500_000, 500_000]),
+    ]);
+    expect(groups.map((g) => g.key)).toEqual(['cash', 'investments', 'real_estate', 'liability']);
+    const [cash, , home, loans] = groups;
+    expect(cash.values).toEqual([100, 200, 1_000]);
+    expect(cash.tone).toBe('good');
+    expect(home.tone).toBe('flat');
+    expect(loans.values).toEqual([9_000, 8_500, 8_000]);
+    expect(loans.changePct).toBeCloseTo(-1_000 / 9_000);
+    expect(loans.tone).toBe('good');
+  });
+
+  it('filters chart points to one group, trimming dates before it has data', () => {
+    const points: ChartPoint[] = [
+      { asOf: '2026-01-01', total: 100, interpolated: false, byClass: { cash: 100 } },
+      { asOf: '2026-02-01', total: 600, interpolated: false, byClass: { cash: 200, investments: 400 } },
+      { asOf: '2026-03-01', total: -300, interpolated: true, byClass: { cash: 300, investments: 500, credit: -100, liability: -1_000 } },
+    ];
+    const inv = groupChartPoints(points, 'investments');
+    expect(inv.map((p) => [p.asOf, p.total])).toEqual([
+      ['2026-02-01', 400],
+      ['2026-03-01', 500],
+    ]);
+    const loans = groupChartPoints(points, 'liability');
+    expect(loans).toHaveLength(1);
+    expect(loans[0].total).toBe(1_100);
+    expect(loans[0].interpolated).toBe(true);
+    expect(groupChartPoints(points, 'cash').map((p) => p.total)).toEqual([100, 200, 300]);
+  });
+});
+
 describe('account queries', () => {
   const env = { ...process.env };
   beforeEach(() => {
@@ -414,6 +471,7 @@ describe('account queries', () => {
       asOf: string;
       dates: string[];
       rows: Array<{ sourceId: string; values: Array<number | null>; changePct: number | null; tone: string }>;
+      groups: Array<{ key: string; tone: string }>;
       documentsRead: number;
     };
     const year = (await run(accounts.sparklines, ctx, { range: '1Y' })) as Result;
@@ -427,6 +485,8 @@ describe('account queries', () => {
     expect(brk.tone).toBe('good');
     expect(loan.changePct).toBeLessThan(0);
     expect(loan.tone).toBe('good');
+    expect(year.groups.map((g) => g.key)).toEqual(['investments', 'liability']);
+    expect(year.groups[1].tone).toBe('good');
     expect(stats.reads).toBe(year.documentsRead);
     expect(stats.unindexed.filter((table) => table !== 'accounts')).toEqual([]);
 

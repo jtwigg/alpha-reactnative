@@ -21,6 +21,7 @@ export function NetWorthChart({
   benchmark,
   seriesLabel = 'Net worth',
   showMarkerNotes = true,
+  color,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -29,15 +30,17 @@ export function NetWorthChart({
   benchmark?: BenchmarkLine;
   seriesLabel?: string;
   showMarkerNotes?: boolean;
+  color?: string;
 }) {
   const palette = useFinancePalette();
+  const lineColor = color ?? palette.accent;
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
   const series = useMemo<ChartSeries[]>(() => {
     const out: ChartSeries[] = [
       {
         key: 'primary',
         label: seriesLabel,
-        color: palette.accent,
+        color: lineColor,
         values: points.map((point) => point.total),
         gaps: points.map((point) => point.interpolated),
         fill: true,
@@ -55,7 +58,7 @@ export function NetWorthChart({
       });
     }
     return out;
-  }, [benchmark, palette.accent, points, seriesLabel]);
+  }, [benchmark, lineColor, points, seriesLabel]);
 
   if (points.length < 2) {
     return (
@@ -70,7 +73,7 @@ export function NetWorthChart({
   const tooltipRows = (index: number): TooltipRow[] => {
     const point = points[index];
     const rows: TooltipRow[] = [
-      { label: seriesLabel, color: palette.accent, emphasis: true, ...moneyAndPct(point.total, first.total) },
+      { label: seriesLabel, color: lineColor, emphasis: true, ...moneyAndPct(point.total, first.total) },
     ];
     const benchValue = benchmark?.values[index];
     const benchStart = benchmark?.values.find((value) => value != null);
@@ -91,8 +94,8 @@ export function NetWorthChart({
         markers={markers.map((marker) => ({ asOf: marker.asOf, color: classColor(marker.class) }))}
       />
       <View style={styles.legend}>
-        <LegendItem color={palette.accent} label={seriesLabel} />
-        {hasGaps ? <LegendItem color={palette.accent} dashed label="Interpolated" /> : null}
+        <LegendItem color={lineColor} label={seriesLabel} />
+        {hasGaps ? <LegendItem color={lineColor} dashed label="Interpolated" /> : null}
         {benchmark ? <LegendItem color={benchmark.color} dashed label={`${benchmark.label} (rebased)`} /> : null}
       </View>
       {showMarkerNotes && markers.length > 0 ? (

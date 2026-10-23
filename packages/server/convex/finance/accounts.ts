@@ -9,6 +9,7 @@ import {
   accountHistory,
   clampPageSize,
   groupAccounts,
+  groupSparklines,
   holdingsView,
   institutionLabel,
   sparklineRows,
@@ -92,6 +93,20 @@ const sparklineRowValidator = v.object({
   tone: v.union(v.literal('good'), v.literal('bad'), v.literal('flat')),
 });
 
+const groupSparklineValidator = v.object({
+  key: v.union(
+    v.literal('cash'),
+    v.literal('investments'),
+    v.literal('real_estate'),
+    v.literal('liability'),
+    v.literal('other'),
+  ),
+  values: v.array(v.union(v.number(), v.null())),
+  change: v.number(),
+  changePct: v.union(v.number(), v.null()),
+  tone: v.union(v.literal('good'), v.literal('bad'), v.literal('flat')),
+});
+
 /**
  * Downsampled balance lines for every account over one range, in a single
  * query. Each account costs two end reads plus one at-or-before probe per
@@ -105,6 +120,7 @@ export const sparklines = query({
     asOf: v.string(),
     dates: v.array(v.string()),
     rows: v.array(sparklineRowValidator),
+    groups: v.array(groupSparklineValidator),
     documentsRead: v.number(),
   }),
   handler: async (ctx, args) => {
@@ -127,11 +143,13 @@ export const sparklines = query({
       CONVEX_QUERY_READ_BUDGET - accounts.length,
       ends,
     );
+    const rows = sparklineRows({ accounts, snapshots: chart.snapshots, dates });
     return {
       range,
       asOf,
       dates,
-      rows: sparklineRows({ accounts, snapshots: chart.snapshots, dates }),
+      rows,
+      groups: groupSparklines(accounts, rows),
       documentsRead: chart.documentsRead + accounts.length,
     };
   },

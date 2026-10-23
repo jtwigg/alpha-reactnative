@@ -1,9 +1,9 @@
 import { useAction, useQuery } from 'convex/react';
-import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountGroups, type AccountTrends } from '@/components/finance/account-groups';
+import { AccountGroups, GROUP_COLORS, type AccountTrends } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
@@ -14,6 +14,7 @@ import {
   FText,
   MAX_CONTENT_WIDTH,
   SectionHeader,
+  Segmented,
   StateMessage,
   TABULAR,
   TogglePill,
@@ -30,7 +31,15 @@ import {
   DEFAULT_BENCHMARK,
   benchmarkValuesForDates,
 } from '../../../server/convex/finance/benchmarks';
+import {
+  ACCOUNT_GROUPS,
+  groupChartPoints,
+  groupKeyForClass,
+  type AccountGroupKey,
+} from '../../../server/convex/finance/accountModel';
 import type { ChartPoint, CoverageMarker, RangeKey } from '../../../server/convex/finance/series';
+
+type ChartGroup = 'all' | AccountGroupKey;
 
 const RANGE_SUFFIX: Record<RangeKey, string> = {
   '1M': 'past month',
@@ -63,6 +72,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const [refreshing, setRefreshing] = useState(false);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [showBenchmark, setShowBenchmark] = useState(false);
+  const [chartGroup, setChartGroup] = useState<ChartGroup>('all');
+  const [groupScrub, setGroupScrub] = useState<number | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const chartY = useRef(0);
   const allowed = useQuery(
     api.finance.queries.isAllowed,
     demo && !isClerkConfigured() ? 'skip' : undefined,
@@ -106,13 +119,26 @@ function NetWorthPage({ demo }: { demo: boolean }) {
         : demoAccountSparklines(range);
     return {
       rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
+      groups: sparks?.groups ? new Map(sparks.groups.map((row) => [row.key, row])) : undefined,
       rangeLabel: RANGE_SUFFIX[range],
     };
   }, [demo, hasLive, heldSparks, liveSparks, range]);
 
   useEffect(() => {
     setScrubIndex(null);
-  }, [range]);
+    setGroupScrub(null);
+  }, [range, chartGroup]);
+
+  const groupOptions = useMemo<ChartGroup[]>(() => {
+    const present = new Set(accountList?.groups.map((group) => group.key) ?? []);
+    return ['all', ...ACCOUNT_GROUPS.map((group) => group.key).filter((key) => present.has(key))];
+  }, [accountList]);
+  const activeGroup: ChartGroup = groupOptions.includes(chartGroup) ? chartGroup : 'all';
+
+  const selectGroupFromList = (key: AccountGroupKey | null) => {
+    setChartGroup(key ?? 'all');
+    if (key) scrollRef.current?.scrollTo({ y: Math.max(chartY.current - 12, 0), animated: true });
+  };
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -152,6 +178,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     <View style={[styles.flex, { backgroundColor: palette.page }]}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.column}>
@@ -185,30 +212,55 @@ function NetWorthPage({ demo }: { demo: boolean }) {
               <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
                 <Stat label="Assets" value={formatUsd(data.assets)} />
                 <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
-                <Stat label="Liabilities" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
+                <Stat label="Loans" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
               </View>
             </Card>
 
-            <Card>
-              <View style={styles.toolbar}>
-                <RangePills value={range} onChange={setRange} />
-                {allowed ? (
-                  <TogglePill
-                    label={BENCHMARKS.SPX.label}
-                    value={showBenchmark}
-                    onChange={setShowBenchmark}
-                    color={BENCHMARKS.SPX.color}
-                  />
+            <View onLayout={(event) => (chartY.current = event.nativeEvent.layout.y)}>
+              <Card>
+                <View style={styles.toolbar}>
+                  <RangePills value={range} onChange={setRange} />
+                  {allowed && activeGroup !== 'liability' ? (
+                    <TogglePill
+                      label={BENCHMARKS.SPX.label}
+                      value={showBenchmark}
+                      onChange={setShowBenchmark}
+                      color={BENCHMARKS.SPX.color}
+                    />
+                  ) : null}
+                </View>
+                {groupOptions.length > 2 ? (
+                  <View style={styles.groupPicker}>
+                    <Segmented
+                      options={groupOptions}
+                      value={activeGroup}
+                      onChange={setChartGroup}
+                      labels={GROUP_PICKER_LABELS}
+                      accessibilityLabel="Chart group"
+                    />
+                  </View>
                 ) : null}
-              </View>
-              <ChartBlock
-                points={data.points}
-                markers={data.coverageMarkers}
-                scrubIndex={scrubIndex}
-                onScrub={setScrubIndex}
-                showBenchmark={Boolean(allowed && showBenchmark)}
-              />
-            </Card>
+                {activeGroup === 'all' ? (
+                  <ChartBlock
+                    points={data.points}
+                    markers={data.coverageMarkers}
+                    scrubIndex={scrubIndex}
+                    onScrub={setScrubIndex}
+                    showBenchmark={Boolean(allowed && showBenchmark)}
+                  />
+                ) : (
+                  <GroupChart
+                    group={activeGroup}
+                    points={data.points}
+                    markers={data.coverageMarkers}
+                    scrubIndex={groupScrub}
+                    onScrub={setGroupScrub}
+                    showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
+                    rangeSuffix={RANGE_SUFFIX[range]}
+                  />
+                )}
+              </Card>
+            </View>
 
             <Card>
               <SectionHeader
@@ -221,7 +273,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
             <View style={styles.section}>
               <SectionHeader
                 title="Accounts"
-                subtitle={`Trend lines show the ${RANGE_LABEL[range]}. Tap an account for details.`}
+                subtitle={`Trend lines show the ${RANGE_LABEL[range]}. Tap a group to chart it, or an account for details.`}
                 right={
                   accountList ? (
                     <FText variant="headline" style={TABULAR}>
@@ -231,7 +283,13 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                 }
               />
               {accountList ? (
-                <AccountGroups model={accountList} demo={usingDemo} trends={trends} />
+                <AccountGroups
+                  model={accountList}
+                  demo={usingDemo}
+                  trends={trends}
+                  selectedGroup={activeGroup === 'all' ? null : activeGroup}
+                  onSelectGroup={selectGroupFromList}
+                />
               ) : (
                 <Card>
                   <ActivityIndicator />
@@ -263,18 +321,87 @@ function Stat({ label, value, negative }: { label: string; value: string; negati
   );
 }
 
+const GROUP_PICKER_LABELS: Record<ChartGroup, string> = {
+  all: 'All',
+  cash: 'Cash',
+  investments: 'Investments',
+  real_estate: 'Property',
+  liability: 'Loans',
+  other: 'Other',
+};
+
+function GroupChart({
+  group,
+  points,
+  markers,
+  scrubIndex,
+  onScrub,
+  showBenchmark,
+  rangeSuffix,
+}: {
+  group: AccountGroupKey;
+  points: ChartPoint[];
+  markers: CoverageMarker[];
+  scrubIndex: number | null;
+  onScrub: (index: number | null) => void;
+  showBenchmark: boolean;
+  rangeSuffix: string;
+}) {
+  const filtered = useMemo(() => groupChartPoints(points, group), [group, points]);
+  const groupMarkers = useMemo(() => {
+    const from = filtered[0]?.asOf;
+    return markers.filter(
+      (marker) => groupKeyForClass(marker.class) === group && from != null && marker.asOf > from,
+    );
+  }, [filtered, group, markers]);
+  const first = filtered[0]?.total;
+  const last = filtered.at(-1)?.total;
+  const change = first != null && last != null ? last - first : 0;
+  const pct = first != null && last != null && Math.abs(first) >= 0.005 ? change / Math.abs(first) : null;
+  const tone = Math.abs(change) < 0.005 ? 'flat' : (change > 0) !== (group === 'liability') ? 'good' : 'bad';
+  const label = group === 'liability' ? 'Owed on loans' : GROUP_PICKER_LABELS[group];
+  return (
+    <View style={styles.groupChart}>
+      <View style={styles.groupSummary}>
+        <FText variant="caption" tone="muted">
+          {label}
+        </FText>
+        <View style={styles.groupSummaryRow}>
+          <FText variant="headline" style={TABULAR}>
+            {last != null ? formatUsd(last) : '—'}
+          </FText>
+          <DeltaBadge amount={change} pct={pct} suffix={rangeSuffix} tone={tone} />
+        </View>
+      </View>
+      <ChartBlock
+        points={filtered}
+        markers={groupMarkers}
+        scrubIndex={scrubIndex}
+        onScrub={onScrub}
+        showBenchmark={showBenchmark}
+        seriesLabel={label}
+        color={GROUP_COLORS[group]}
+      />
+    </View>
+  );
+}
+
 function ChartBlock({
   points,
   markers,
   scrubIndex,
   onScrub,
   showBenchmark,
+  seriesLabel,
+  color,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
   scrubIndex: number | null;
   onScrub: (index: number | null) => void;
   showBenchmark: boolean;
+  seriesLabel?: string;
+  color?: string;
 }) {
   const chart = (benchmark?: BenchmarkLine) => (
     <NetWorthChart
@@ -283,6 +410,8 @@ function ChartBlock({
       scrubIndex={scrubIndex}
       onScrub={onScrub}
       benchmark={benchmark}
+      seriesLabel={seriesLabel}
+      color={color}
     />
   );
   if (!showBenchmark) return chart();
@@ -380,6 +509,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   section: { gap: 12 },
+  groupPicker: { marginTop: 10, alignItems: 'flex-start' },
+  groupChart: { gap: 10, marginTop: 4 },
+  groupSummary: { gap: 2, marginTop: 8 },
+  groupSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 4 },
   footnote: { textAlign: 'center', paddingHorizontal: 12 },
   demoBanner: {
     backgroundColor: '#FFF4D6',
