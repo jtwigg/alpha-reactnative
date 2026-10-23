@@ -24,7 +24,7 @@ export const ACCOUNT_GROUPS: ReadonlyArray<{
   { key: 'cash', label: 'Cash', classes: ['cash', 'depository'] },
   { key: 'investments', label: 'Investments', classes: ['investments', 'investment', 'brokerage'] },
   { key: 'real_estate', label: 'Property', classes: ['real_estate', 'property'] },
-  { key: 'liability', label: 'Liabilities', classes: ['liability', 'credit', 'loan'] },
+  { key: 'liability', label: 'Loans', classes: ['liability', 'credit', 'loan'] },
 ];
 
 export function groupKeyForClass(className: string): AccountGroupKey {
@@ -294,12 +294,7 @@ export function sparklineRows(args: {
       const hit = accountValueOnDay(snaps, day, latest);
       return hit ? roundMoney(hit.balance) : null;
     });
-    const covered = values.filter((value): value is number => value != null);
-    const start = covered[0];
-    const end = covered.at(-1);
-    const change = start == null || end == null ? 0 : roundMoney(end - start);
-    const changePct =
-      start == null || end == null || Math.abs(start) < 0.005 ? null : change / Math.abs(start);
+    const { change, changePct } = rangeChange(values);
     return {
       sourceId: account.sourceId,
       values,
@@ -308,6 +303,82 @@ export function sparklineRows(args: {
       tone: changeTone(account.class, change),
     };
   });
+}
+
+export type GroupSparklineRow = Omit<SparklineRow, 'sourceId'> & { key: AccountGroupKey };
+
+/**
+ * Sum of account lines per group (unsigned, so Loans is the amount owed).
+ * A date is null until at least one account in the group has coverage.
+ */
+export function groupSparklines(
+  accounts: Array<{ sourceId: string; class: string }>,
+  rows: SparklineRow[],
+): GroupSparklineRow[] {
+  const byId = new Map(rows.map((row) => [row.sourceId, row]));
+  const order: AccountGroupKey[] = [...ACCOUNT_GROUPS.map((group) => group.key), 'other'];
+  const members = new Map<AccountGroupKey, SparklineRow[]>();
+  for (const account of accounts) {
+    const row = byId.get(account.sourceId);
+    if (!row) continue;
+    const key = groupKeyForClass(account.class);
+    members.set(key, [...(members.get(key) ?? []), row]);
+  }
+  return order
+    .filter((key) => members.has(key))
+    .map((key) => {
+      const list = members.get(key)!;
+      const length = Math.max(...list.map((row) => row.values.length));
+      const values = Array.from({ length }, (_, index) => {
+        let sum: number | null = null;
+        for (const row of list) {
+          const value = row.values[index];
+          if (value != null) sum = (sum ?? 0) + value;
+        }
+        return sum == null ? null : roundMoney(sum);
+      });
+      const { change, changePct } = rangeChange(values);
+      return { key, values, change, changePct, tone: changeTone(key, change) };
+    });
+}
+
+function rangeChange(values: Array<number | null>): { change: number; changePct: number | null } {
+  const covered = values.filter((value): value is number => value != null);
+  const start = covered[0];
+  const end = covered.at(-1);
+  const change = start == null || end == null ? 0 : roundMoney(end - start);
+  const changePct =
+    start == null || end == null || Math.abs(start) < 0.005 ? null : change / Math.abs(start);
+  return { change, changePct };
+}
+
+/**
+ * Main-chart points for one group: the group's classes summed per date,
+ * starting at the group's first covered point. Loans are shown as the
+ * amount owed (positive) so a falling line means paying down.
+ */
+export function groupChartPoints(points: ChartPoint[], key: AccountGroupKey): ChartPoint[] {
+  const out: ChartPoint[] = [];
+  for (const point of points) {
+    const byClass: Record<string, number> = {};
+    let sum: number | null = null;
+    for (const [className, amount] of Object.entries(point.byClass)) {
+      if (groupKeyForClass(className) !== key) continue;
+      byClass[className] = amount;
+      sum = (sum ?? 0) + amount;
+    }
+    if (sum == null) {
+      if (out.length === 0) continue;
+      sum = 0;
+    }
+    out.push({
+      asOf: point.asOf,
+      total: roundMoney(key === 'liability' ? -sum : sum),
+      interpolated: point.interpolated,
+      byClass,
+    });
+  }
+  return out;
 }
 
 const INFLOW = new Set(['credit', 'in', 'inflow', 'deposit', 'income']);

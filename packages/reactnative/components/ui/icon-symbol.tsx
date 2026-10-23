@@ -20,6 +20,7 @@ const MAPPING = {
   'chart.line.uptrend.xyaxis': 'show-chart',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'chevron.down': 'expand-more',
 } as IconMapping;
 
 /**

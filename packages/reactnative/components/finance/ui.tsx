@@ -175,11 +175,13 @@ export function Segmented<T extends string>({
   value,
   onChange,
   accessibilityLabel,
+  labels,
 }: {
   options: readonly T[];
   value: T;
   onChange: (value: T) => void;
   accessibilityLabel?: string;
+  labels?: Partial<Record<T, string>>;
 }) {
   const palette = useFinancePalette();
   return (
@@ -206,7 +208,7 @@ export function Segmented<T extends string>({
                 { color: active ? palette.text : palette.muted },
                 active && styles.segmentLabelActive,
               ]}>
-              {option}
+              {labels?.[option] ?? option}
             </Text>
           </Pressable>
         );
@@ -256,14 +258,19 @@ export function DeltaBadge({
   amount,
   pct,
   suffix,
+  tone: toneOverride,
 }: {
   amount?: number;
   pct: number | null;
   suffix?: string;
+  /** Overrides sign-based color, e.g. a shrinking loan is good. */
+  tone?: 'good' | 'bad' | 'flat';
 }) {
   const palette = useFinancePalette();
   const value = pct ?? amount ?? 0;
-  const tone = value > 0 ? 'positive' : value < 0 ? 'negative' : 'muted';
+  const signTone = value > 0 ? 'positive' : value < 0 ? 'negative' : 'muted';
+  const tone =
+    toneOverride === 'good' ? 'positive' : toneOverride === 'bad' ? 'negative' : toneOverride === 'flat' ? 'muted' : signTone;
   const bg =
     tone === 'positive' ? palette.positiveSoft : tone === 'negative' ? palette.negativeSoft : palette.chip;
   const arrow = value > 0 ? '▲' : value < 0 ? '▼' : '•';

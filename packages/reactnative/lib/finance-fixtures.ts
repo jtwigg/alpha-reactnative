@@ -8,12 +8,14 @@ import {
   holdingsView,
   SPARKLINE_POINTS,
   institutionLabel,
+  groupSparklines,
   sparklineRows,
   toListRow,
   typeLabel,
   type AccountListModel,
   type AccountRecord,
   type HoldingsModel,
+  type GroupSparklineRow,
   type SparklineRow,
 } from '../../server/convex/finance/accountModel';
 import {
@@ -256,11 +258,16 @@ export function demoAccountList(): AccountListModel {
   );
 }
 
-export function demoAccountSparklines(range: RangeKey): { dates: string[]; rows: SparklineRow[] } {
+export function demoAccountSparklines(range: RangeKey): {
+  dates: string[];
+  rows: SparklineRow[];
+  groups: GroupSparklineRow[];
+} {
   const earliest = snapshots.reduce<string | null>((min, row) => (min == null || row.asOf < min ? row.asOf : min), null);
   const window = rangeWindow(range, AS_OF, earliest);
   const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
-  return { dates, rows: sparklineRows({ accounts, snapshots, dates }) };
+  const rows = sparklineRows({ accounts, snapshots, dates });
+  return { dates, rows, groups: groupSparklines(accounts, rows) };
 }
 
 export function demoAccountDetail(sourceId: string, range: RangeKey): DemoAccountDetail | null {
