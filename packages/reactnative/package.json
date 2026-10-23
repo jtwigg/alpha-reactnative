@@ -27,6 +27,7 @@
     "@react-navigation/native": "^7.1.8",
     "convex": "^1.17.0",
     "expo": "~54.0.33",
+    "expo-auth-session": "~7.0.11",
     "expo-av": "~15.1.0",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.21",

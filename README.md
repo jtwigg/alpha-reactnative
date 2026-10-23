@@ -1,10 +1,10 @@
 # John's App
 
-Personal NX + pnpm monorepo. **iOS (Expo / React Native) is the main platform**, distributed **only through TestFlight** to about five family testers. There is no public App Store listing. The web build is a secondary Expo static export that Vercel deploys. Ship JS and asset changes to those TestFlight binaries with **EAS Update**. Native changes still need a new TestFlight build.
+Personal NX + pnpm monorepo. **iOS (Expo / React Native) is the main platform**, distributed **only through TestFlight** to about five family testers. There is no public App Store listing. The web build is a secondary Expo static export that Vercel deploys at **https://alpha-theta-silk.vercel.app**. Ship JS and asset changes to those TestFlight binaries with **EAS Update**. Native changes still need a new TestFlight build.
 
 ```
 /
-├── vercel.json                 — Vercel import config (web only)
+├── vercel.json                 — Vercel import config, cleanUrls, SPA fallback (web only)
 ├── .github/workflows/eas-update.yml — OTA to EAS Update (not web)
 ├── packages/
 │   ├── reactnative/            — Expo Router app (iOS primary, web secondary)
@@ -37,6 +37,39 @@ Also in the Clerk Dashboard: enable **email + password**, the **Native API**, an
 
 Users can only read or write their own `messages`. Chat and Whisper HTTP routes reject unauthenticated requests.
 
+## Google sign-in (Clerk SSO)
+
+Sign-in and sign-up show **Continue with Google** on iOS and web, next to the existing email/password flow. The app uses Clerk's current Expo helper (`useSSO` from `@clerk/expo/experimental`) with strategy `oauth_google` and redirect `johnsapp://sso-callback` (web uses the current origin + `/sso-callback`).
+
+On **development** Clerk instances, Google uses Clerk's **shared OAuth credentials**. No Google Cloud project is required for this app's current `pk_test_` instance.
+
+### What John must toggle in the Clerk dashboard
+
+1. **Enable Google for all users** (if the connection is not already on — this instance already returned `oauth_google.enabled: true` from Clerk's environment API):
+   - [SSO connections](https://dashboard.clerk.com/apps/app_3L3Yo0NESQ48He3AynMeLsx1HTA/user-authentication/sso-connections) (or [last-active SSO connections](https://dashboard.clerk.com/last-active?path=/user-authentication/sso-connections))
+   - **Add connection** → **For all users** → **Google**
+   - Leave **Use custom credentials** **off** on the development instance
+   - Keep **Enable for sign-up and sign-in** on
+2. **Allow the app redirect URLs** so Clerk can attach `rotating_token_nonce` after Google:
+   - [Redirect URLs / Paths](https://dashboard.clerk.com/last-active?path=/configure/paths)
+   - Add:
+     - `johnsapp://sso-callback`
+     - `http://localhost:8081/sso-callback`
+     - `https://alpha-theta-silk.vercel.app/sso-callback`
+3. **Native applications** (already needed for iOS):
+   - [Native applications](https://dashboard.clerk.com/last-active?path=/native-applications)
+   - Confirm the Expo app / scheme `johnsapp` is allowed
+
+A production Clerk instance (`pk_live_`) **does** need a Google Cloud OAuth client. Do not do that until you move off the development instance.
+
+### OTA vs new TestFlight
+
+| Change | Ship how |
+| --- | --- |
+| Continue with Google button, `useSSO`, `/sso-callback` | **OTA** (`pnpm update:preview` / `update:production`) — JS only. `expo-auth-session` is a JS helper. The existing foundation binary already has `scheme: johnsapp` and `expo-web-browser`. |
+| First ever TestFlight binary, or a binary built **before** the auth-foundation scheme/`expo-web-browser` | **New TestFlight** (`pnpm ios:testflight`) |
+| Switching to *native* Google (`useSignInWithGoogle` + `EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME` / Google Cloud iOS client) | **New TestFlight** — not used in this PR |
+
 ## Accounts John has to create (manual)
 
 Nothing in this PR can finish these for you. Do them in this order:
@@ -51,7 +84,7 @@ Nothing in this PR can finish these for you. Do them in this order:
    ```
    `update:configure` writes `runtimeVersion` / `updates.url` / `extra.eas.projectId` if they are still placeholders. Paste the project ID into `EAS_PROJECT_ID` (or `app.config.js`) so `updates.url` is `https://u.expo.dev/<project-id>`.
 4. **Apple Developer Program** — paid membership is required for TestFlight. In App Store Connect, create an **app record** (needed so TestFlight has a place to land; do not fill a public store listing or submit for App Store review). Paste the numeric Apple ID into `eas.json` → `submit.production.ios.ascAppId`.
-5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**.
+5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**. Public URL: **https://alpha-theta-silk.vercel.app**.
 6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. Also add `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (the committed `pk_test_`), and `EAS_PROJECT_ID` so OTA JS for TestFlight (`production` channel) and preview is built with the right keys.
 7. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
 
@@ -181,6 +214,10 @@ Vercel is unchanged: it still builds web from `vercel.json`. The workflow never 
 
 `packages/reactnative/app.config.js` sets `web.output` to `"static"`.
 
+**Public URL: [https://alpha-theta-silk.vercel.app](https://alpha-theta-silk.vercel.app)**
+
+Expo writes `sign-in.html` (and the same for other routes). `vercel.json` sets `cleanUrls: true` so `/sign-in` serves that file on refresh, and a fallback rewrite sends unknown paths to `/index.html` (not `/_expo` or `/assets`).
+
 | Vercel setting | Value |
 | --- | --- |
 | Framework Preset | Other (`vercel.json` sets `"framework": null`) |
@@ -196,7 +233,7 @@ Vercel is unchanged: it still builds web from `vercel.json`. The workflow never 
 | `EXPO_PUBLIC_CONVEX_URL` | `https://posh-mink-581.convex.cloud` |
 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_test_YXdhaXRlZC1qZW5uZXQtMjc2MC5jbGVyay5hY2NvdW50cy5kZXYk` |
 
-In Clerk, add the Vercel URL (and `http://localhost:8081`) under allowed origins / redirect URLs.
+In Clerk, add `https://alpha-theta-silk.vercel.app` (and `http://localhost:8081`) under allowed origins / redirect URLs.
 
 ## TestFlight (family testers)
 
@@ -268,7 +305,8 @@ npx eas-cli submit --profile production --platform ios --latest
 - [ ] `pnpm ios:testflight`; add ~5 family testers as an **external** TestFlight group; fill TestFlight test information
 - [ ] Do **not** submit for App Store review
 - [ ] Replace icon/splash placeholders before the first TestFlight build
-- [ ] Import the GitHub repo into Vercel; set `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud` and the Clerk `pk_test_` key (web only)
+- [x] Vercel project root = repo root; public URL **https://alpha-theta-silk.vercel.app**. Set `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud` and the Clerk `pk_test_` key (web only)
+- [ ] Clerk: enable **Google** under [SSO connections](https://dashboard.clerk.com/apps/app_3L3Yo0NESQ48He3AynMeLsx1HTA/user-authentication/sso-connections) (shared credentials on this dev instance). Add redirect URLs `johnsapp://sso-callback`, `http://localhost:8081/sso-callback`, and `https://alpha-theta-silk.vercel.app/sso-callback`.
 - [ ] Add Vercel and native origins in the Clerk dashboard
 - [ ] `nx run server:deploy` before pointing clients at prod Convex
 

@@ -62,24 +62,43 @@ export function AuthButton({
   onPress,
   disabled,
   loading,
+  variant = 'primary',
 }: {
   title: string;
   onPress: () => void;
   disabled?: boolean;
   loading?: boolean;
+  variant?: 'primary' | 'google';
 }) {
+  const isGoogle = variant === 'google';
   return (
     <Pressable
-      style={[styles.button, (disabled || loading) && styles.buttonDisabled]}
+      style={[
+        styles.button,
+        isGoogle && styles.googleButton,
+        (disabled || loading) && styles.buttonDisabled,
+      ]}
       onPress={onPress}
       disabled={disabled || loading}
+      accessibilityRole="button"
+      accessibilityLabel={title}
     >
       {loading ? (
-        <ActivityIndicator color="#fff" />
+        <ActivityIndicator color={isGoogle ? '#1f1f1f' : '#fff'} />
       ) : (
-        <Text style={styles.buttonText}>{title}</Text>
+        <Text style={[styles.buttonText, isGoogle && styles.googleButtonText]}>{title}</Text>
       )}
     </Pressable>
+  );
+}
+
+export function AuthDivider() {
+  return (
+    <View style={styles.dividerRow}>
+      <View style={styles.dividerLine} />
+      <Text style={styles.dividerText}>or</Text>
+      <View style={styles.dividerLine} />
+    </View>
   );
 }
 
@@ -108,8 +127,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 50,
   },
+  googleButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dadce0',
+  },
+  googleButtonText: { color: '#1f1f1f' },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: '#c5c5c5' },
+  dividerText: { color: '#687076', fontSize: 14 },
   errorBox: {
     backgroundColor: '#fdecea',
     borderRadius: 10,
