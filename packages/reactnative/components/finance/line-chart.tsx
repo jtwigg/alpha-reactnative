@@ -1,21 +1,25 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
-import { TABULAR, useFinancePalette } from '@/components/finance/ui';
+import { Reveal } from '@/components/finance/reveal';
+import { TABULAR, useFinancePalette, type FinancePalette } from '@/components/finance/ui';
 import type { SeriesHighlight } from '@/hooks/use-series-highlight';
 import { seriesOpacity } from '@/lib/series-highlight';
 import {
-  areaPath,
   axisDateLabel,
-  buildSegments,
+  buildCurves,
+  curveAreaPath,
+  curvesToPath,
   formatCompactUsd,
   niceTicks,
-  segmentsToPath,
+  sampleCurves,
   spanInDays,
+  type Curve,
   type Segment,
 } from '@/lib/chart-math';
+import { formatCoverageDate } from '@/lib/finance-coverage';
 
 export type ChartSeries = {
   key: string;
@@ -31,8 +35,11 @@ export type ChartSeries = {
 
 export type ChartMarker = { asOf: string; color: string };
 
-const PAD = { top: 14, right: 58, bottom: 26, left: 2 };
+const PAD = { top: 26, right: 56, bottom: 24, left: 2 };
 const TAP_HIT_PX = 24;
+/** Native draws curves as short rotated views; this caps views per chart. */
+const NATIVE_SEGMENT_BUDGET = 640;
+const FADE_BANDS = 10;
 
 export function LineChart({
   dates,
@@ -40,6 +47,7 @@ export function LineChart({
   scrubIndex,
   onScrub,
   tooltipRows,
+  tooltipMode = 'full',
   height = 220,
   includeZero = false,
   markers = [],
@@ -50,6 +58,8 @@ export function LineChart({
   scrubIndex: number | null;
   onScrub: (index: number | null) => void;
   tooltipRows: (index: number) => TooltipRow[];
+  /** `date` shows only a date pill; the caller renders values elsewhere. */
+  tooltipMode?: 'full' | 'date';
   height?: number;
   includeZero?: boolean;
   markers?: ChartMarker[];
@@ -66,7 +76,7 @@ export function LineChart({
     return active ? [...shown.filter((s) => s.key !== active), ...shown.filter((s) => s.key === active)] : shown;
   }, [active, hidden, series]);
 
-  const geometry = useMemo(() => {
+  const geometry = useMemo<Geometry | null>(() => {
     if (width <= 0 || count < 2) return null;
     const values = visible.flatMap((s) => s.values.filter((v): v is number => v != null));
     if (values.length === 0) return null;
@@ -83,11 +93,16 @@ export function LineChart({
     const innerH = Math.max(height - PAD.top - PAD.bottom, 1);
     const x = (index: number) => PAD.left + (index / (count - 1)) * innerW;
     const y = (value: number) => PAD.top + (1 - (value - y0) / (y1 - y0 || 1)) * innerH;
-    const lines = visible.map((s) => ({
-      series: s,
-      segments: buildSegments(s.values, x, y, s.gaps, s.dashed),
-    }));
-    return { ticks, x, y, lines, baseline: PAD.top + innerH, innerH };
+    const budget = Math.floor(NATIVE_SEGMENT_BUDGET / Math.max(visible.length, 1));
+    const lines = visible.map((s) => {
+      const curves = buildCurves(s.values, x, y, s.gaps, s.dashed);
+      return {
+        series: s,
+        curves,
+        segments: Platform.OS === 'web' ? [] : sampleCurves(curves, budget),
+      };
+    });
+    return { ticks, x, y, lines, baseline: PAD.top + innerH, innerH, width, height };
   }, [count, height, includeZero, visible, width]);
 
   const onTap = (index: number, tapY: number) => {
@@ -105,9 +120,7 @@ export function LineChart({
 
   const span = count > 1 ? spanInDays(dates[0], dates[count - 1]) : 0;
   const xLabels =
-    count > 1
-      ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i)
-      : [];
+    count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
   const hairX = geometry && scrubIndex != null ? geometry.x(scrubIndex) : null;
   const markerIndex = (asOf: string) => {
     let best = 0;
@@ -116,6 +129,9 @@ export function LineChart({
     });
     return best;
   };
+  // Redraw (reveal) only when the data or the set of lines changes, not on highlight.
+  const revealToken = `${dates[0]}|${dates[count - 1]}|${count}|${series.map((s) => s.key).join(',')}`;
+  const native = Platform.OS !== 'web';
 
   return (
     <View style={styles.wrap}>
@@ -129,26 +145,12 @@ export function LineChart({
         onTap={highlight ? onTap : undefined}>
         {geometry ? (
           <>
-            {geometry.ticks.map((tick) => (
-              <View key={`grid-${tick}`}>
-                <View
-                  style={[
-                    styles.grid,
-                    {
-                      top: geometry.y(tick),
-                      left: PAD.left,
-                      right: PAD.right - 6,
-                      backgroundColor: tick === 0 && includeZero ? palette.border : palette.grid,
-                    },
-                  ]}
-                />
-                <Text
-                  style={[styles.yLabel, { top: geometry.y(tick) - 8, color: palette.subtle }]}
-                  numberOfLines={1}>
-                  {formatCompactUsd(tick)}
-                </Text>
-              </View>
-            ))}
+            {native ? (
+              <Reveal token={revealToken} width={width} height={height}>
+                <NativeFill geometry={geometry} active={active} palette={palette} />
+              </Reveal>
+            ) : null}
+            <Grid geometry={geometry} palette={palette} includeZero={includeZero} />
             {markers.map((marker) => (
               <View
                 key={`marker-${marker.asOf}-${marker.color}`}
@@ -163,41 +165,49 @@ export function LineChart({
                 ]}
               />
             ))}
-            {Platform.OS === 'web' ? (
-              <WebLines width={width} height={height} geometry={geometry} active={active} />
-            ) : (
-              <NativeLines geometry={geometry} active={active} />
-            )}
+            <Reveal token={revealToken} width={width} height={height}>
+              {native ? (
+                <NativeLines geometry={geometry} active={active} />
+              ) : (
+                <WebLines geometry={geometry} active={active} />
+              )}
+            </Reveal>
             {hairX != null ? (
               <>
                 <View
                   style={[
-                    styles.crosshair,
+                    styles.dim,
                     {
-                      left: hairX,
-                      top: PAD.top - 4,
-                      height: geometry.innerH + 4,
-                      backgroundColor: palette.crosshair,
+                      left: hairX + 1,
+                      width: Math.max(width - PAD.right - hairX - 1, 0),
+                      top: PAD.top - 6,
+                      height: geometry.innerH + 8,
+                      backgroundColor: palette.card,
                     },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.crosshair,
+                    { left: hairX - 0.5, top: PAD.top - 6, height: geometry.innerH + 8, backgroundColor: palette.crosshair },
                   ]}
                 />
                 {geometry.lines.map(({ series: s }) => {
                   const value = s.values[scrubIndex!];
                   if (value == null) return null;
+                  const cy = geometry.y(value);
                   return (
-                    <View
-                      key={`dot-${s.key}`}
-                      style={[
-                        styles.dot,
-                        {
-                          left: hairX - 5,
-                          top: geometry.y(value) - 5,
-                          backgroundColor: s.color,
-                          borderColor: palette.card,
-                          opacity: seriesOpacity(s.key, active),
-                        },
-                      ]}
-                    />
+                    <View key={`dot-${s.key}`} style={{ opacity: seriesOpacity(s.key, active) }}>
+                      <View
+                        style={[styles.halo, { left: hairX - HALO / 2, top: cy - HALO / 2, backgroundColor: s.color }]}
+                      />
+                      <View
+                        style={[
+                          styles.dot,
+                          { left: hairX - DOT / 2, top: cy - DOT / 2, backgroundColor: s.color, borderColor: palette.card },
+                        ]}
+                      />
+                    </View>
                   );
                 })}
               </>
@@ -208,7 +218,7 @@ export function LineChart({
                 numberOfLines={1}
                 style={[
                   styles.xLabel,
-                  { color: palette.subtle, top: height - 18 },
+                  { color: palette.subtle, top: height - 16 },
                   i === 0
                     ? { left: PAD.left }
                     : i === xLabels.length - 1
@@ -219,16 +229,20 @@ export function LineChart({
               </Text>
             ))}
             {scrubIndex != null && hairX != null ? (
-              <ChartTooltip
-                date={dates[scrubIndex]}
-                rows={tooltipRows(scrubIndex).filter((row) => !row.key || !hidden?.has(row.key))}
-                highlightKey={active}
-                style={[
-                  styles.tooltip,
-                  hairX > width / 2 ? { right: width - hairX + 12 } : { left: hairX + 12 },
-                  tooltipBounds(hairX, width),
-                ]}
-              />
+              tooltipMode === 'date' ? (
+                <DatePill date={dates[scrubIndex]} x={hairX} width={width} palette={palette} />
+              ) : (
+                <ChartTooltip
+                  date={dates[scrubIndex]}
+                  rows={tooltipRows(scrubIndex).filter((row) => !row.key || !hidden?.has(row.key))}
+                  highlightKey={active}
+                  style={[
+                    styles.tooltip,
+                    hairX > width / 2 ? { right: width - hairX + 14 } : { left: hairX + 14 },
+                    tooltipBounds(hairX, width),
+                  ]}
+                />
+              )
             ) : null}
           </>
         ) : null}
@@ -237,52 +251,106 @@ export function LineChart({
   );
 }
 
+const DOT = 10;
+const HALO = 24;
+const PILL_W = 108;
+
+function DatePill({ date, x, width, palette }: { date: string; x: number; width: number; palette: FinancePalette }) {
+  const left = Math.min(Math.max(x - PILL_W / 2, 0), Math.max(width - PAD.right - PILL_W + 6, 0));
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.pill, { left, backgroundColor: palette.tooltip, shadowColor: palette.tooltipShadow, borderColor: palette.border }]}>
+      <Text style={[styles.pillText, { color: palette.text }]} numberOfLines={1}>
+        {formatCoverageDate(date)}
+      </Text>
+    </View>
+  );
+}
+
 function tooltipBounds(hairX: number, width: number) {
-  const available = Math.max((hairX > width / 2 ? hairX : width - hairX) - 16, 140);
+  const available = Math.max((hairX > width / 2 ? hairX : width - hairX) - 18, 140);
   return { maxWidth: Math.min(available, 280), minWidth: Math.min(190, available) };
 }
 
 type Geometry = {
-  lines: Array<{ series: ChartSeries; segments: Segment[] }>;
+  ticks: number[];
+  lines: Array<{ series: ChartSeries; curves: Curve[]; segments: Segment[] }>;
   x: (index: number) => number;
   y: (value: number) => number;
   baseline: number;
-};
-
-function WebLines({
-  width,
-  height,
-  geometry,
-  active,
-}: {
+  innerH: number;
   width: number;
   height: number;
+};
+
+const Grid = memo(function Grid({
+  geometry,
+  palette,
+  includeZero,
+}: {
   geometry: Geometry;
-  active: string | null;
+  palette: FinancePalette;
+  includeZero: boolean;
 }) {
+  return (
+    <>
+      {geometry.ticks.map((tick, i) => {
+        const zero = includeZero && tick === 0;
+        const edge = i === 0;
+        return (
+          <View key={`grid-${tick}`}>
+            {zero || edge || i % 2 === 0 ? (
+              <View
+                style={[
+                  styles.grid,
+                  {
+                    top: geometry.y(tick),
+                    left: PAD.left,
+                    right: PAD.right - 8,
+                    backgroundColor: zero ? palette.border : palette.grid,
+                  },
+                ]}
+              />
+            ) : null}
+            <Text style={[styles.yLabel, { top: geometry.y(tick) - 7, color: palette.subtle }]} numberOfLines={1}>
+              {formatCompactUsd(tick)}
+            </Text>
+          </View>
+        );
+      })}
+    </>
+  );
+});
+
+const WebLines = memo(function WebLines({ geometry, active }: { geometry: Geometry; active: string | null }) {
   const gradientId = useMemo(() => `fill-${Math.random().toString(36).slice(2, 10)}`, []);
   const fillSeries = geometry.lines.find(({ series }) => series.fill);
   return (
-    <svg width={width} height={height} style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}>
+    <svg
+      width={geometry.width}
+      height={geometry.height}
+      style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}>
       {fillSeries ? (
         <>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={fillSeries.series.color} stopOpacity="0.22" />
+              <stop offset="0%" stopColor={fillSeries.series.color} stopOpacity="0.34" />
+              <stop offset="60%" stopColor={fillSeries.series.color} stopOpacity="0.1" />
               <stop offset="100%" stopColor={fillSeries.series.color} stopOpacity="0" />
             </linearGradient>
           </defs>
           <path
-            d={areaPath(fillSeries.series.values, geometry.x, geometry.y, geometry.baseline)}
+            d={curveAreaPath(fillSeries.curves, geometry.baseline)}
             fill={`url(#${gradientId})`}
             fillOpacity={seriesOpacity(fillSeries.series.key, active)}
             stroke="none"
           />
         </>
       ) : null}
-      {geometry.lines.map(({ series, segments }) => {
-        const solid = segmentsToPath(segments.filter((seg) => !seg.dashed));
-        const dashed = segmentsToPath(segments.filter((seg) => seg.dashed));
+      {geometry.lines.map(({ series, curves }) => {
+        const solid = curvesToPath(curves.filter((c) => !c.dashed));
+        const dashed = curvesToPath(curves.filter((c) => c.dashed));
         const strokeWidth = series.strokeWidth ?? 2;
         return (
           <g key={series.key} opacity={seriesOpacity(series.key, active)}>
@@ -301,9 +369,9 @@ function WebLines({
                 d={dashed}
                 fill="none"
                 stroke={series.color}
-                strokeOpacity={series.dashed ? 0.9 : 0.55}
-                strokeWidth={Math.max(strokeWidth - 0.4, 1.2)}
-                strokeDasharray="5 4"
+                strokeOpacity={series.dashed ? 0.9 : 0.75}
+                strokeWidth={Math.max(strokeWidth - 0.2, 1.2)}
+                strokeDasharray={series.dashed ? '5 4' : '6 3'}
                 strokeLinecap="round"
               />
             ) : null}
@@ -312,31 +380,68 @@ function WebLines({
       })}
     </svg>
   );
-}
+});
 
-function NativeLines({ geometry, active }: { geometry: Geometry; active: string | null }) {
-  const fillSeries = geometry.lines.find(({ series }) => series.fill);
+/**
+ * Native has no SVG here (keeps OTA updates binary-compatible), so the area is
+ * thin solid columns faded toward the baseline by card-colored bands.
+ */
+const NativeFill = memo(function NativeFill({
+  geometry,
+  active,
+  palette,
+}: {
+  geometry: Geometry;
+  active: string | null;
+  palette: FinancePalette;
+}): ReactNode {
+  const fill = geometry.lines.find(({ series }) => series.fill);
+  if (!fill || fill.segments.length === 0) return null;
+  const opacity = seriesOpacity(fill.series.key, active);
+  const top = Math.min(...fill.segments.map((seg) => Math.min(seg.y1, seg.y2)));
+  const left = fill.segments[0].x1;
+  const right = fill.segments[fill.segments.length - 1].x2;
+  const bandH = Math.max(geometry.baseline - top, 0) / FADE_BANDS;
   return (
     <>
-      {fillSeries
-        ? fillSeries.segments.map((seg, i) => {
-            const top = Math.min(seg.y1, seg.y2);
-            return (
-              <View
-                key={`fill-${i}`}
-                style={{
-                  position: 'absolute',
-                  left: seg.x1,
-                  width: Math.max(seg.x2 - seg.x1, 0.5) + 0.5,
-                  top,
-                  height: Math.max(geometry.baseline - top, 0),
-                  backgroundColor: fillSeries.series.color,
-                  opacity: 0.07 * seriesOpacity(fillSeries.series.key, active),
-                }}
-              />
-            );
-          })
-        : null}
+      {fill.segments.map((seg, i) => {
+        const y = Math.min(seg.y1, seg.y2);
+        return (
+          <View
+            key={`fill-${i}`}
+            style={{
+              position: 'absolute',
+              left: seg.x1,
+              width: Math.max(seg.x2 - seg.x1, 0.5) + 0.5,
+              top: y,
+              height: Math.max(geometry.baseline - y, 0),
+              backgroundColor: fill.series.color,
+              opacity: 0.2 * opacity,
+            }}
+          />
+        );
+      })}
+      {Array.from({ length: FADE_BANDS }, (_, i) => (
+        <View
+          key={`fade-${i}`}
+          style={{
+            position: 'absolute',
+            left,
+            width: right - left + 1,
+            top: top + i * bandH,
+            height: bandH + 0.5,
+            backgroundColor: palette.card,
+            opacity: ((i + 1) / FADE_BANDS) * 0.92,
+          }}
+        />
+      ))}
+    </>
+  );
+});
+
+const NativeLines = memo(function NativeLines({ geometry, active }: { geometry: Geometry; active: string | null }) {
+  return (
+    <>
       {geometry.lines.map(({ series, segments }) =>
         segments.map((seg, i) => {
           const dx = seg.x2 - seg.x1;
@@ -354,7 +459,7 @@ function NativeLines({ geometry, active }: { geometry: Geometry; active: string 
                 height: thickness,
                 borderRadius: thickness / 2,
                 backgroundColor: series.color,
-                opacity: (seg.dashed ? (series.dashed ? 0.75 : 0.45) : 1) * seriesOpacity(series.key, active),
+                opacity: (seg.dashed ? (series.dashed ? 0.75 : 0.6) : 1) * seriesOpacity(series.key, active),
                 transform: [{ rotate: `${Math.atan2(dy, dx)}rad` }],
               }}
             />
@@ -363,7 +468,7 @@ function NativeLines({ geometry, active }: { geometry: Geometry; active: string 
       )}
     </>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: { width: '100%' },
@@ -371,14 +476,32 @@ const styles = StyleSheet.create({
   yLabel: {
     position: 'absolute',
     right: 0,
-    width: PAD.right - 8,
+    width: PAD.right - 10,
     textAlign: 'right',
     fontSize: 11,
+    fontWeight: '500',
     ...TABULAR,
   },
-  xLabel: { position: 'absolute', fontSize: 11, ...TABULAR },
-  marker: { position: 'absolute', width: 1, opacity: 0.35 },
-  crosshair: { position: 'absolute', width: 1, opacity: 0.55 },
-  dot: { position: 'absolute', width: 10, height: 10, borderRadius: 5, borderWidth: 2 },
+  xLabel: { position: 'absolute', fontSize: 11, fontWeight: '500', ...TABULAR },
+  marker: { position: 'absolute', width: 1, opacity: 0.16 },
+  dim: { position: 'absolute', opacity: 0.55 },
+  crosshair: { position: 'absolute', width: 1, opacity: 0.5 },
+  halo: { position: 'absolute', width: HALO, height: HALO, borderRadius: HALO / 2, opacity: 0.18 },
+  dot: { position: 'absolute', width: DOT, height: DOT, borderRadius: DOT / 2, borderWidth: 2 },
   tooltip: { position: 'absolute', top: 0 },
+  pill: {
+    position: 'absolute',
+    top: 0,
+    width: PILL_W,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  pillText: { fontSize: 11, fontWeight: '600', ...TABULAR },
 });

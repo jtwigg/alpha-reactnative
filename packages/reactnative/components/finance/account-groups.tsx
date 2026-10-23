@@ -14,6 +14,7 @@ import {
 } from '@/components/finance/ui';
 import { Sparkline } from '@/components/finance/sparkline';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 import type {
   AccountGroup,
@@ -24,14 +25,6 @@ import type {
   GroupSparklineRow,
   SparklineRow,
 } from '../../../server/convex/finance/accountModel';
-
-export const GROUP_COLORS: Record<AccountGroupKey, string> = {
-  cash: '#16a34a',
-  investments: '#0a7ea4',
-  real_estate: '#7c3aed',
-  liability: '#c2410c',
-  other: '#64748b',
-};
 
 export function accountHref(sourceId: string, demo: boolean): Href {
   const base = `/finances/account/${encodeURIComponent(sourceId)}`;
@@ -118,7 +111,7 @@ function GroupCard({
   const palette = useFinancePalette();
   const { width } = useWindowDimensions();
   const compact = width < 560;
-  const color = GROUP_COLORS[group.key];
+  const color = useChartColors().groups[group.key];
   const trend = trends?.groups?.get(group.key);
   const loading = trends != null && trends.groups === undefined;
   const subtotal = (

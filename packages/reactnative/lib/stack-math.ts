@@ -69,7 +69,9 @@ export function buildStack(args: {
   level: StackLevel;
   includeLoans: boolean;
   groupColors: Record<AccountGroupKey, string>;
+  shade?: (base: string, index: number, count: number) => string;
 }): StackModel {
+  const shadeFn = args.shade ?? shade;
   const length = Math.max(0, ...args.accounts.map((a) => a.values.length));
   const covered = Array.from({ length }, (_, i) => args.accounts.some((a) => a.values[i] != null));
   const series: StackSeries[] = [];
@@ -97,7 +99,7 @@ export function buildStack(args: {
           key: account.sourceId,
           label: account.name,
           group,
-          color: shade(base, index, members.length),
+          color: shadeFn(base, index, members.length),
           values: Array.from({ length }, (_, i) => signed(account.values[i])),
         });
       });

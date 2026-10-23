@@ -1,9 +1,8 @@
 import { usePaginatedQuery, useQuery } from 'convex/react';
 import { Redirect, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 
-import { GROUP_COLORS } from '@/components/finance/account-groups';
 import {
   DetailsCard,
   HoldingsCard,
@@ -11,23 +10,22 @@ import {
   accountFields,
   type TransactionsStatus,
 } from '@/components/finance/account-sections';
+import { HeroValue } from '@/components/finance/hero-value';
 import { NetWorthChart } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import {
   Avatar,
   Badge,
   Card,
-  DeltaBadge,
   FText,
   MAX_CONTENT_WIDTH,
-  SectionHeader,
   StateMessage,
-  TABULAR,
   useFinancePalette,
 } from '@/components/finance/ui';
 import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { api } from '@/lib/api';
-import { formatUsd } from '@/lib/finance-coverage';
+import { useChartColors } from '@/lib/finance-colors';
+import { liveRange } from '@/lib/range-support';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountDetail, demoHoldings, demoTransactions } from '@/lib/finance-fixtures';
 import { groupKeyForClass } from '../../../../server/convex/finance/accountModel';
@@ -39,6 +37,7 @@ const RANGE_SUFFIX: Record<RangeKey, string> = {
   '3M': 'past 3 months',
   YTD: 'year to date',
   '1Y': 'past year',
+  '5Y': 'past 5 years',
   All: 'all time',
 };
 
@@ -88,6 +87,8 @@ export default function AccountDetailScreen() {
 
 function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean }) {
   const palette = useFinancePalette();
+  const colors = useChartColors();
+  const { width } = useWindowDimensions();
   const router = useRouter();
   const [range, setRange] = useState<RangeKey>('1Y');
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -96,7 +97,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
 
   const liveDetail = useQuery(
     api.finance.accounts.detail,
-    live ? { sourceId, range, refreshNonce } : 'skip',
+    live ? { sourceId, range: liveRange(range), refreshNonce } : 'skip',
   );
   const [held, setHeld] = useState(liveDetail);
   useEffect(() => {
@@ -140,7 +141,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
     );
   }
 
-  const color = GROUP_COLORS[groupKeyForClass(detail.class)];
+  const color = colors.groups[groupKeyForClass(detail.class)];
   const balance = detail.latestSnapshot?.balance ?? detail.currentBalance;
   const shown = signedAmount(detail.class, balance);
 
@@ -167,29 +168,29 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
             <Badge label={detail.typeLabel} tone="accent" />
             {detail.provider === 'manual' ? <Badge label="Manual" /> : null}
           </View>
-          <FText variant="display" tone={shown < 0 ? 'negative' : 'text'} style={TABULAR}>
-            {formatUsd(shown)}
-          </FText>
-          {detail.history.points.length > 1 ? (
-            <DeltaBadge
-              amount={detail.history.change}
-              pct={detail.history.changePct}
-              suffix={RANGE_SUFFIX[range]}
-            />
-          ) : null}
         </View>
 
-        <Card>
-          <SectionHeader title="Balance history" subtitle="Press and drag for a day" />
-          <RangePills value={range} onChange={setRange} />
+        <Card style={styles.historyCard}>
+          <HeroValue
+            label={shown < 0 ? 'Balance owed' : 'Balance'}
+            points={detail.history.points}
+            scrubIndex={scrubIndex}
+            fallback={balance}
+            suffix={RANGE_SUFFIX[live ? liveRange(range) : range]}
+            invert={shown < 0}
+          />
           <NetWorthChart
             points={detail.history.points}
             markers={[]}
             scrubIndex={scrubIndex}
             onScrub={setScrubIndex}
             seriesLabel="Balance"
+            color={color}
+            height={width >= 720 ? 260 : 210}
+            headline
             showMarkerNotes={false}
           />
+          <RangePills value={range} onChange={setRange} stretch />
         </Card>
 
         <HoldingsSection key={`h-${refreshNonce}`} sourceId={sourceId} live={live} accountValue={balance} />
@@ -257,4 +258,5 @@ const styles = StyleSheet.create({
   hero: { gap: 10, paddingHorizontal: 4, paddingVertical: 4 },
   heroTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   badges: { flexDirection: 'row', gap: 6 },
+  historyCard: { gap: 16 },
 });

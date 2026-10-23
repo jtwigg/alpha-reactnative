@@ -111,3 +111,16 @@ describe('stack math', () => {
     expect(seriesAtValue(model, 1, 5_000)).toBeNull();
   });
 });
+
+describe('chart palette shades', () => {
+  it('steps account shades away from the group hue without repeats', async () => {
+    const { shadeFor, GROUP_PALETTE, mix } = await import('../../reactnative/lib/chart-palette');
+    expect(mix('#000000', '#ffffff', 0.5)).toBe('#808080');
+    for (const scheme of ['light', 'dark'] as const) {
+      const base = GROUP_PALETTE[scheme].investments;
+      const shades = Array.from({ length: 5 }, (_, i) => shadeFor(base, i, 5, scheme));
+      expect(shades[0]).toBe(base);
+      expect(new Set(shades).size).toBe(5);
+    }
+  });
+});

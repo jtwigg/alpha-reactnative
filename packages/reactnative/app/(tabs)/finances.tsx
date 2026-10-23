@@ -1,17 +1,17 @@
 import { useAction, useQuery } from 'convex/react';
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AccountGroups, GROUP_COLORS, type AccountTrends } from '@/components/finance/account-groups';
+import { AccountGroups, type AccountTrends } from '@/components/finance/account-groups';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CompositionCard } from '@/components/finance/composition-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
-import { NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
+import { HeroValue, changeTone } from '@/components/finance/hero-value';
+import { CoverageMarkerNotes, NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import {
   Card,
-  DeltaBadge,
   FText,
   MAX_CONTENT_WIDTH,
   SectionHeader,
@@ -23,9 +23,11 @@ import {
 } from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { isClerkConfigured } from '@/lib/convex';
+import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
+import { liveRange } from '@/lib/range-support';
 import {
   BENCHMARKS,
   BENCHMARK_STALE_MS,
@@ -38,7 +40,12 @@ import {
   groupKeyForClass,
   type AccountGroupKey,
 } from '../../../server/convex/finance/accountModel';
-import type { ChartPoint, CoverageMarker, RangeKey } from '../../../server/convex/finance/series';
+import {
+  trimModelToRange,
+  type ChartPoint,
+  type CoverageMarker,
+  type RangeKey,
+} from '../../../server/convex/finance/series';
 
 type ChartGroup = 'all' | AccountGroupKey;
 
@@ -47,6 +54,7 @@ const RANGE_SUFFIX: Record<RangeKey, string> = {
   '3M': 'past 3 months',
   YTD: 'year to date',
   '1Y': 'past year',
+  '5Y': 'past 5 years',
   All: 'all time',
 };
 
@@ -55,8 +63,10 @@ const RANGE_LABEL: Record<RangeKey, string> = {
   '3M': 'past 3 months',
   YTD: 'year to date',
   '1Y': 'past year',
+  '5Y': 'past 5 years',
   All: 'full history',
 };
+const WIDE_MIN_WIDTH = 720;
 
 export default function FinancesScreen() {
   const demo = useFinanceDemo();
@@ -68,6 +78,8 @@ export default function FinancesScreen() {
 
 function NetWorthPage({ demo }: { demo: boolean }) {
   const palette = useFinancePalette();
+  const colors = useChartColors();
+  const { width: screenWidth } = useWindowDimensions();
   const [range, setRange] = useState<RangeKey>('All');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,11 +93,15 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     api.finance.queries.isAllowed,
     demo && !isClerkConfigured() ? 'skip' : undefined,
   );
-  const live = useQuery(api.finance.queries.page, allowed ? { range, refreshNonce } : 'skip');
+  const queryRange = liveRange(range);
+  const live = useQuery(api.finance.queries.page, allowed ? { range: queryRange, refreshNonce } : 'skip');
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
-  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range, refreshNonce } : 'skip');
+  const liveSparks = useQuery(
+    api.finance.accounts.sparklines,
+    allowed ? { range: queryRange, refreshNonce } : 'skip',
+  );
   const [heldSparks, setHeldSparks] = useState(liveSparks);
 
   useEffect(() => {
@@ -108,22 +124,25 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
   const data = useMemo(() => {
     const source = live ?? held;
-    if (hasLive) return source;
+    if (hasLive) {
+      return source && source.range === queryRange && queryRange !== range ? trimModelToRange(source, range) : source;
+    }
     if (demo) return demoNetWorthPage(range);
     return source;
-  }, [demo, hasLive, held, live, range]);
+  }, [demo, hasLive, held, live, queryRange, range]);
   const accountList = hasLive ? (liveAccounts ?? heldAccounts) : demo ? demoAccountList() : (liveAccounts ?? heldAccounts);
+  const sparkRange = hasLive || !demo ? queryRange : range;
   const trends = useMemo<AccountTrends>(() => {
     const sparks =
       hasLive || !demo
-        ? (liveSparks ?? (heldSparks?.range === range ? heldSparks : undefined))
-        : demoAccountSparklines(range);
+        ? (liveSparks ?? (heldSparks?.range === sparkRange ? heldSparks : undefined))
+        : demoAccountSparklines(sparkRange);
     return {
       rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
       groups: sparks?.groups ? new Map(sparks.groups.map((row) => [row.key, row])) : undefined,
-      rangeLabel: RANGE_SUFFIX[range],
+      rangeLabel: RANGE_SUFFIX[sparkRange],
     };
-  }, [demo, hasLive, heldSparks, liveSparks, range]);
+  }, [demo, hasLive, heldSparks, liveSparks, sparkRange]);
 
   useEffect(() => {
     setScrubIndex(null);
@@ -135,6 +154,19 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     return ['all', ...ACCOUNT_GROUPS.map((group) => group.key).filter((key) => present.has(key))];
   }, [accountList]);
   const activeGroup: ChartGroup = groupOptions.includes(chartGroup) ? chartGroup : 'all';
+  const allPoints = data?.points;
+  const allMarkers = data?.coverageMarkers;
+  const chartPoints = useMemo(() => {
+    if (!allPoints) return [];
+    return activeGroup === 'all' ? allPoints : groupChartPoints(allPoints, activeGroup);
+  }, [activeGroup, allPoints]);
+  const chartMarkers = useMemo(() => {
+    const from = chartPoints[0]?.asOf;
+    if (!allMarkers || from == null) return [];
+    return allMarkers.filter(
+      (marker) => marker.asOf > from && (activeGroup === 'all' || groupKeyForClass(marker.class) === activeGroup),
+    );
+  }, [activeGroup, allMarkers, chartPoints]);
 
   const selectGroupFromList = (key: AccountGroupKey | null) => {
     setChartGroup(key ?? 'all');
@@ -174,6 +206,12 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   }
 
   const usingDemo = demo && !hasLive;
+  const heroScrub = activeGroup === 'all' ? scrubIndex : groupScrub;
+  const rangeChange = (chartPoints.at(-1)?.total ?? 0) - (chartPoints[0]?.total ?? 0);
+  const lineColor =
+    activeGroup !== 'all'
+      ? colors.groups[activeGroup]
+      : { positive: palette.positive, negative: palette.negative, muted: palette.accent }[changeTone(rangeChange)];
 
   return (
     <View style={[styles.flex, { backgroundColor: palette.page }]}>
@@ -188,6 +226,9 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                 Personal finances
               </FText>
               <FText variant="title">Net worth</FText>
+              <FText variant="caption" tone="subtle">
+                As of {formatCoverageDate(data.asOf)}
+              </FText>
             </View>
 
             {usingDemo ? (
@@ -198,68 +239,54 @@ function NetWorthPage({ demo }: { demo: boolean }) {
               </View>
             ) : null}
 
-            <Card>
-              <View style={styles.heroTop}>
-                <View style={styles.heroValue}>
-                  <FText variant="display" style={TABULAR}>
-                    {formatUsd(data.headline)}
-                  </FText>
-                  <DeltaBadge amount={data.change} pct={data.changePct} suffix={RANGE_SUFFIX[range]} />
-                </View>
-                <FText variant="caption" tone="subtle">
-                  As of {formatCoverageDate(data.asOf)}
-                </FText>
-              </View>
-              <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
-                <Stat label="Assets" value={formatUsd(data.assets)} />
-                <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
-                <Stat label="Loans" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
-              </View>
-            </Card>
-
             <View onLayout={(event) => (chartY.current = event.nativeEvent.layout.y)}>
-              <Card>
-                <View style={styles.toolbar}>
-                  <RangePills value={range} onChange={setRange} />
-                  {allowed && activeGroup !== 'liability' ? (
-                    <TogglePill
-                      label={BENCHMARKS.SPX.label}
-                      value={showBenchmark}
-                      onChange={setShowBenchmark}
-                      color={BENCHMARKS.SPX.color}
-                    />
-                  ) : null}
-                </View>
-                {groupOptions.length > 2 ? (
-                  <View style={styles.groupPicker}>
-                    <Segmented
-                      options={groupOptions}
-                      value={activeGroup}
-                      onChange={setChartGroup}
-                      labels={GROUP_PICKER_LABELS}
-                      accessibilityLabel="Chart group"
-                    />
+              <Card style={styles.heroCard}>
+                <HeroValue
+                  label={activeGroup === 'all' ? undefined : heroLabel(activeGroup)}
+                  points={chartPoints}
+                  scrubIndex={heroScrub}
+                  fallback={data.headline}
+                  suffix={RANGE_SUFFIX[range]}
+                  invert={activeGroup === 'liability'}
+                />
+                <ChartBlock
+                  points={chartPoints}
+                  markers={chartMarkers}
+                  scrubIndex={heroScrub}
+                  onScrub={activeGroup === 'all' ? setScrubIndex : setGroupScrub}
+                  showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
+                  seriesLabel={heroLabel(activeGroup)}
+                  color={lineColor}
+                  height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
+                />
+                <RangePills value={range} onChange={setRange} stretch />
+                {groupOptions.length > 2 || (allowed && activeGroup !== 'liability') ? (
+                  <View style={styles.toolbar}>
+                    {groupOptions.length > 2 ? (
+                      <Segmented
+                        options={groupOptions}
+                        value={activeGroup}
+                        onChange={setChartGroup}
+                        labels={GROUP_PICKER_LABELS}
+                        accessibilityLabel="Chart group"
+                      />
+                    ) : null}
+                    {allowed && activeGroup !== 'liability' ? (
+                      <TogglePill
+                        label={BENCHMARKS.SPX.label}
+                        value={showBenchmark}
+                        onChange={setShowBenchmark}
+                        color={colors.benchmark}
+                      />
+                    ) : null}
                   </View>
                 ) : null}
-                {activeGroup === 'all' ? (
-                  <ChartBlock
-                    points={data.points}
-                    markers={data.coverageMarkers}
-                    scrubIndex={scrubIndex}
-                    onScrub={setScrubIndex}
-                    showBenchmark={Boolean(allowed && showBenchmark)}
-                  />
-                ) : (
-                  <GroupChart
-                    group={activeGroup}
-                    points={data.points}
-                    markers={data.coverageMarkers}
-                    scrubIndex={groupScrub}
-                    onScrub={setGroupScrub}
-                    showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
-                    rangeSuffix={RANGE_SUFFIX[range]}
-                  />
-                )}
+                <CoverageMarkerNotes markers={chartMarkers} />
+                <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
+                  <Stat label="Assets" value={formatUsd(data.assets)} />
+                  <View style={[styles.statDivider, { backgroundColor: palette.hairline }]} />
+                  <Stat label="Loans" value={formatUsd(data.liabilities)} negative={data.liabilities < 0} />
+                </View>
               </Card>
             </View>
 
@@ -276,7 +303,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
             <View style={styles.section}>
               <SectionHeader
                 title="Accounts"
-                subtitle={`Trend lines show the ${RANGE_LABEL[range]}. Tap a group to chart it, or an account for details.`}
+                subtitle={`Trend lines show the ${RANGE_LABEL[sparkRange]}. Tap a group to chart it, or an account for details.`}
                 right={
                   accountList ? (
                     <FText variant="headline" style={TABULAR}>
@@ -333,60 +360,8 @@ const GROUP_PICKER_LABELS: Record<ChartGroup, string> = {
   other: 'Other',
 };
 
-function GroupChart({
-  group,
-  points,
-  markers,
-  scrubIndex,
-  onScrub,
-  showBenchmark,
-  rangeSuffix,
-}: {
-  group: AccountGroupKey;
-  points: ChartPoint[];
-  markers: CoverageMarker[];
-  scrubIndex: number | null;
-  onScrub: (index: number | null) => void;
-  showBenchmark: boolean;
-  rangeSuffix: string;
-}) {
-  const filtered = useMemo(() => groupChartPoints(points, group), [group, points]);
-  const groupMarkers = useMemo(() => {
-    const from = filtered[0]?.asOf;
-    return markers.filter(
-      (marker) => groupKeyForClass(marker.class) === group && from != null && marker.asOf > from,
-    );
-  }, [filtered, group, markers]);
-  const first = filtered[0]?.total;
-  const last = filtered.at(-1)?.total;
-  const change = first != null && last != null ? last - first : 0;
-  const pct = first != null && last != null && Math.abs(first) >= 0.005 ? change / Math.abs(first) : null;
-  const tone = Math.abs(change) < 0.005 ? 'flat' : (change > 0) !== (group === 'liability') ? 'good' : 'bad';
-  const label = group === 'liability' ? 'Owed on loans' : GROUP_PICKER_LABELS[group];
-  return (
-    <View style={styles.groupChart}>
-      <View style={styles.groupSummary}>
-        <FText variant="caption" tone="muted">
-          {label}
-        </FText>
-        <View style={styles.groupSummaryRow}>
-          <FText variant="headline" style={TABULAR}>
-            {last != null ? formatUsd(last) : '—'}
-          </FText>
-          <DeltaBadge amount={change} pct={pct} suffix={rangeSuffix} tone={tone} />
-        </View>
-      </View>
-      <ChartBlock
-        points={filtered}
-        markers={groupMarkers}
-        scrubIndex={scrubIndex}
-        onScrub={onScrub}
-        showBenchmark={showBenchmark}
-        seriesLabel={label}
-        color={GROUP_COLORS[group]}
-      />
-    </View>
-  );
+function heroLabel(group: ChartGroup): string {
+  return group === 'all' ? 'Net worth' : group === 'liability' ? 'Owed on loans' : GROUP_PICKER_LABELS[group];
 }
 
 function ChartBlock({
@@ -397,6 +372,7 @@ function ChartBlock({
   showBenchmark,
   seriesLabel,
   color,
+  height,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -405,6 +381,7 @@ function ChartBlock({
   showBenchmark: boolean;
   seriesLabel?: string;
   color?: string;
+  height?: number;
 }) {
   const chart = (benchmark?: BenchmarkLine) => (
     <NetWorthChart
@@ -415,6 +392,9 @@ function ChartBlock({
       benchmark={benchmark}
       seriesLabel={seriesLabel}
       color={color}
+      height={height}
+      headline
+      showMarkerNotes={false}
     />
   );
   if (!showBenchmark) return chart();
@@ -439,6 +419,7 @@ function LiveBenchmarkChart({
     from && to ? { symbol: DEFAULT_BENCHMARK, from, to } : 'skip',
   );
   const ensureMarket = useAction(api.finance.market.ensure);
+  const benchmarkColor = useChartColors().benchmark;
 
   useEffect(() => {
     if (market === undefined) return;
@@ -458,8 +439,8 @@ function LiveBenchmarkChart({
       market.bars,
     );
     if (values.every((value) => value == null)) return undefined;
-    return { label: market.label, color: market.color, values };
-  }, [market, points]);
+    return { label: market.label, color: benchmarkColor, values };
+  }, [benchmarkColor, market, points]);
 
   return (
     <>
@@ -494,8 +475,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 56 },
   column: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, alignSelf: 'center', gap: 16 },
   header: { gap: 2, paddingHorizontal: 4 },
-  heroTop: { gap: 6 },
-  heroValue: { gap: 8 },
+  heroCard: { gap: 16 },
   stats: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -512,10 +492,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   section: { gap: 12 },
-  groupPicker: { marginTop: 10, alignItems: 'flex-start' },
-  groupChart: { gap: 10, marginTop: 4 },
-  groupSummary: { gap: 2, marginTop: 8 },
-  groupSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 4 },
   footnote: { textAlign: 'center', paddingHorizontal: 12 },
   demoBanner: {
     backgroundColor: '#FFF4D6',

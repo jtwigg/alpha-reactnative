@@ -3,10 +3,12 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, FText, useFinancePalette } from '@/components/finance/ui';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { CLASS_COLORS, FINANCE_COVERAGE, formatCoverageDate } from '@/lib/finance-coverage';
+import { useChartColors } from '@/lib/finance-colors';
+import { FINANCE_COVERAGE, formatCoverageDate } from '@/lib/finance-coverage';
 
 export function CoverageLegend() {
   const palette = useFinancePalette();
+  const colors = useChartColors();
   const [open, setOpen] = useState(false);
   return (
     <Card padded={false}>
@@ -36,17 +38,17 @@ export function CoverageLegend() {
             mortgage) can extend history further back than a provider feed.
           </FText>
           <CoverageRow
-            color={CLASS_COLORS.real_estate}
+            color={colors.groups.real_estate}
             title="Home & loans"
             detail="Manual snapshots. History can start years before the provider feed."
           />
           <CoverageRow
-            color={CLASS_COLORS.cash}
+            color={colors.groups.cash}
             title="Cash & credit"
             detail={`Provider coverage from ${formatCoverageDate(FINANCE_COVERAGE.cash.start)}.`}
           />
           <CoverageRow
-            color={CLASS_COLORS.investments}
+            color={colors.groups.investments}
             title="Investments"
             detail={`Most accounts from ${formatCoverageDate(FINANCE_COVERAGE.investments.start)}; some from ${formatCoverageDate(FINANCE_COVERAGE.investments.lateStart)}.`}
           />

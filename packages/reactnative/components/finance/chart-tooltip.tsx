@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { TABULAR, useFinancePalette } from '@/components/finance/ui';
-import { classColor, classLabel, formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
+import { classLabel, formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 
 export type TooltipRow = {
   /** Series key, for legend highlight / hide. */
@@ -32,7 +32,7 @@ export function ChartTooltip({
       accessibilityLabel={`Values on ${date}`}
       style={[
         styles.card,
-        { backgroundColor: palette.tooltip, borderColor: palette.border, shadowColor: palette.shadow },
+        { backgroundColor: palette.tooltip, borderColor: palette.border, shadowColor: palette.tooltipShadow },
         style,
       ]}>
       <Text style={[styles.date, { color: palette.muted }]}>{formatCoverageDate(date)}</Text>
@@ -79,32 +79,32 @@ export function moneyAndPct(value: number, start: number): Pick<TooltipRow, 'val
   return { value: formatUsd(value), detail: formatPct(pct) };
 }
 
-export function classRows(byClass: Record<string, number>): TooltipRow[] {
+export function classRows(byClass: Record<string, number>, colorFor: (className: string) => string): TooltipRow[] {
   return Object.entries(byClass)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([className, amount]) => ({
       key: className,
       label: classLabel(className),
       value: formatUsd(amount),
-      color: classColor(className),
+      color: colorFor(className),
     }));
 }
 
 const styles = StyleSheet.create({
   card: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    gap: 5,
+    paddingVertical: 10,
+    gap: 6,
     minWidth: 190,
     maxWidth: 280,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 1,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowRadius: 20,
+    elevation: 6,
   },
-  date: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
+  date: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowFocused: { marginHorizontal: -6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   rowFaded: { opacity: 0.45 },

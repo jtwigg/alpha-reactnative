@@ -35,7 +35,7 @@ export function formatCompactUsd(amount: number): string {
   const sign = amount < 0 ? '−' : '';
   const abs = Math.abs(amount);
   const fmt = (value: number, unit: string) => {
-    const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+    const digits = value >= 100 ? 0 : 1;
     return `${sign}$${Number(value.toFixed(digits))}${unit}`;
   };
   if (abs >= 1e9) return fmt(abs / 1e9, 'B');
@@ -62,7 +62,7 @@ export function spanInDays(from: string, to: string): number {
 export type Segment = { x1: number; y1: number; x2: number; y2: number; dashed: boolean };
 
 export function buildSegments(
-  values: Array<number | null>,
+  values: (number | null)[],
   x: (index: number) => number,
   y: (value: number) => number,
   gaps?: boolean[],
@@ -97,9 +97,134 @@ export function segmentsToPath(segments: Segment[]): string {
   return d;
 }
 
+/** One cubic Bézier piece between two adjacent known points. */
+export type Curve = {
+  x1: number;
+  y1: number;
+  cx1: number;
+  cy1: number;
+  cx2: number;
+  cy2: number;
+  x2: number;
+  y2: number;
+  dashed: boolean;
+};
+
+const sign = (value: number) => (value < 0 ? -1 : value > 0 ? 1 : 0);
+
+/**
+ * Monotone cubic interpolation (Steffen). Tangents are limited so a curve
+ * never overshoots its neighbours: no fake peaks, no dips below a flat run.
+ * Tangents are computed per contiguous run, so null gaps stay gaps.
+ */
+export function buildCurves(
+  values: (number | null)[],
+  x: (index: number) => number,
+  y: (value: number) => number,
+  gaps?: boolean[],
+  dashed = false,
+): Curve[] {
+  const out: Curve[] = [];
+  let i = 0;
+  while (i < values.length) {
+    if (values[i] == null) {
+      i += 1;
+      continue;
+    }
+    const run: number[] = [];
+    while (i < values.length && values[i] != null) run.push(i++);
+    if (run.length < 2) continue;
+    const px = run.map((index) => x(index));
+    const py = run.map((index) => y(values[index] as number));
+    const n = run.length;
+    const h = (k: number) => px[k + 1] - px[k];
+    const secant = (k: number) => (h(k) === 0 ? 0 : (py[k + 1] - py[k]) / h(k));
+    const tangents = new Array<number>(n).fill(0);
+    for (let k = 1; k < n - 1; k += 1) {
+      const s0 = secant(k - 1);
+      const s1 = secant(k);
+      const h0 = h(k - 1);
+      const h1 = h(k);
+      const p = (s0 * h1 + s1 * h0) / (h0 + h1 || 1);
+      tangents[k] = (sign(s0) + sign(s1)) * Math.min(Math.abs(s0), Math.abs(s1), 0.5 * Math.abs(p)) || 0;
+    }
+    if (n === 2) {
+      tangents[0] = tangents[1] = secant(0);
+    } else {
+      tangents[0] = (3 * secant(0) - tangents[1]) / 2;
+      tangents[n - 1] = (3 * secant(n - 2) - tangents[n - 2]) / 2;
+      // Endpoint tangents must not reverse the first/last secant.
+      if (sign(tangents[0]) !== sign(secant(0))) tangents[0] = 0;
+      if (sign(tangents[n - 1]) !== sign(secant(n - 2))) tangents[n - 1] = 0;
+    }
+    for (let k = 0; k < n - 1; k += 1) {
+      const third = h(k) / 3;
+      out.push({
+        x1: px[k],
+        y1: py[k],
+        cx1: px[k] + third,
+        cy1: py[k] + tangents[k] * third,
+        cx2: px[k + 1] - third,
+        cy2: py[k + 1] - tangents[k + 1] * third,
+        x2: px[k + 1],
+        y2: py[k + 1],
+        dashed: dashed || Boolean(gaps?.[run[k]] || gaps?.[run[k + 1]]),
+      });
+    }
+  }
+  return out;
+}
+
+const f1 = (value: number) => value.toFixed(1);
+
+export function curvesToPath(curves: Curve[]): string {
+  let d = '';
+  let last: Curve | null = null;
+  for (const c of curves) {
+    if (!last || last.x2 !== c.x1 || last.y2 !== c.y1) d += `M${f1(c.x1)},${f1(c.y1)}`;
+    d += `C${f1(c.cx1)},${f1(c.cy1)} ${f1(c.cx2)},${f1(c.cy2)} ${f1(c.x2)},${f1(c.y2)}`;
+    last = c;
+  }
+  return d;
+}
+
+/** Closed area under the curves down to `baseline`; gaps are bridged straight. */
+export function curveAreaPath(curves: Curve[], baseline: number): string {
+  if (curves.length === 0) return '';
+  let d = `M${f1(curves[0].x1)},${f1(baseline)}L${f1(curves[0].x1)},${f1(curves[0].y1)}`;
+  let last = curves[0];
+  for (const c of curves) {
+    if (last !== c && (last.x2 !== c.x1 || last.y2 !== c.y1)) d += `L${f1(c.x1)},${f1(c.y1)}`;
+    d += `C${f1(c.cx1)},${f1(c.cy1)} ${f1(c.cx2)},${f1(c.cy2)} ${f1(c.x2)},${f1(c.y2)}`;
+    last = c;
+  }
+  return `${d}L${f1(last.x2)},${f1(baseline)}Z`;
+}
+
+/** Flattens curves into short straight segments for platforms without paths. */
+export function sampleCurves(curves: Curve[], maxSegments = 480): Segment[] {
+  if (curves.length === 0) return [];
+  const steps = Math.max(1, Math.min(8, Math.floor(maxSegments / curves.length)));
+  const out: Segment[] = [];
+  for (const c of curves) {
+    let px = c.x1;
+    let py = c.y1;
+    for (let s = 1; s <= steps; s += 1) {
+      const t = s / steps;
+      const u = 1 - t;
+      const nx = u * u * u * c.x1 + 3 * u * u * t * c.cx1 + 3 * u * t * t * c.cx2 + t * t * t * c.x2;
+      const ny = u * u * u * c.y1 + 3 * u * u * t * c.cy1 + 3 * u * t * t * c.cy2 + t * t * t * c.y2;
+      out.push({ x1: px, y1: py, x2: nx, y2: ny, dashed: c.dashed });
+      px = nx;
+      py = ny;
+    }
+  }
+  return out;
+}
+
 /** Closed area under the longest contiguous run, for a gradient fill. */
 export function areaPath(
-  values: Array<number | null>,
+  values: (number | null)[],
   x: (index: number) => number,
   y: (value: number) => number,
   baseline: number,
