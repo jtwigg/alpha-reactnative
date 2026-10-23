@@ -1,12 +1,23 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
+import { LegendChip } from '@/components/finance/legend-chip';
 import { FText, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { axisDateLabel, formatCompactUsd, niceTicks, spanInDays } from '@/lib/chart-math';
 import { formatCoverageDate, formatUsd } from '@/lib/finance-coverage';
-import { loanShare, normalizeStack, type StackMode, type StackModel, type StackSeries } from '@/lib/stack-math';
+import { useSeriesHighlight, type SeriesHighlight } from '@/hooks/use-series-highlight';
+import { seriesOpacity } from '@/lib/series-highlight';
+import {
+  loanShare,
+  normalizeStack,
+  seriesAtValue,
+  withoutSeries,
+  type StackMode,
+  type StackModel,
+  type StackSeries,
+} from '@/lib/stack-math';
 
 const PAD = { top: 8, right: 58, bottom: 26, left: 2 };
 const TOOLTIP_MAX_ROWS = 6;
@@ -16,6 +27,7 @@ const LOANS_COLOR = '#c2410c';
 type Geometry = {
   ticks: number[];
   y: (value: number) => number;
+  fromY: (y: number) => number;
   slot: number;
   barWidth: number;
   center: (index: number) => number;
@@ -54,8 +66,16 @@ export function StackedChart({
   const [width, setWidth] = useState(0);
   const count = dates.length;
   const normalized = mode === 'normalized';
+  const highlight = useSeriesHighlight();
+  const seriesSignature = model.series.map((s) => s.key).join('|');
+  const { reset } = highlight;
+  useEffect(() => reset(), [reset, seriesSignature]);
+  const active = highlight.active;
+  const full = model;
+  model = useMemo(() => withoutSeries(full, highlight.hidden), [full, highlight.hidden]);
   const display = useMemo(() => (normalized ? normalizeStack(model) : model), [model, normalized]);
   const loans = model.series.filter((s) => s.group === 'liability');
+  const activeIsLoan = full.series.some((s) => s.key === active && s.group === 'liability');
 
   const geometry = useMemo<Geometry | null>(() => {
     if (width <= 0 || count === 0) return null;
@@ -76,13 +96,14 @@ export function StackedChart({
     return {
       ticks,
       y: (value: number) => PAD.top + (1 - (value - y0) / (y1 - y0 || 1)) * innerH,
+      fromY: (y: number) => y0 + (1 - (y - PAD.top) / innerH) * (y1 - y0),
       slot,
       barWidth,
       center: (index: number) => PAD.left + slot * (index + 0.5),
     };
   }, [count, display.negative, display.positive, height, normalized, width]);
 
-  const active = scrubIndex ?? (count > 0 ? count - 1 : null);
+  const dateIndex = scrubIndex ?? (count > 0 ? count - 1 : null);
   const span = count > 1 ? spanInDays(dates[0], dates[count - 1]) : 0;
   const xLabels =
     count > 1 ? [0, Math.round((count - 1) / 2), count - 1].filter((v, i, a) => a.indexOf(v) === i) : [];
@@ -92,14 +113,27 @@ export function StackedChart({
     [model.series],
   );
 
+  const onTap = (index: number, tapY: number) => {
+    if (!geometry || !display.covered[index]) {
+      highlight.clear();
+      return;
+    }
+    const key = seriesAtValue(display, index, geometry.fromY(tapY));
+    if (key) highlight.toggle(key);
+    else highlight.clear();
+  };
+
   const tooltipRows = (index: number): TooltipRow[] => {
     const gross = model.positive[index];
     const share = (value: number) => formatShare(gross > 0 ? Math.abs(value) / gross : null);
     const row = (s: StackSeries): TooltipRow =>
       normalized
-        ? { label: s.label, color: s.color, value: share(s.values[index]), detail: formatUsd(Math.abs(s.values[index])) }
-        : { label: s.label, color: s.color, value: formatUsd(s.values[index]), detail: share(s.values[index]) };
-    const assetRows = assetsTopFirst.filter((s) => s.values[index] !== 0).map(row);
+        ? { key: s.key, label: s.label, color: s.color, value: share(s.values[index]), detail: formatUsd(Math.abs(s.values[index])) }
+        : { key: s.key, label: s.label, color: s.color, value: formatUsd(s.values[index]), detail: share(s.values[index]) };
+    const assetRows = assetsTopFirst
+      .filter((s) => s.values[index] !== 0)
+      .map(row)
+      .sort((a, b) => Number(b.key === active) - Number(a.key === active));
     const rows: TooltipRow[] = [
       normalized
         ? { label: 'Gross assets', value: formatUsd(gross), emphasis: true }
@@ -112,6 +146,7 @@ export function StackedChart({
     const owed = -model.negative[index];
     if (loans.length > 0 && owed > 0) {
       rows.push({
+        key: activeIsLoan && active ? active : '__loans',
         label: normalized ? 'Loans (of gross)' : 'Loans',
         color: LOANS_COLOR,
         value: normalized ? formatShare(loanShare(model, index)) : formatUsd(-owed),
@@ -130,7 +165,8 @@ export function StackedChart({
       padRight={PAD.right + (geometry?.slot ?? 0) / 2}
       height={height}
       onScrub={onScrub}
-      onWidth={setWidth}>
+      onWidth={setWidth}
+      onTap={onTap}>
       {geometry ? (
         <>
           {geometry.ticks.map((tick) => (
@@ -165,7 +201,7 @@ export function StackedChart({
               ]}
             />
           ) : null}
-          <Bars model={display} geometry={geometry} />
+          <Bars model={display} geometry={geometry} active={active} />
           {hairX != null && !normalized ? (
             <View
               style={[
@@ -199,6 +235,7 @@ export function StackedChart({
             <ChartTooltip
               date={dates[scrubIndex!]}
               rows={tooltipRows(scrubIndex!)}
+              highlightKey={active}
               style={[
                 styles.tooltip,
                 hairX > width / 2 ? { right: width - hairX + 12 } : { left: hairX + 12 },
@@ -212,12 +249,12 @@ export function StackedChart({
   );
 
   const legend =
-    active != null ? (
+    dateIndex != null ? (
       <StackLegend
         model={model}
-        assetsTopFirst={assetsTopFirst}
-        loans={loans}
-        index={active}
+        full={full}
+        highlight={highlight}
+        index={dateIndex}
         normalized={normalized}
         side={sideLegend}
       />
@@ -225,24 +262,24 @@ export function StackedChart({
 
   return (
     <View style={styles.wrap}>
-      {active != null ? (
+      {dateIndex != null ? (
         <View style={styles.head}>
           <FText variant="caption" tone={scrubIndex != null ? 'text' : 'muted'} style={styles.headDate}>
-            {formatCoverageDate(dates[active])}
+            {formatCoverageDate(dates[dateIndex])}
           </FText>
           <FText variant="caption" tone="muted">
             {normalized ? 'Gross assets' : netLabel}{' '}
             <Text style={[styles.headValue, TABULAR, { color: palette.text }]}>
-              {model.covered[active]
-                ? formatUsd(normalized ? model.positive[active] : model.net[active])
+              {model.covered[dateIndex]
+                ? formatUsd(normalized ? model.positive[dateIndex] : model.net[dateIndex])
                 : '—'}
             </Text>
           </FText>
-          {normalized && loans.length > 0 && model.covered[active] ? (
+          {normalized && loans.length > 0 && model.covered[dateIndex] ? (
             <FText variant="caption" tone="muted">
               Loans{' '}
               <Text style={[styles.headValue, TABULAR, { color: palette.negative }]}>
-                {formatShare(loanShare(model, active))}
+                {formatShare(loanShare(model, dateIndex))}
               </Text>{' '}
               of gross assets
             </FText>
@@ -264,7 +301,15 @@ export function StackedChart({
   );
 }
 
-const Bars = memo(function Bars({ model, geometry }: { model: StackModel; geometry: Geometry }) {
+const Bars = memo(function Bars({
+  model,
+  geometry,
+  active,
+}: {
+  model: StackModel;
+  geometry: Geometry;
+  active: string | null;
+}) {
   const views: React.ReactElement[] = [];
   const count = model.positive.length;
   for (let i = 0; i < count; i += 1) {
@@ -291,6 +336,7 @@ const Bars = memo(function Bars({ model, geometry }: { model: StackModel; geomet
             top,
             height: Math.max(bottom - top, 0.5),
             backgroundColor: series.color,
+            opacity: seriesOpacity(series.key, active),
           }}
         />,
       );
@@ -302,15 +348,17 @@ const Bars = memo(function Bars({ model, geometry }: { model: StackModel; geomet
 /** Top-first so the order matches the bars; values follow the active date. */
 function StackLegend({
   model,
-  assetsTopFirst,
-  loans,
+  full,
+  highlight,
   index,
   normalized,
   side,
 }: {
+  /** Visible series only; used for totals and shares. */
   model: StackModel;
-  assetsTopFirst: StackSeries[];
-  loans: StackSeries[];
+  /** Includes hidden series so they can be shown again. */
+  full: StackModel;
+  highlight: SeriesHighlight;
   index: number;
   normalized: boolean;
   side: boolean;
@@ -318,36 +366,49 @@ function StackLegend({
   const palette = useFinancePalette();
   const gross = model.positive[index];
   const covered = model.covered[index];
+  const assets = full.series.filter((s) => s.group !== 'liability').reverse();
+  const loans = full.series.filter((s) => s.group === 'liability');
   const item = (s: StackSeries, isLoan: boolean) => {
     const dollars = s.values[index];
+    const hidden = highlight.hidden.has(s.key);
+    const focused = highlight.active === s.key;
     const share = formatShare(gross > 0 ? Math.abs(dollars) / gross : null);
-    const primary = !covered || dollars === 0 ? '—' : normalized ? share : formatCompactUsd(dollars);
-    const secondary = !covered || dollars === 0 ? '' : normalized ? formatCompactUsd(Math.abs(dollars)) : share;
+    const empty = !covered || dollars === 0;
+    const primary = empty ? '—' : normalized ? share : formatCompactUsd(dollars);
+    const secondary = empty || hidden ? '' : normalized ? formatCompactUsd(Math.abs(dollars)) : share;
     return (
-      <View key={s.key} style={[styles.legendItem, side && styles.legendItemSide]}>
-        <View
-          style={[
-            styles.swatch,
-            isLoan && normalized
-              ? { backgroundColor: 'transparent', borderWidth: 2, borderColor: s.color }
-              : { backgroundColor: s.color },
-          ]}
-        />
-        <FText variant="caption" tone="muted" numberOfLines={1} style={styles.legendLabel}>
-          {s.label}
-        </FText>
-        <Text style={[styles.legendValue, TABULAR, { color: isLoan ? palette.negative : palette.text }]}>
-          {primary}
-        </Text>
-        {secondary ? (
-          <Text style={[styles.legendSecondary, TABULAR, { color: palette.subtle }]}>{secondary}</Text>
-        ) : null}
-      </View>
+      <LegendChip
+        key={s.key}
+        seriesKey={s.key}
+        label={s.label}
+        color={s.color}
+        highlight={highlight}
+        swatch={isLoan && normalized ? 'hollow' : 'square'}
+        style={side ? styles.legendItemSide : styles.legendItem}
+        right={
+          <>
+            <Text
+              style={[
+                styles.legendValue,
+                TABULAR,
+                { color: isLoan ? palette.negative : palette.text },
+                focused && styles.legendValueFocused,
+              ]}>
+              {primary}
+            </Text>
+            {secondary ? (
+              <Text style={[styles.legendSecondary, TABULAR, { color: focused ? palette.muted : palette.subtle }]}>
+                {secondary}
+              </Text>
+            ) : null}
+          </>
+        }
+      />
     );
   };
   return (
     <View style={side ? [styles.legendSide, { borderLeftColor: palette.hairline }] : styles.legendBelow}>
-      {assetsTopFirst.map((s) => item(s, false))}
+      {assets.map((s) => item(s, false))}
       {loans.length > 0 ? (
         <>
           {side ? <View style={[styles.legendDivider, { backgroundColor: palette.hairline }]} /> : null}
@@ -358,6 +419,11 @@ function StackLegend({
           ) : null}
           {loans.map((s) => item(s, true))}
         </>
+      ) : null}
+      {side ? (
+        <FText variant="caption" tone="subtle" style={styles.legendHint}>
+          Tap to highlight · long-press to hide
+        </FText>
       ) : null}
     </View>
   );
@@ -378,10 +444,11 @@ const styles = StyleSheet.create({
   tooltip: { position: 'absolute', top: 4 },
   legendBelow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 4 },
   legendSide: { width: 230, gap: 6, paddingLeft: 14, borderLeftWidth: StyleSheet.hairlineWidth, paddingTop: 4 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 240 },
-  legendItemSide: { maxWidth: undefined },
-  legendLabel: { flexShrink: 1, flexGrow: 1 },
-  legendValue: { fontSize: 12, fontWeight: '600' },
+  legendItem: { maxWidth: 240, marginHorizontal: 0 },
+  legendItemSide: { marginHorizontal: -6 },
+  legendValue: { fontSize: 12, fontWeight: '600', marginLeft: 'auto' },
+  legendValueFocused: { fontWeight: '800', fontSize: 13 },
+  legendHint: { fontSize: 10, marginTop: 4 },
   legendSecondary: { fontSize: 11, minWidth: 36, textAlign: 'right' },
   legendDivider: { height: StyleSheet.hairlineWidth, marginVertical: 2 },
   legendNote: { fontSize: 10 },

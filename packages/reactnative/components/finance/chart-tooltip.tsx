@@ -4,6 +4,8 @@ import { TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { classColor, classLabel, formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 
 export type TooltipRow = {
+  /** Series key, for legend highlight / hide. */
+  key?: string;
   label: string;
   value: string;
   detail?: string;
@@ -15,10 +17,13 @@ export function ChartTooltip({
   date,
   rows,
   style,
+  highlightKey = null,
 }: {
   date: string;
   rows: TooltipRow[];
   style?: StyleProp<ViewStyle>;
+  /** Emphasizes the matching row and fades the rest. */
+  highlightKey?: string | null;
 }) {
   const palette = useFinancePalette();
   return (
@@ -31,14 +36,19 @@ export function ChartTooltip({
         style,
       ]}>
       <Text style={[styles.date, { color: palette.muted }]}>{formatCoverageDate(date)}</Text>
-      {rows.map((row) => (
-        <View key={row.label} style={styles.row}>
+      {rows.map((row) => {
+        const focused = highlightKey != null && row.key === highlightKey;
+        const faded = highlightKey != null && row.key != null && !focused;
+        return (
+        <View
+          key={row.key ?? row.label}
+          style={[styles.row, focused && [styles.rowFocused, { backgroundColor: palette.chip }], faded && styles.rowFaded]}>
           {row.color ? <View style={[styles.dot, { backgroundColor: row.color }]} /> : null}
           <Text style={[styles.label, { color: palette.muted }]} numberOfLines={1}>
             {row.label}
           </Text>
           <Text
-            style={[styles.value, { color: palette.text }, row.emphasis && styles.emphasis]}
+            style={[styles.value, { color: palette.text }, (row.emphasis || focused) && styles.emphasis]}
             numberOfLines={1}>
             {row.value}
           </Text>
@@ -58,7 +68,8 @@ export function ChartTooltip({
             </Text>
           ) : null}
         </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -72,6 +83,7 @@ export function classRows(byClass: Record<string, number>): TooltipRow[] {
   return Object.entries(byClass)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([className, amount]) => ({
+      key: className,
       label: classLabel(className),
       value: formatUsd(amount),
       color: classColor(className),
@@ -94,6 +106,8 @@ const styles = StyleSheet.create({
   },
   date: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowFocused: { marginHorizontal: -6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  rowFaded: { opacity: 0.45 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   label: { flex: 1, fontSize: 12 },
   value: { fontSize: 13, fontWeight: '600', ...TABULAR },

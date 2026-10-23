@@ -3,7 +3,9 @@ import { StyleSheet, View } from 'react-native';
 
 import { moneyAndPct, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
+import { LegendChip } from '@/components/finance/legend-chip';
 import { FText, LegendItem, useFinancePalette } from '@/components/finance/ui';
+import { useSeriesHighlight } from '@/hooks/use-series-highlight';
 import { classColor, classLabel, formatCoverageDate } from '@/lib/finance-coverage';
 import type { ChartPoint, CoverageMarker } from '../../../server/convex/finance/series';
 
@@ -34,6 +36,7 @@ export function NetWorthChart({
 }) {
   const palette = useFinancePalette();
   const lineColor = color ?? palette.accent;
+  const highlight = useSeriesHighlight();
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
   const series = useMemo<ChartSeries[]>(() => {
     const out: ChartSeries[] = [
@@ -73,12 +76,12 @@ export function NetWorthChart({
   const tooltipRows = (index: number): TooltipRow[] => {
     const point = points[index];
     const rows: TooltipRow[] = [
-      { label: seriesLabel, color: lineColor, emphasis: true, ...moneyAndPct(point.total, first.total) },
+      { key: 'primary', label: seriesLabel, color: lineColor, emphasis: true, ...moneyAndPct(point.total, first.total) },
     ];
     const benchValue = benchmark?.values[index];
     const benchStart = benchmark?.values.find((value) => value != null);
     if (benchmark && benchValue != null && benchStart != null) {
-      rows.push({ label: benchmark.label, color: benchmark.color, ...moneyAndPct(benchValue, benchStart) });
+      rows.push({ key: 'benchmark', label: benchmark.label, color: benchmark.color, ...moneyAndPct(benchValue, benchStart) });
     }
     return rows;
   };
@@ -92,11 +95,20 @@ export function NetWorthChart({
         onScrub={onScrub}
         tooltipRows={tooltipRows}
         markers={markers.map((marker) => ({ asOf: marker.asOf, color: classColor(marker.class) }))}
+        highlight={highlight}
       />
       <View style={styles.legend}>
-        <LegendItem color={lineColor} label={seriesLabel} />
+        <LegendChip seriesKey="primary" label={seriesLabel} color={lineColor} highlight={highlight} />
+        {benchmark ? (
+          <LegendChip
+            seriesKey="benchmark"
+            label={`${benchmark.label} (rebased)`}
+            color={benchmark.color}
+            swatch="dashed"
+            highlight={highlight}
+          />
+        ) : null}
         {hasGaps ? <LegendItem color={lineColor} dashed label="Interpolated" /> : null}
-        {benchmark ? <LegendItem color={benchmark.color} dashed label={`${benchmark.label} (rebased)`} /> : null}
       </View>
       {showMarkerNotes && markers.length > 0 ? (
         <View style={styles.markers}>

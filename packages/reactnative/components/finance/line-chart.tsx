@@ -4,6 +4,8 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 import { ChartTooltip, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { ChartTouch } from '@/components/finance/chart-touch';
 import { TABULAR, useFinancePalette } from '@/components/finance/ui';
+import type { SeriesHighlight } from '@/hooks/use-series-highlight';
+import { seriesOpacity } from '@/lib/series-highlight';
 import {
   areaPath,
   axisDateLabel,
@@ -30,6 +32,7 @@ export type ChartSeries = {
 export type ChartMarker = { asOf: string; color: string };
 
 const PAD = { top: 14, right: 58, bottom: 26, left: 2 };
+const TAP_HIT_PX = 24;
 
 export function LineChart({
   dates,
@@ -40,6 +43,7 @@ export function LineChart({
   height = 220,
   includeZero = false,
   markers = [],
+  highlight,
 }: {
   dates: string[];
   series: ChartSeries[];
@@ -49,14 +53,22 @@ export function LineChart({
   height?: number;
   includeZero?: boolean;
   markers?: ChartMarker[];
+  /** Legend-driven emphasis; hidden series are dropped from the scale. */
+  highlight?: SeriesHighlight;
 }) {
   const palette = useFinancePalette();
   const [width, setWidth] = useState(0);
   const count = dates.length;
+  const active = highlight?.active ?? null;
+  const hidden = highlight?.hidden;
+  const visible = useMemo(() => {
+    const shown = hidden && hidden.size > 0 ? series.filter((s) => !hidden.has(s.key)) : series;
+    return active ? [...shown.filter((s) => s.key !== active), ...shown.filter((s) => s.key === active)] : shown;
+  }, [active, hidden, series]);
 
   const geometry = useMemo(() => {
     if (width <= 0 || count < 2) return null;
-    const values = series.flatMap((s) => s.values.filter((v): v is number => v != null));
+    const values = visible.flatMap((s) => s.values.filter((v): v is number => v != null));
     if (values.length === 0) return null;
     let min = Math.min(...values);
     let max = Math.max(...values);
@@ -71,12 +83,25 @@ export function LineChart({
     const innerH = Math.max(height - PAD.top - PAD.bottom, 1);
     const x = (index: number) => PAD.left + (index / (count - 1)) * innerW;
     const y = (value: number) => PAD.top + (1 - (value - y0) / (y1 - y0 || 1)) * innerH;
-    const lines = series.map((s) => ({
+    const lines = visible.map((s) => ({
       series: s,
       segments: buildSegments(s.values, x, y, s.gaps, s.dashed),
     }));
     return { ticks, x, y, lines, baseline: PAD.top + innerH, innerH };
-  }, [count, height, includeZero, series, width]);
+  }, [count, height, includeZero, visible, width]);
+
+  const onTap = (index: number, tapY: number) => {
+    if (!highlight || !geometry) return;
+    let best: { key: string; distance: number } | null = null;
+    for (const { series: s } of geometry.lines) {
+      const value = s.values[index];
+      if (value == null) continue;
+      const distance = Math.abs(geometry.y(value) - tapY);
+      if (distance <= TAP_HIT_PX && (!best || distance < best.distance)) best = { key: s.key, distance };
+    }
+    if (best) highlight.toggle(best.key);
+    else highlight.clear();
+  };
 
   const span = count > 1 ? spanInDays(dates[0], dates[count - 1]) : 0;
   const xLabels =
@@ -100,7 +125,8 @@ export function LineChart({
         padRight={PAD.right}
         height={height}
         onScrub={onScrub}
-        onWidth={setWidth}>
+        onWidth={setWidth}
+        onTap={highlight ? onTap : undefined}>
         {geometry ? (
           <>
             {geometry.ticks.map((tick) => (
@@ -138,9 +164,9 @@ export function LineChart({
               />
             ))}
             {Platform.OS === 'web' ? (
-              <WebLines width={width} height={height} geometry={geometry} />
+              <WebLines width={width} height={height} geometry={geometry} active={active} />
             ) : (
-              <NativeLines geometry={geometry} />
+              <NativeLines geometry={geometry} active={active} />
             )}
             {hairX != null ? (
               <>
@@ -168,6 +194,7 @@ export function LineChart({
                           top: geometry.y(value) - 5,
                           backgroundColor: s.color,
                           borderColor: palette.card,
+                          opacity: seriesOpacity(s.key, active),
                         },
                       ]}
                     />
@@ -194,7 +221,8 @@ export function LineChart({
             {scrubIndex != null && hairX != null ? (
               <ChartTooltip
                 date={dates[scrubIndex]}
-                rows={tooltipRows(scrubIndex)}
+                rows={tooltipRows(scrubIndex).filter((row) => !row.key || !hidden?.has(row.key))}
+                highlightKey={active}
                 style={[
                   styles.tooltip,
                   hairX > width / 2 ? { right: width - hairX + 12 } : { left: hairX + 12 },
@@ -221,7 +249,17 @@ type Geometry = {
   baseline: number;
 };
 
-function WebLines({ width, height, geometry }: { width: number; height: number; geometry: Geometry }) {
+function WebLines({
+  width,
+  height,
+  geometry,
+  active,
+}: {
+  width: number;
+  height: number;
+  geometry: Geometry;
+  active: string | null;
+}) {
   const gradientId = useMemo(() => `fill-${Math.random().toString(36).slice(2, 10)}`, []);
   const fillSeries = geometry.lines.find(({ series }) => series.fill);
   return (
@@ -237,6 +275,7 @@ function WebLines({ width, height, geometry }: { width: number; height: number; 
           <path
             d={areaPath(fillSeries.series.values, geometry.x, geometry.y, geometry.baseline)}
             fill={`url(#${gradientId})`}
+            fillOpacity={seriesOpacity(fillSeries.series.key, active)}
             stroke="none"
           />
         </>
@@ -246,7 +285,7 @@ function WebLines({ width, height, geometry }: { width: number; height: number; 
         const dashed = segmentsToPath(segments.filter((seg) => seg.dashed));
         const strokeWidth = series.strokeWidth ?? 2;
         return (
-          <g key={series.key}>
+          <g key={series.key} opacity={seriesOpacity(series.key, active)}>
             {solid ? (
               <path
                 d={solid}
@@ -275,7 +314,7 @@ function WebLines({ width, height, geometry }: { width: number; height: number; 
   );
 }
 
-function NativeLines({ geometry }: { geometry: Geometry }) {
+function NativeLines({ geometry, active }: { geometry: Geometry; active: string | null }) {
   const fillSeries = geometry.lines.find(({ series }) => series.fill);
   return (
     <>
@@ -292,7 +331,7 @@ function NativeLines({ geometry }: { geometry: Geometry }) {
                   top,
                   height: Math.max(geometry.baseline - top, 0),
                   backgroundColor: fillSeries.series.color,
-                  opacity: 0.07,
+                  opacity: 0.07 * seriesOpacity(fillSeries.series.key, active),
                 }}
               />
             );
@@ -315,7 +354,7 @@ function NativeLines({ geometry }: { geometry: Geometry }) {
                 height: thickness,
                 borderRadius: thickness / 2,
                 backgroundColor: series.color,
-                opacity: seg.dashed ? (series.dashed ? 0.75 : 0.45) : 1,
+                opacity: (seg.dashed ? (series.dashed ? 0.75 : 0.45) : 1) * seriesOpacity(series.key, active),
                 transform: [{ rotate: `${Math.atan2(dy, dx)}rad` }],
               }}
             />

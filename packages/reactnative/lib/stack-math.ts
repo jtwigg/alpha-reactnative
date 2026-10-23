@@ -114,6 +114,31 @@ export function buildStack(args: {
   return { series, positive, negative, net, covered };
 }
 
+/** Drops hidden series and recomputes the per-date totals. */
+export function withoutSeries(model: StackModel, hidden: ReadonlySet<string>): StackModel {
+  if (hidden.size === 0) return model;
+  const series = model.series.filter((s) => !hidden.has(s.key));
+  const positive = model.positive.map((_, i) => series.reduce((sum, s) => sum + Math.max(s.values[i], 0), 0));
+  const negative = model.negative.map((_, i) => series.reduce((sum, s) => sum + Math.min(s.values[i], 0), 0));
+  return { series, positive, negative, net: positive.map((value, i) => value + negative[i]), covered: model.covered };
+}
+
+/** Series whose bar segment contains `y` (in value units) at `index`, if any. */
+export function seriesAtValue(model: StackModel, index: number, value: number): string | null {
+  let up = 0;
+  let down = 0;
+  for (const series of model.series) {
+    const v = series.values[index];
+    if (!v) continue;
+    const from = v > 0 ? up : down;
+    const to = from + v;
+    if (v > 0) up = to;
+    else down = to;
+    if (value >= Math.min(from, to) && value <= Math.max(from, to)) return series.key;
+  }
+  return null;
+}
+
 export type StackMode = 'absolute' | 'normalized';
 
 /**
