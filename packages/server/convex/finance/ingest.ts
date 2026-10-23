@@ -1,4 +1,5 @@
 import { internalMutation } from '../_generated/server';
+import { internal } from '../_generated/api';
 import { v } from 'convex/values';
 import type { MutationCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
@@ -6,6 +7,11 @@ import { financeContentHash } from './hash';
 import type { SnapshotSource } from './hash';
 import { parseIsoDate } from './dates';
 import { fillGapsWindow } from './scan';
+import {
+  addDeleteCounts,
+  emptyDeleteCounts,
+  normalizeDeleteIds,
+} from './delete';
 import {
   assertBatchSize,
   decidePlainWrite,
@@ -18,8 +24,12 @@ import {
 } from './lib';
 import {
   BATCH_CAP,
+  DELETE_ROW_BATCH,
+  DELETE_WRITE_BUDGET,
   FILL_GAPS_READ_CAP,
   FILL_GAPS_WRITE_CAP,
+  deleteAccountsArgsValidator,
+  deleteAccountsResultValidator,
   accountInputValidator,
   fillGapsArgsValidator,
   fillGapsResultValidator,
@@ -481,6 +491,120 @@ async function loadAnchors(
   if (right) anchors.push(right);
   return anchors;
 }
+
+async function deleteIndexedBatch(
+  ctx: MutationCtx,
+  table: 'balance_snapshots' | 'transactions' | 'holdings',
+  accountId: string,
+  remainingWrites: number,
+): Promise<number> {
+  if (remainingWrites <= 0) return 0;
+  const take = Math.min(DELETE_ROW_BATCH, remainingWrites);
+  const rows =
+    table === 'transactions'
+      ? await ctx.db
+          .query('transactions')
+          .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
+          .take(take)
+      : table === 'holdings'
+        ? await ctx.db
+            .query('holdings')
+            .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+            .take(take)
+        : await ctx.db
+            .query('balance_snapshots')
+            .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+            .take(take);
+  for (const row of rows) {
+    await ctx.db.delete(row._id);
+  }
+  return rows.length;
+}
+
+export const deleteAccounts = internalMutation({
+  args: deleteAccountsArgsValidator,
+  returns: deleteAccountsResultValidator,
+  handler: async (ctx, args) => {
+    const ids = normalizeDeleteIds(args.ids);
+    const session = emptyDeleteCounts();
+    let writes = 0;
+    const remainingIds: string[] = [];
+
+    for (let i = 0; i < ids.length; i += 1) {
+      const accountId = ids[i];
+      if (writes >= DELETE_WRITE_BUDGET) {
+        remainingIds.push(...ids.slice(i));
+        break;
+      }
+
+      session.snapshots += await deleteIndexedBatch(
+        ctx,
+        'balance_snapshots',
+        accountId,
+        DELETE_WRITE_BUDGET - writes,
+      );
+      writes = session.snapshots + session.transactions + session.holdings + session.accounts;
+      session.transactions += await deleteIndexedBatch(
+        ctx,
+        'transactions',
+        accountId,
+        DELETE_WRITE_BUDGET - writes,
+      );
+      writes = session.snapshots + session.transactions + session.holdings + session.accounts;
+      session.holdings += await deleteIndexedBatch(
+        ctx,
+        'holdings',
+        accountId,
+        DELETE_WRITE_BUDGET - writes,
+      );
+      writes = session.snapshots + session.transactions + session.holdings + session.accounts;
+
+      const leftoverSnaps = await ctx.db
+        .query('balance_snapshots')
+        .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+        .take(1);
+      const leftoverTxns = await ctx.db
+        .query('transactions')
+        .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
+        .take(1);
+      const leftoverHolds = await ctx.db
+        .query('holdings')
+        .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+        .take(1);
+      if (leftoverSnaps.length || leftoverTxns.length || leftoverHolds.length) {
+        remainingIds.push(...ids.slice(i));
+        break;
+      }
+
+      const account = await ctx.db
+        .query('accounts')
+        .withIndex('by_sourceId', (q) => q.eq('sourceId', accountId))
+        .unique();
+      if (account) {
+        await ctx.db.delete(account._id);
+        session.accounts += 1;
+        writes += 1;
+      }
+    }
+
+    const counts = addDeleteCounts(args.counts ?? emptyDeleteCounts(), session);
+    const shouldContinue = remainingIds.length > 0;
+    if (shouldContinue) {
+      await ctx.scheduler.runAfter(0, internal.finance.ingest.deleteAccounts, {
+        ids: remainingIds,
+        mergedInto: args.mergedInto,
+        counts,
+      });
+    }
+
+    return {
+      ...counts,
+      mergedInto: args.mergedInto ?? null,
+      continue: shouldContinue,
+      remainingIds,
+    };
+  },
+});
 
 export type {
   AccountInput,
