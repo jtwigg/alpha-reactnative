@@ -148,3 +148,13 @@ describe('MCP handler', () => {
     }
   });
 });
+
+describe('api/mcp route exports', () => {
+  it('does not export default (avoids Vercel Node req/res mode)', async () => {
+    const mod = await import('../../../api/mcp');
+    expect(mod.default).toBeUndefined();
+    expect(typeof mod.GET).toBe('function');
+    expect(mod.POST).toBe(mod.GET);
+    expect(mod.DELETE).toBe(mod.GET);
+  });
+});
