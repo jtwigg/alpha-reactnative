@@ -11,6 +11,7 @@ import { AuthLayout } from '@/components/auth/auth-layout';
 import { MissingConfig } from '@/components/auth/missing-config';
 import { ThemedText } from '@/components/themed-text';
 import { getClerkErrorMessage, isClerkConfigured } from '@/lib/convex';
+import { captureAuthException, logAuth, queryParamKeys } from '@/lib/sentry';
 import {
   SIGN_IN_NEEDS_SIGN_UP_MESSAGE,
   WEB_SSO_COMPLETE_URL,
@@ -36,6 +37,15 @@ function SsoCallbackHandler() {
   const [error, setError] = useState<string | null>(null);
   const [timedOut, setTimedOut] = useState(false);
   const handled = useRef(false);
+  const timeoutLogged = useRef(false);
+  const statusRef = useRef<string>('');
+
+  useEffect(() => {
+    logAuth('sso-callback.loaded', {
+      platform: Platform.OS,
+      queryKeys: queryParamKeys(),
+    });
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setTimedOut(true), CALLBACK_TIMEOUT_MS);
@@ -59,10 +69,22 @@ function SsoCallbackHandler() {
           secondFactorUrl: '/sign-in',
         },
         async (to) => {
-          const path = String(to);
+          const path = String(to).split('?')[0];
           const transfer = getSignInNeedsSignUpMessage(signIn, signUp);
+          logAuth('auth.set_active_result', {
+            toPath: path,
+            signInStatus: signIn?.status ?? 'unknown',
+            signUpStatus: signUp?.status ?? 'unknown',
+            transferable: Boolean(transfer),
+            missingRequirements: signUp?.status === 'missing_requirements',
+          });
           if (transfer || path.includes('sign-up')) {
             setError(transfer ?? SIGN_IN_NEEDS_SIGN_UP_MESSAGE);
+            logAuth('auth.sign_in_needs_sign_up', {
+              toPath: path,
+              signInStatus: signIn?.status ?? 'unknown',
+              signUpStatus: signUp?.status ?? 'unknown',
+            });
             console.error('[auth] Google SSO redirected to a sign-up/transfer step', {
               to: path,
               signInStatus: signIn?.status,
@@ -82,14 +104,37 @@ function SsoCallbackHandler() {
       .catch((err: unknown) => {
         const transfer = getSignInNeedsSignUpMessage(signIn, signUp, err);
         const message = transfer ?? getClerkErrorMessage(err, 'Google sign-in could not finish.');
+        captureAuthException(err, {
+          signInStatus: signIn?.status ?? 'unknown',
+          signUpStatus: signUp?.status ?? 'unknown',
+        });
         console.error('[auth] handleRedirectCallback failed', err);
         setError(message);
       });
   }, [clerk, isLoaded, router, signIn, signUp]);
 
   useEffect(() => {
+    const snapshot = [
+      signIn?.status ?? 'unknown',
+      signUp?.status ?? 'unknown',
+      String(Boolean(getSignInNeedsSignUpMessage(signIn, signUp))),
+      String(signUp?.status === 'missing_requirements'),
+    ].join('|');
+    if (statusRef.current !== snapshot) {
+      statusRef.current = snapshot;
+      logAuth('auth.sign_in_sign_up_status', {
+        signInStatus: signIn?.status ?? 'unknown',
+        signUpStatus: signUp?.status ?? 'unknown',
+        transferable: Boolean(getSignInNeedsSignUpMessage(signIn, signUp)),
+        missingRequirements: signUp?.status === 'missing_requirements',
+      });
+    }
     const transfer = getSignInNeedsSignUpMessage(signIn, signUp);
     if (transfer) {
+      logAuth('auth.sign_in_needs_sign_up', {
+        signInStatus: signIn?.status ?? 'unknown',
+        signUpStatus: signUp?.status ?? 'unknown',
+      });
       console.error('[auth] Google SSO needs a sign-up transfer', {
         signInStatus: signIn?.status,
         signUpStatus: signUp?.status,
@@ -97,6 +142,17 @@ function SsoCallbackHandler() {
       setError((current) => current ?? transfer);
     }
   }, [signIn, signUp]);
+
+  useEffect(() => {
+    if (!timedOut || timeoutLogged.current) return;
+    timeoutLogged.current = true;
+    logAuth('sso-callback.timeout', {
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      signInStatus: signIn?.status ?? 'unknown',
+      signUpStatus: signUp?.status ?? 'unknown',
+    });
+  }, [isLoaded, isSignedIn, signIn, signUp, timedOut]);
 
   if (isSignedIn && !error) {
     return <Redirect href="/" />;

@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { describeConvexAuthStuck, hasConvexAudience } from '@/lib/convex';
+import { logAuth } from '@/lib/sentry';
 
 const CONVEX_STUCK_MS = 10_000;
 
@@ -42,7 +43,24 @@ export function useConvexAuthStuck() {
   );
 
   useEffect(() => {
+    if (!timedOut) return;
+    logAuth('convex.auth.timeout', {
+      clerkIsSignedIn: Boolean(isSignedIn),
+      convexIsLoading: convexLoading,
+      convexIsAuthenticated: convexAuthenticated,
+      audMismatch,
+    });
+  }, [audMismatch, convexAuthenticated, convexLoading, isSignedIn, timedOut]);
+
+  useEffect(() => {
     if (!diagnostic) return;
+    logAuth('convex.auth.stuck', {
+      clerkIsSignedIn: Boolean(isSignedIn),
+      convexIsLoading: convexLoading,
+      convexIsAuthenticated: convexAuthenticated,
+      expectedAud: diagnostic.details.expectedAud,
+      hasConvexAud: hasConvexAudience(sessionClaims),
+    });
     console.error('[auth] Clerk is signed in but Convex useConvexAuth is still loading', {
       reason: diagnostic.reason,
       ...diagnostic.details,
@@ -50,7 +68,7 @@ export function useConvexAuthStuck() {
       convexIsLoading: convexLoading,
       convexIsAuthenticated: convexAuthenticated,
     });
-  }, [convexAuthenticated, convexLoading, diagnostic, isSignedIn]);
+  }, [convexAuthenticated, convexLoading, diagnostic, isSignedIn, sessionClaims]);
 
   return { stuck, diagnostic };
 }
