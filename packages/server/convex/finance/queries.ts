@@ -152,7 +152,7 @@ export const netWorth = query({
   },
 });
 
-function snapshotLookup(ctx: QueryCtx): SnapshotLookup {
+export function snapshotLookup(ctx: QueryCtx): SnapshotLookup {
   const one = async (
     accountId: string,
     order: 'asc' | 'desc',

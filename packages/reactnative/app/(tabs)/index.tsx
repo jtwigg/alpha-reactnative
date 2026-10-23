@@ -1,5 +1,5 @@
 import { useAuth, useClerk, useUser } from '@clerk/expo';
-import { useMutation, useQuery } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -28,8 +28,10 @@ function SignedInHome() {
   const { user } = useUser();
   const { signOut } = useClerk();
   const { isSignedIn } = useAuth();
-  const greeting = useQuery(api.users.greeting);
-  const notes = useQuery(api.messages.list);
+  const { isAuthenticated } = useConvexAuth();
+  const me = useQuery(api.users.current, isAuthenticated ? {} : 'skip');
+  const greeting = me ? `Hello, ${me.name}!` : undefined;
+  const notes = useQuery(api.messages.list, isAuthenticated ? {} : 'skip');
   const sendNote = useMutation(api.messages.send);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
