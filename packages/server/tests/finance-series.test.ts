@@ -3,10 +3,12 @@ import {
   accountValueOnDay,
   buildNetWorthModel,
   chartStep,
+  modelsForRanges,
   rangeWindow,
   signedAmount,
   trimModelToRange,
 } from '../convex/finance/series';
+import { accountHistory, sparklineRows, trimHistoryToRange, trimSparklinesToRange } from '../convex/finance/accountModel';
 
 describe('accountValueOnDay', () => {
   const snaps = [
@@ -125,5 +127,70 @@ describe('5Y range', () => {
     expect(trimmed.change).toBeCloseTo(300 - first, 2);
     expect(trimmed.changePct).toBeCloseTo(300 / first - 1, 9);
     expect(trimModelToRange(model, 'All').points).toHaveLength(model.points.length);
+  });
+
+  it('precomputes every range from one All model without another read', () => {
+    const model = buildNetWorthModel({
+      range: 'All',
+      asOf: '2026-10-23',
+      accounts: [
+        { sourceId: 'cash', name: 'Cash', class: 'cash', provider: 'manual', currentBalance: 300, syncedAt: 1 },
+      ],
+      snapshots: [
+        { accountId: 'cash', asOf: '2018-01-01', balance: 100, source: 'manual' },
+        { accountId: 'cash', asOf: '2026-09-23', balance: 250, source: 'manual' },
+        { accountId: 'cash', asOf: '2026-10-23', balance: 300, source: 'manual' },
+      ],
+    });
+    const byRange = modelsForRanges(model);
+    expect(byRange.All.points).toHaveLength(model.points.length);
+    expect(byRange['1M'].points[0].asOf >= '2026-09-23').toBe(true);
+    expect(byRange['1M'].points.length).toBeLessThan(byRange.All.points.length);
+    const monthStart = byRange['1M'].points[0].total;
+    expect(byRange['1M'].change).toBeCloseTo(300 - monthStart, 2);
+    expect(byRange['1Y'].range).toBe('1Y');
+  });
+});
+
+describe('trim history and sparklines', () => {
+  const account = {
+    sourceId: 'wf',
+    provider: 'manual',
+    class: 'investments',
+    name: 'Wealthfront',
+    type: 'investment',
+    currentBalance: 300,
+    currency: 'USD',
+    syncedAt: 1,
+  };
+  const snapshots = [
+    { accountId: 'wf', asOf: '2018-01-01', balance: 100, source: 'manual' as const },
+    { accountId: 'wf', asOf: '2026-09-23', balance: 250, source: 'manual' as const },
+    { accountId: 'wf', asOf: '2026-10-23', balance: 300, source: 'manual' as const },
+  ];
+
+  it('trims an All account history to 1M and rebases the change', () => {
+    const all = accountHistory({ account, snapshots, range: 'All', asOf: '2026-10-23' });
+    const month = trimHistoryToRange(all, '1M');
+    expect(month.range).toBe('1M');
+    expect(month.points[0].asOf >= '2026-09-23').toBe(true);
+    expect(month.change).toBeCloseTo(300 - month.points[0].total, 2);
+    expect(trimHistoryToRange(all, 'All').points).toHaveLength(all.points.length);
+  });
+
+  it('trims All-range sparks without another derivation of the full grid', () => {
+    const dates = ['2018-01-01', '2026-09-23', '2026-10-23'];
+    const rows = sparklineRows({ accounts: [account], snapshots, dates });
+    const all = {
+      range: 'All' as const,
+      asOf: '2026-10-23',
+      dates,
+      rows: rows.map((row) => ({ ...row, weighted: { change: row.change, pct: row.changePct, tone: row.tone } })),
+      groups: [],
+    };
+    const month = trimSparklinesToRange(all, '1M', [account]);
+    expect(month.dates[0] >= '2026-09-23').toBe(true);
+    expect(month.rows[0].values).toHaveLength(month.dates.length);
+    expect(month.rows[0].change).toBeCloseTo(50, 2);
   });
 });

@@ -3,14 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { RangeNavigator } from '@/components/finance/range-navigator';
-import { RangePills } from '@/components/finance/range-pills';
 import { StackedChart } from '@/components/finance/stacked-chart';
 import { Card, FText, SectionHeader, Segmented, StateMessage, TogglePill, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
 import { demoStack } from '@/lib/finance-fixtures';
 import { buildStack, windowIndexes, type StackLevel, type StackMode } from '@/lib/stack-math';
-import { RANGE_KEYS, rangeWindow, type RangeKey } from '../../../server/convex/finance/series';
+import { rangeWindow, type RangeKey } from '../../../server/convex/finance/series';
 
 type Window = { from: string; to: string };
 type StackData = ReturnType<typeof demoStack>;
@@ -25,11 +24,16 @@ export function CompositionCard({
   live,
   demo,
   refreshNonce,
+  range,
+  rangeGen,
 }: {
   /** Allowlisted and the account list has live data. */
   live: boolean;
   demo: boolean;
   refreshNonce: number;
+  /** Page-level range. The stacked chart follows this; no per-chart pills. */
+  range: RangeKey;
+  rangeGen: number;
 }) {
   const palette = useFinancePalette();
   const colors = useChartColors();
@@ -39,7 +43,6 @@ export function CompositionCard({
   const normalized = mode === 'normalized';
   const stackLoans = includeLoans || normalized;
   const [committed, setCommitted] = useState<Window | null>(null);
-  const [tapped, setTapped] = useState<RangeKey | null>(null);
   const [preview, setPreview] = useState<[number, number] | null>(null);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
 
@@ -49,8 +52,8 @@ export function CompositionCard({
 
   const defaultWindow = useMemo<Window | null>(() => {
     if (!overview) return null;
-    return rangeWindow('1Y', overview.asOf, overview.firstAsOf);
-  }, [overview]);
+    return rangeWindow(range, overview.asOf, overview.firstAsOf);
+  }, [overview, range]);
   const window = committed ?? defaultWindow;
 
   const liveDetail = useQuery(
@@ -111,15 +114,10 @@ export function CompositionCard({
 
   useEffect(() => setScrubIndex(null), [shown, level, includeLoans, mode]);
 
-  const preset = useMemo<RangeKey | null>(() => {
-    if (!overview || !window) return null;
-    const matches = (key: RangeKey) => {
-      const w = rangeWindow(key, overview.asOf, overview.firstAsOf);
-      return clampFrom(w, overview) === clampFrom(window, overview) && w.to === window.to;
-    };
-    if (tapped && matches(tapped)) return tapped;
-    return RANGE_KEYS.find(matches) ?? null;
-  }, [overview, tapped, window]);
+  useEffect(() => {
+    setPreview(null);
+    setCommitted(null);
+  }, [range, rangeGen]);
 
   const header = (
     <SectionHeader title="Composition" subtitle="What makes up your net worth over time. Drag the strip below to zoom." />
@@ -146,14 +144,6 @@ export function CompositionCard({
     <Card>
       {header}
       <View style={styles.controls}>
-        <RangePills
-          value={preset}
-          onChange={(key) => {
-            setPreview(null);
-            setTapped(key);
-            setCommitted(rangeWindow(key, overview.asOf, overview.firstAsOf));
-          }}
-        />
         <View style={styles.toggles}>
           <Segmented options={MODES} value={mode} onChange={setMode} labels={MODE_LABELS} accessibilityLabel="Scale" />
           <Segmented options={LEVELS} value={level} onChange={setLevel} labels={LEVEL_LABELS} accessibilityLabel="Stack by" />

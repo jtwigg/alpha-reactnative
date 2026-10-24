@@ -1,14 +1,15 @@
-import { useAction, useQuery } from 'convex/react';
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useQuery } from 'convex/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountGroups, CHANGE_MODES, type AccountTrends, type ChangeMode } from '@/components/finance/account-groups';
+import { ChartBlock } from '@/components/finance/benchmark-chart';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CompositionCard } from '@/components/finance/composition-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { HeroValue, changeTone } from '@/components/finance/hero-value';
-import { CoverageMarkerNotes, NetWorthChart, type BenchmarkLine } from '@/components/finance/net-worth-chart';
+import { CoverageMarkerNotes } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
 import {
@@ -30,46 +31,19 @@ import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
-import { liveRange } from '@/lib/range-support';
+import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { useRefreshSpinner } from '@/lib/use-refresh';
-import {
-  BENCHMARKS,
-  BENCHMARK_STALE_MS,
-  DEFAULT_BENCHMARK,
-  benchmarkValuesForDates,
-} from '../../../server/convex/finance/benchmarks';
+import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
 import {
   ACCOUNT_GROUPS,
   groupChartPoints,
   groupKeyForClass,
+  trimSparklinesToRange,
   type AccountGroupKey,
 } from '../../../server/convex/finance/accountModel';
-import {
-  trimModelToRange,
-  type ChartPoint,
-  type CoverageMarker,
-  type RangeKey,
-} from '../../../server/convex/finance/series';
+import { modelsForRanges, type RangeKey } from '../../../server/convex/finance/series';
 
 type ChartGroup = 'all' | AccountGroupKey;
-
-const RANGE_SUFFIX: Record<RangeKey, string> = {
-  '1M': 'past month',
-  '3M': 'past 3 months',
-  YTD: 'year to date',
-  '1Y': 'past year',
-  '5Y': 'past 5 years',
-  All: 'all time',
-};
-
-const RANGE_LABEL: Record<RangeKey, string> = {
-  '1M': 'past month',
-  '3M': 'past 3 months',
-  YTD: 'year to date',
-  '1Y': 'past year',
-  '5Y': 'past 5 years',
-  All: 'full history',
-};
 const WIDE_MIN_WIDTH = 720;
 
 export default function FinancesScreen() {
@@ -85,6 +59,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const colors = useChartColors();
   const { width: screenWidth } = useWindowDimensions();
   const [range, setRange] = useState<RangeKey>('All');
+  const [rangeGen, setRangeGen] = useState(0);
   const [changeMode, setChangeMode] = usePersistedChoice<ChangeMode>('finance.changeMode', CHANGE_MODES, 'own');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
@@ -94,12 +69,19 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const scrollRef = useRef<ScrollView>(null);
   const chartY = useRef(0);
   const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
-  const queryRange = liveRange(range);
-  const live = useQuery(api.finance.queries.page, allowed ? { range: queryRange, refreshNonce } : 'skip');
+  const live = useQuery(api.finance.queries.page, allowed ? { range: 'All', refreshNonce } : 'skip');
+  const fine = useQuery(
+    api.finance.queries.page,
+    allowed && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+  );
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
-  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range: queryRange, refreshNonce } : 'skip');
+  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range: 'All', refreshNonce } : 'skip');
+  const fineSparks = useQuery(
+    api.finance.accounts.sparklines,
+    allowed && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+  );
   const [heldSparks, setHeldSparks] = useState(liveSparks);
 
   useEffect(() => {
@@ -119,33 +101,48 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     () => setRefreshNonce((nonce) => nonce + 1),
   );
 
-  const hasLive = Boolean(allowed && (live ?? held) && (live ?? held)!.accounts.length > 0);
+  const full = live ?? held;
+  const hasLive = Boolean(allowed && full && full.accounts.length > 0);
+  const byRange = useMemo(() => (full ? modelsForRanges(full) : null), [full]);
+  const demoByRange = useMemo(() => (demo ? modelsForRanges(demoNetWorthPage('All')) : null), [demo]);
   const data = useMemo(() => {
-    const source = live ?? held;
     if (hasLive) {
-      return source && source.range === queryRange && queryRange !== range ? trimModelToRange(source, range) : source;
+      if (fine && fine.range === range) return fine;
+      return byRange?.[range] ?? full;
     }
-    if (demo) return demoNetWorthPage(range);
-    return source;
-  }, [demo, hasLive, held, live, queryRange, range]);
+    if (demo) return demoByRange?.[range] ?? demoNetWorthPage(range);
+    return full;
+  }, [byRange, demo, demoByRange, fine, full, hasLive, range]);
   const accountList = hasLive
     ? (liveAccounts ?? heldAccounts)
     : demo
       ? demoAccountList()
       : (liveAccounts ?? heldAccounts);
-  const sparkRange = hasLive || !demo ? queryRange : range;
+  const sparkAccounts = useMemo(
+    () => accountList?.groups.flatMap((group) => group.accounts) ?? [],
+    [accountList],
+  );
   const trends = useMemo<AccountTrends>(() => {
-    const sparks =
-      hasLive || !demo
-        ? (liveSparks ?? (heldSparks?.range === sparkRange ? heldSparks : undefined))
-        : demoAccountSparklines(sparkRange);
+    const sparks = (() => {
+      if (hasLive || !demo) {
+        if (fineSparks && fineSparks.range === range) return fineSparks;
+        const source = liveSparks ?? heldSparks;
+        if (!source) return undefined;
+        return trimSparklinesToRange(source, range, sparkAccounts);
+      }
+      return trimSparklinesToRange(demoAccountSparklines('All'), range, sparkAccounts);
+    })();
     return {
       rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
       groups: sparks?.groups ? new Map(sparks.groups.map((row) => [row.key, row])) : undefined,
-      rangeLabel: RANGE_SUFFIX[sparkRange],
+      rangeLabel: RANGE_SUFFIX[range],
       mode: changeMode,
     };
-  }, [changeMode, demo, hasLive, heldSparks, liveSparks, sparkRange]);
+  }, [changeMode, demo, fineSparks, hasLive, heldSparks, liveSparks, range, sparkAccounts]);
+  const pickRange = (next: RangeKey) => {
+    setRange(next);
+    setRangeGen((gen) => gen + 1);
+  };
 
   useEffect(() => {
     setScrubIndex(null);
@@ -260,8 +257,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                     color={lineColor}
                     height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
                     invert={activeGroup === 'liability'}
+                    spanFrom={full?.points[0]?.asOf}
+                    spanTo={full?.asOf}
                   />
-                  <RangePills value={range} onChange={setRange} stretch />
+                  <RangePills value={range} onChange={pickRange} stretch />
                   {groupOptions.length > 2 || (allowed && activeGroup !== 'liability') ? (
                     <View style={styles.toolbar}>
                       {groupOptions.length > 2 ? (
@@ -292,7 +291,13 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                 </Card>
               </View>
 
-              <CompositionCard live={hasLive} demo={usingDemo} refreshNonce={refreshNonce} />
+              <CompositionCard
+                live={hasLive}
+                demo={usingDemo}
+                refreshNonce={refreshNonce}
+                range={range}
+                rangeGen={rangeGen}
+              />
 
               <Card>
                 <SectionHeader
@@ -305,7 +310,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
               <View style={styles.section}>
                 <SectionHeader
                   title="Accounts"
-                  subtitle={`Trend lines show the ${RANGE_LABEL[sparkRange]}. Tap a group to chart it, or an account for details.`}
+                  subtitle={`Trend lines show the ${RANGE_LABEL[range]}. Tap a group to chart it, or an account for details.`}
                   right={
                     accountList ? (
                       <FText variant="headline" style={TABULAR}>
@@ -389,106 +394,6 @@ function weightedNote(trends: AccountTrends): string {
 
 function heroLabel(group: ChartGroup): string {
   return group === 'all' ? 'Net worth' : group === 'liability' ? 'Owed on loans' : GROUP_PICKER_LABELS[group];
-}
-
-function ChartBlock({
-  points,
-  markers,
-  scrubIndex,
-  onScrub,
-  showBenchmark,
-  seriesLabel,
-  color,
-  height,
-  invert,
-}: {
-  points: ChartPoint[];
-  markers: CoverageMarker[];
-  scrubIndex: number | null;
-  onScrub: (index: number | null) => void;
-  showBenchmark: boolean;
-  seriesLabel?: string;
-  color?: string;
-  height?: number;
-  invert?: boolean;
-}) {
-  const chart = (benchmark?: BenchmarkLine) => (
-    <NetWorthChart
-      points={points}
-      markers={markers}
-      scrubIndex={scrubIndex}
-      onScrub={onScrub}
-      benchmark={benchmark}
-      seriesLabel={seriesLabel}
-      color={color}
-      height={height}
-      headline
-      showMarkerNotes={false}
-      invert={invert}
-    />
-  );
-  if (!showBenchmark) return chart();
-  return (
-    <SoftBoundary fallback={chart()}>
-      <LiveBenchmarkChart points={points}>{chart}</LiveBenchmarkChart>
-    </SoftBoundary>
-  );
-}
-
-function LiveBenchmarkChart({
-  points,
-  children,
-}: {
-  points: ChartPoint[];
-  children: (benchmark?: BenchmarkLine) => ReactNode;
-}) {
-  const from = points[0]?.asOf;
-  const to = points[points.length - 1]?.asOf;
-  const market = useQuery(api.finance.market.series, from && to ? { symbol: DEFAULT_BENCHMARK, from, to } : 'skip');
-  const ensureMarket = useAction(api.finance.market.ensure);
-  const benchmarkColor = useChartColors().benchmark;
-
-  useEffect(() => {
-    if (market === undefined) return;
-    const stale =
-      market.bars.length === 0 || market.refreshedAt == null || Date.now() - market.refreshedAt > BENCHMARK_STALE_MS;
-    if (!stale) return;
-    void ensureMarket({ symbol: DEFAULT_BENCHMARK }).catch(() => undefined);
-  }, [ensureMarket, market]);
-
-  const benchmark = useMemo<BenchmarkLine | undefined>(() => {
-    if (!market || points.length === 0) return undefined;
-    const values = benchmarkValuesForDates(
-      points.map((point) => point.asOf),
-      points[0].total,
-      market.bars,
-    );
-    if (values.every((value) => value == null)) return undefined;
-    return { label: market.label, color: benchmarkColor, values };
-  }, [benchmarkColor, market, points]);
-
-  return (
-    <>
-      {children(benchmark)}
-      {market && market.bars.length === 0 ? (
-        <FText variant="caption" tone="muted">
-          Loading {BENCHMARKS.SPX.label}…
-        </FText>
-      ) : null}
-    </>
-  );
-}
-
-class SoftBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
 }
 
 const styles = StyleSheet.create({

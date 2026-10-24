@@ -18,8 +18,8 @@ import {
   accountFields,
   type TransactionsStatus,
 } from '@/components/finance/account-sections';
+import { ChartBlock } from '@/components/finance/benchmark-chart';
 import { HeroValue } from '@/components/finance/hero-value';
-import { NetWorthChart } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
 import {
@@ -29,28 +29,22 @@ import {
   FText,
   MAX_CONTENT_WIDTH,
   RefreshButton,
+  TogglePill,
   StateMessage,
   useFinancePalette,
 } from '@/components/finance/ui';
 import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
-import { liveRange } from '@/lib/range-support';
+import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { demoAccountDetail, demoHoldings, demoTransactions } from '@/lib/finance-fixtures';
-import { groupKeyForClass } from '../../../../server/convex/finance/accountModel';
+import { BENCHMARKS } from '../../../../server/convex/finance/benchmarks';
+import { groupKeyForClass, trimHistoryToRange } from '../../../../server/convex/finance/accountModel';
 import { signedAmount, type RangeKey } from '../../../../server/convex/finance/series';
 
 const PAGE_SIZE = 25;
-const RANGE_SUFFIX: Record<RangeKey, string> = {
-  '1M': 'past month',
-  '3M': 'past 3 months',
-  YTD: 'year to date',
-  '1Y': 'past year',
-  '5Y': 'past 5 years',
-  All: 'all time',
-};
 
 export default function AccountDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>();
@@ -104,10 +98,15 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const [range, setRange] = useState<RangeKey>('1Y');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [showBenchmark, setShowBenchmark] = useState(false);
 
   const liveDetail = useQuery(
     api.finance.accounts.detail,
-    live ? { sourceId, range: liveRange(range), refreshNonce } : 'skip',
+    live ? { sourceId, range: 'All', refreshNonce } : 'skip',
+  );
+  const fineDetail = useQuery(
+    api.finance.accounts.detail,
+    live && isDailyRange(range) ? { sourceId, range, refreshNonce } : 'skip',
   );
   const [held, setHeld] = useState(liveDetail);
   useEffect(() => {
@@ -119,7 +118,17 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   );
   useEffect(() => setScrubIndex(null), [range]);
 
-  const detail = live ? (liveDetail ?? held) : demoAccountDetail(sourceId, range);
+  const detail = useMemo(() => {
+    if (!live) {
+      const demo = demoAccountDetail(sourceId, 'All');
+      if (!demo) return demo;
+      return { ...demo, history: trimHistoryToRange(demo.history, range) };
+    }
+    const source = liveDetail ?? held;
+    if (source === undefined || source === null) return source;
+    if (fineDetail && fineDetail.history.range === range) return fineDetail;
+    return { ...source, history: trimHistoryToRange(source.history, range) };
+  }, [fineDetail, held, live, liveDetail, range, sourceId]);
 
   if (detail === undefined) {
     return (
@@ -185,22 +194,31 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
               points={detail.history.points}
               scrubIndex={scrubIndex}
               fallback={balance}
-              suffix={RANGE_SUFFIX[live ? liveRange(range) : range]}
+              suffix={RANGE_SUFFIX[range]}
               invert={shown < 0}
             />
-            <NetWorthChart
+            <ChartBlock
               points={detail.history.points}
               markers={[]}
               scrubIndex={scrubIndex}
               onScrub={setScrubIndex}
+              showBenchmark={showBenchmark}
               seriesLabel="Balance"
               color={color}
               height={width >= 720 ? 260 : 210}
-              headline
-              showMarkerNotes={false}
               invert={shown < 0}
+              spanFrom={live ? (liveDetail ?? held)?.history.points[0]?.asOf : detail.history.points[0]?.asOf}
+              spanTo={live ? (liveDetail ?? held)?.history.asOf : detail.history.asOf}
             />
-            <RangePills value={range} onChange={setRange} stretch />
+            <View style={styles.toolbar}>
+              <RangePills value={range} onChange={setRange} stretch />
+              <TogglePill
+                label={BENCHMARKS.SPX.label}
+                value={showBenchmark}
+                onChange={setShowBenchmark}
+                color={colors.benchmark}
+              />
+            </View>
           </Card>
 
           <HoldingsSection key={`h-${refreshNonce}`} sourceId={sourceId} live={live} accountValue={balance} />
@@ -258,4 +276,5 @@ const styles = StyleSheet.create({
   heroTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   badges: { flexDirection: 'row', gap: 6 },
   historyCard: { gap: 16 },
+  toolbar: { gap: 10 },
 });

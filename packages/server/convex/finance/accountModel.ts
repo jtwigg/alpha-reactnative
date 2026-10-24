@@ -3,6 +3,7 @@ import { roundMoney, type SnapshotSource } from './hash';
 import {
   accountValueOnDay,
   buildNetWorthModel,
+  rangeWindow,
   signedAmount,
   strideChartDates,
   type ChartPoint,
@@ -252,6 +253,50 @@ export function accountHistory(args: {
   };
 }
 
+/** Narrow a wider account history (All) to `range` without another server read. */
+export function trimHistoryToRange(history: AccountHistory, range: RangeKey): AccountHistory {
+  const { from } = rangeWindow(range, history.asOf, history.firstAsOf);
+  const points = history.points.filter((point) => point.asOf >= from);
+  if (points.length === history.points.length) return { ...history, range };
+  const first = points[0];
+  const last = points[points.length - 1];
+  return {
+    ...history,
+    range,
+    points,
+    change: first && last ? roundMoney(last.total - first.total) : 0,
+    changePct: first && last && first.total !== 0 ? last.total / first.total - 1 : null,
+  };
+}
+
+export type SparklineBundle = {
+  range: RangeKey;
+  asOf: string;
+  dates: string[];
+  rows: WeightedSparklines['rows'];
+  groups: WeightedSparklines['groups'];
+};
+
+/** Slice All-range spark lines to `range` and recompute own + weighted change. */
+export function trimSparklinesToRange(
+  data: SparklineBundle,
+  range: RangeKey,
+  accounts: Array<{ sourceId: string; class: string }>,
+): SparklineBundle {
+  const { from } = rangeWindow(range, data.asOf, data.dates[0] ?? null);
+  const start = data.dates.findIndex((day) => day >= from);
+  if (start <= 0) return { ...data, range };
+  const dates = data.dates.slice(start);
+  const sliced = data.rows.map((row) => {
+    const values = row.values.slice(start);
+    const { change, changePct } = rangeChange(values);
+    const className = accounts.find((account) => account.sourceId === row.sourceId)?.class ?? 'cash';
+    return { sourceId: row.sourceId, values, change, changePct, tone: changeTone(className, change) };
+  });
+  const weighted = addContributions(accounts, sliced, groupSparklines(accounts, sliced));
+  return { range, asOf: data.asOf, dates, rows: weighted.rows, groups: weighted.groups };
+}
+
 export const SPARKLINE_POINTS = 40;
 
 export type ChangeTone = 'good' | 'bad' | 'flat';
@@ -435,7 +480,7 @@ export function addContributions(
   return { rows: weightedRows, groups: weightedGroups };
 }
 
-function rangeChange(values: Array<number | null>): { change: number; changePct: number | null } {
+export function rangeChange(values: Array<number | null>): { change: number; changePct: number | null } {
   const covered = values.filter((value): value is number => value != null);
   const start = covered[0];
   const end = covered.at(-1);

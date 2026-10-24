@@ -478,16 +478,27 @@ export function trimModelToRange(model: NetWorthPageModel, range: RangeKey): Net
   const earliest = model.points[0]?.asOf ?? null;
   const { from } = rangeWindow(range, model.asOf, earliest);
   const points = model.points.filter((point) => point.asOf >= from);
-  if (points.length === model.points.length) return { ...model, range };
+  const coverageMarkers = model.coverageMarkers.filter((marker) => marker.asOf >= from);
+  if (points.length === model.points.length && coverageMarkers.length === model.coverageMarkers.length) {
+    return { ...model, range };
+  }
   const first = points[0];
   const last = points[points.length - 1];
   return {
     ...model,
     range,
     points,
+    coverageMarkers,
     change: first && last ? roundMoney(last.total - first.total) : 0,
     changePct: first && last && first.total !== 0 ? last.total / first.total - 1 : null,
   };
+}
+
+/** Trim an All (or wider) page model to every range in one pass. */
+export function modelsForRanges(model: NetWorthPageModel): Record<RangeKey, NetWorthPageModel> {
+  const out = {} as Record<RangeKey, NetWorthPageModel>;
+  for (const key of RANGE_KEYS) out[key] = trimModelToRange(model, key);
+  return out;
 }
 
 export function todayIso(now = new Date()): string {
