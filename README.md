@@ -90,7 +90,7 @@ Nothing in this PR can finish these for you. Do them in this order:
    `update:configure` writes `runtimeVersion` / `updates.url` / `extra.eas.projectId` if they are still placeholders. Paste the project ID into `EAS_PROJECT_ID` (or `app.config.js`) so `updates.url` is `https://u.expo.dev/<project-id>`.
 4. **Apple Developer Program** — paid membership is required for TestFlight. In App Store Connect, create an **app record** (needed so TestFlight has a place to land; do not fill a public store listing or submit for App Store review). Paste the numeric Apple ID into `eas.json` → `submit.production.ios.ascAppId`.
 5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**. Public URL: **https://alpha-theta-silk.vercel.app**.
-6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. Also add `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (the committed `pk_test_`), and `EAS_PROJECT_ID` so OTA JS for TestFlight (`production` channel) and preview is built with the right keys.
+6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. That is the only required secret: the workflow takes `EXPO_PUBLIC_CONVEX_URL` and `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` from the channel's build profile `env` in `eas.json`, and `EAS_PROJECT_ID` defaults to the project in `app.config.js`. A repository secret with the same name overrides each default.
 7. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
 
 Replace placeholder branding before the first TestFlight build: `com.example.johnsapp`, `assets/images/icon.png`, `splash-icon.png`, and `favicon.png`.
@@ -212,11 +212,11 @@ TestFlight (production) binaries download the update in the background and apply
 
 | Trigger | Channel |
 | --- | --- |
-| Push to `main` | `preview` and `production` (TestFlight devices) |
+| Push to `main` touching `packages/reactnative/**`, `packages/server/convex/**` (bundled into the app), `pnpm-lock.yaml`, or the workflow | `production` (TestFlight devices) |
 | Git tag `v*` (e.g. `v1.0.1`) | `production` (TestFlight devices) |
-| Actions → Run workflow | you pick `preview` or `production` |
+| Actions → Run workflow | `production` by default, or `preview` |
 
-The job fails up front if any of `EXPO_TOKEN`, `EAS_PROJECT_ID`, `EXPO_PUBLIC_CONVEX_URL`, or `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is missing. A red **EAS Update** run means TestFlight devices did not get that commit.
+Only `EXPO_TOKEN` is required; the job fails up front with a clear error if it is missing. Public config comes from `eas.json` (Convex URL, Clerk publishable key) and the default EAS project ID, each overridable by a secret of the same name. A red **EAS Update** run means TestFlight devices did not get that commit.
 
 Vercel is unchanged: it still builds web from `vercel.json`. The workflow never runs `expo export --platform web`.
 
@@ -313,7 +313,7 @@ npx eas-cli submit --profile production --platform ios --latest
 - [ ] Fill `packages/reactnative/.env.local`
 - [ ] Expo account; `eas-cli login` + `eas-cli init` + **`eas-cli update:configure`**
 - [ ] Put EAS project ID in `EAS_PROJECT_ID` so `updates.url` is real
-- [ ] GitHub secret **`EXPO_TOKEN`**, plus `EXPO_PUBLIC_CONVEX_URL=https://posh-mink-581.convex.cloud`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, `EAS_PROJECT_ID`
+- [ ] GitHub secret **`EXPO_TOKEN`** (public config defaults from `eas.json` / `app.config.js`)
 - [ ] Apple Developer; App Store Connect **app record** for TestFlight (no public listing); bundle id + `ascAppId`
 - [ ] `pnpm ios:testflight`; add ~5 family testers as an **external** TestFlight group; fill TestFlight test information
 - [ ] Do **not** submit for App Store review

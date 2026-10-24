@@ -1,22 +1,34 @@
 # Publishes a JS/asset OTA update to EAS Update.
 # The production channel is for TestFlight binaries (no public App Store listing).
 # Web deploys stay on Vercel (vercel.json). This workflow never builds or ships web.
+#
+# Only EXPO_TOKEN is a required secret. EXPO_PUBLIC_CONVEX_URL and
+# EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY come from the channel's build profile env in
+# packages/reactnative/eas.json, and the EAS project ID defaults to the one in
+# app.config.js. All three are public; a repository secret of the same name
+# overrides the default.
 name: EAS Update
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - 'packages/reactnative/**'
+      # The app bundles shared modules and the generated API from here.
+      - 'packages/server/convex/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/eas-update.yml'
   workflow_dispatch:
     inputs:
       channel:
         description: EAS Update channel
         required: true
-        default: preview
+        default: production
         type: choice
         options:
-          - preview
           - production
+          - preview
 
 concurrency:
   group: eas-update-${{ github.workflow }}-${{ github.ref }}
@@ -29,26 +41,47 @@ jobs:
     permissions:
       contents: read
     env:
-      EXPO_PUBLIC_CONVEX_URL: ${{ secrets.EXPO_PUBLIC_CONVEX_URL }}
-      EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-      EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+      CHANNEL: ${{ github.event.inputs.channel || 'production' }}
+      DEFAULT_EAS_PROJECT_ID: 45f0cfd7-2b50-4deb-b537-b5e44f76b937
     steps:
-      - name: Check required secrets
+      - name: Check EXPO_TOKEN
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          missing=()
-          for name in EXPO_TOKEN EAS_PROJECT_ID EXPO_PUBLIC_CONVEX_URL EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY; do
-            if [ -z "${!name}" ]; then missing+=("$name"); fi
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing repository secrets: ${missing[*]}. No OTA update was published, so TestFlight devices keep their old JS."
-            echo "Settings → Secrets and variables → Actions. See the root README → Over-the-air updates."
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error title=EXPO_TOKEN missing::Add the EXPO_TOKEN repository secret (Settings → Secrets and variables → Actions). Create it at https://expo.dev/settings/access-tokens. No OTA update was published, so TestFlight devices keep their old JS."
             exit 1
           fi
 
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve public config
+        working-directory: packages/reactnative
+        env:
+          SECRET_CONVEX_URL: ${{ secrets.EXPO_PUBLIC_CONVEX_URL }}
+          SECRET_CLERK_KEY: ${{ secrets.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          SECRET_EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+        run: |
+          profile_env() {
+            node -e 'const env = require("./eas.json").build[process.argv[1]]?.env ?? {}; process.stdout.write(env[process.argv[2]] ?? "")' "$CHANNEL" "$1"
+          }
+          convex_url="${SECRET_CONVEX_URL:-$(profile_env EXPO_PUBLIC_CONVEX_URL)}"
+          clerk_key="${SECRET_CLERK_KEY:-$(profile_env EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY)}"
+          project_id="${SECRET_EAS_PROJECT_ID:-$DEFAULT_EAS_PROJECT_ID}"
+          if [ -z "$convex_url" ] || [ -z "$clerk_key" ]; then
+            echo "::error::eas.json build profile \"$CHANNEL\" has no EXPO_PUBLIC_CONVEX_URL / EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY, and no secret overrides them."
+            exit 1
+          fi
+          {
+            echo "EXPO_PUBLIC_CONVEX_URL=$convex_url"
+            echo "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=$clerk_key"
+            echo "EAS_PROJECT_ID=$project_id"
+          } >> "$GITHUB_ENV"
+          echo "Channel: $CHANNEL"
+          echo "Convex: $convex_url ($([ -n "$SECRET_CONVEX_URL" ] && echo secret || echo eas.json))"
+          echo "Clerk key: ${clerk_key:0:12}… ($([ -n "$SECRET_CLERK_KEY" ] && echo secret || echo eas.json))"
+          echo "EAS project: $project_id ($([ -n "$SECRET_EAS_PROJECT_ID" ] && echo secret || echo default))"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -70,18 +103,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Resolve channels
-        id: channel
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "names=${{ github.event.inputs.channel }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "names=production" >> "$GITHUB_OUTPUT"
-          else
-            # main is what family testers run, so TestFlight (production) gets it too.
-            echo "names=preview production" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish EAS Update
         working-directory: packages/reactnative
         env:
@@ -90,6 +111,4 @@ jobs:
           message="${UPDATE_MESSAGE:-ci update}"
           # eas update --message is a single string; collapse newlines from commit bodies
           message="${message//$'\n'/ / }"
-          for channel in ${{ steps.channel.outputs.names }}; do
-            eas update --channel "$channel" --non-interactive --message "$message"
-          done
+          eas update --channel "$CHANNEL" --non-interactive --message "$message"
