@@ -1,3 +1,4 @@
+import { useAuth } from '@clerk/expo';
 import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
@@ -22,6 +23,7 @@ export default function TabLayout() {
 
 function ClerkProtectedTabs() {
   const { isLoading, isAuthenticated, isDenied } = useStoreUser();
+  const { isSignedIn: clerkSignedIn } = useAuth();
   const { stuck, diagnostic } = useConvexAuthStuck();
   const demo = useFinanceDemo() || isFinanceDemoFlag();
 
@@ -42,6 +44,13 @@ function ClerkProtectedTabs() {
   }
 
   if (!isAuthenticated && !demo) {
+    if (clerkSignedIn) {
+      return (
+        <ThemedView style={styles.centered}>
+          <ActivityIndicator size="large" />
+        </ThemedView>
+      );
+    }
     return <Redirect href="/sign-in" />;
   }
 
