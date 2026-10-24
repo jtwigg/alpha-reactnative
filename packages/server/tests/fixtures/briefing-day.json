@@ -1,0 +1,50 @@
+{
+  "date": "2026-01-15",
+  "accounts": {
+    "personal": {
+      "account": "personal",
+      "deckName": "Personal",
+      "headline": "Two things need you today",
+      "sub": "Synthetic subline",
+      "priorityHeading": "Do these",
+      "glanceHeading": "1 quick FYI",
+      "priorities": [
+        {
+          "rank": 1,
+          "deadline": "Friday",
+          "threadId": "112210f47de98115",
+          "sender": "Example Sender",
+          "gist": "Example Co needs a signed form by Friday",
+          "todo": "Sign and return the form",
+          "webUrl": "https://mail.google.com/mail/?authuser=user@example.com#all/thread-f:1234567890123456789",
+          "mobileUrl": "https://mail.google.com/mail/mu/mp/?authuser=user@example.com#cv/all/112210f47de98115"
+        }
+      ],
+      "glance": [
+        {
+          "threadId": "abc123def456",
+          "sender": "Example Newsletter",
+          "gist": "Synthetic FYI",
+          "webUrl": "https://mail.google.com/mail/?authuser=user@example.com#all/thread-f:123",
+          "mobileUrl": "https://mail.google.com/mail/mu/mp/?authuser=user@example.com#cv/all/abc123def456"
+        }
+      ],
+      "rest": {
+        "total": 12,
+        "breakdown": [
+          { "label": "promos/social", "count": 7 },
+          { "label": "newsletters", "count": 5 }
+        ]
+      }
+    },
+    "crankcase": {
+      "account": "crankcase",
+      "deckName": "Crankcase",
+      "headline": "Quiet day",
+      "sub": "",
+      "priorities": [],
+      "glance": [],
+      "rest": { "total": 0, "breakdown": [] }
+    }
+  }
+}

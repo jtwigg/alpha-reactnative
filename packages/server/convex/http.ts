@@ -2,6 +2,7 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import { evaluateAllowlist } from './allowlist';
 import { financeServer } from './finance/gateway';
+import { briefingIngest } from './briefings/gateway';
 
 const http = httpRouter();
 
@@ -77,6 +78,12 @@ http.route({
   path: '/finance/server',
   method: 'POST',
   handler: financeServer,
+});
+
+http.route({
+  path: '/briefings/ingest',
+  method: 'POST',
+  handler: briefingIngest,
 });
 
 export default http;

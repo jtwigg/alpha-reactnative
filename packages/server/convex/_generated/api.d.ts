@@ -9,6 +9,10 @@
  */
 
 import type * as access from "../access.js";
+import type * as briefings_feedback from "../briefings/feedback.js";
+import type * as briefings_gateway from "../briefings/gateway.js";
+import type * as briefings_ingest from "../briefings/ingest.js";
+import type * as briefings_queries from "../briefings/queries.js";
 import type * as chat from "../chat.js";
 import type * as crons from "../crons.js";
 import type * as finance_accounts from "../finance/accounts.js";
@@ -29,6 +33,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   access: typeof access;
+  "briefings/feedback": typeof briefings_feedback;
+  "briefings/gateway": typeof briefings_gateway;
+  "briefings/ingest": typeof briefings_ingest;
+  "briefings/queries": typeof briefings_queries;
   chat: typeof chat;
   crons: typeof crons;
   "finance/accounts": typeof finance_accounts;

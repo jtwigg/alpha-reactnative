@@ -1,42 +1,15 @@
 import * as Sentry from '@sentry/react-native';
 import { Platform } from 'react-native';
 
+import { isSensitiveSurface, redactCurrencyText, scrubSensitive } from '@/lib/sentry-scrub';
+
 /** Public DSN. Override with EXPO_PUBLIC_SENTRY_DSN if the Sentry project changes. */
 export const DEFAULT_SENTRY_DSN =
   'https://208718c3494ccd1183983da6d1a06e7a@o4511655781335040.ingest.us.sentry.io/4512303348318208';
 
-const AMOUNT_KEY =
-  /amount|balance|value|worth|price|qty|quantity|dollars?|cents|holding|snapshot|net_?worth|market|cost|cash|equity|liabilit|asset|txn|transaction|gain|pnl|allocat|units?|position|credit|debt|available|principal|interest|nav|total|byclass|series/i;
-
-const FINANCE_ROUTE = /\/finances(?:\/|$)|finance\/|net-?worth|\/api\/mcp/i;
-
 type Primitive = string | number | boolean;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-/** Drop finance amounts and nested request bodies from anything we send to Sentry. */
-export function scrubSensitive(value: unknown, depth = 0): unknown {
-  if (value == null || depth > 6) return value;
-  if (Array.isArray(value)) return value.map((item) => scrubSensitive(item, depth + 1));
-  if (!isPlainObject(value)) return value;
-
-  const out: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value)) {
-    const lower = key.toLowerCase();
-    if (lower === 'body' || lower === 'data' || lower === 'request_body' || lower === 'cookies') {
-      out[key] = '[redacted]';
-      continue;
-    }
-    if (AMOUNT_KEY.test(key)) {
-      out[key] = '[redacted]';
-      continue;
-    }
-    out[key] = scrubSensitive(nested, depth + 1);
-  }
-  return out;
-}
+export { scrubSensitive } from '@/lib/sentry-scrub';
 
 function primitiveAttrs(data?: Record<string, unknown>): Record<string, Primitive> {
   const scrubbed = (scrubSensitive(data) ?? {}) as Record<string, unknown>;
@@ -59,14 +32,10 @@ function stripRequestBody(event: Sentry.Event): void {
   delete event.request.cookies;
 }
 
-function isFinanceSurface(event: Sentry.Event): boolean {
+function isSensitiveEvent(event: Sentry.Event): boolean {
   const url = event.request?.url ?? '';
   const transaction = event.transaction ?? '';
-  return FINANCE_ROUTE.test(url) || FINANCE_ROUTE.test(transaction);
-}
-
-function redactCurrencyText(text: string): string {
-  return text.replace(/\$[\d,]+(?:\.\d+)?/g, '$[redacted]');
+  return isSensitiveSurface(`${url} ${transaction}`);
 }
 
 export function initSentry() {
@@ -86,7 +55,7 @@ export function initSentry() {
       stripRequestBody(event);
       if (event.extra) event.extra = scrubSensitive(event.extra) as typeof event.extra;
       if (event.contexts) event.contexts = scrubSensitive(event.contexts) as typeof event.contexts;
-      if (isFinanceSurface(event)) {
+      if (isSensitiveEvent(event)) {
         if (event.request) {
           delete event.request.query_string;
           delete event.request.data;
@@ -98,7 +67,7 @@ export function initSentry() {
     },
     beforeBreadcrumb(breadcrumb) {
       const haystack = `${breadcrumb.message ?? ''} ${breadcrumb.category ?? ''} ${JSON.stringify(breadcrumb.data ?? {})}`;
-      if (FINANCE_ROUTE.test(haystack)) {
+      if (isSensitiveSurface(haystack)) {
         breadcrumb.data = undefined;
         if (breadcrumb.message) breadcrumb.message = redactCurrencyText(breadcrumb.message);
       }

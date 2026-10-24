@@ -82,6 +82,13 @@ function AppTabs() {
         }}
       />
       <Tabs.Screen
+        name="briefings"
+        options={{
+          title: 'Briefings',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="envelope.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="finances"
         options={{
           title: 'Finances',
