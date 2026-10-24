@@ -40,7 +40,7 @@ module.exports = ({ config }) => ({
   android: {
     package: androidPackage,
     adaptiveIcon: {
-      backgroundColor: '#E6F4FE',
+      backgroundColor: '#1b1f4a',
       foregroundImage: './assets/images/android-icon-foreground.png',
       backgroundImage: './assets/images/android-icon-background.png',
       monochromeImage: './assets/images/android-icon-monochrome.png',
@@ -65,9 +65,9 @@ module.exports = ({ config }) => ({
         image: './assets/images/splash-icon.png',
         imageWidth: 200,
         resizeMode: 'contain',
-        backgroundColor: '#ffffff',
+        backgroundColor: '#1b1f4a',
         dark: {
-          backgroundColor: '#000000',
+          backgroundColor: '#1b1f4a',
         },
       },
     ],
