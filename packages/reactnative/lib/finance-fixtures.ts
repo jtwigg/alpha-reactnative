@@ -18,7 +18,6 @@ import {
   type AccountListModel,
   type AccountRecord,
   type HoldingsModel,
-  type WeightedSparklines,
 } from '../../server/convex/finance/accountModel';
 import {
   buildNetWorthModel,
@@ -260,16 +259,12 @@ export function demoAccountList(): AccountListModel {
   );
 }
 
-export function demoAccountSparklines(range: RangeKey): {
-  dates: string[];
-  rows: WeightedSparklines['rows'];
-  groups: WeightedSparklines['groups'];
-} {
+export function demoAccountSparklines(range: RangeKey) {
   const earliest = snapshots.reduce<string | null>((min, row) => (min == null || row.asOf < min ? row.asOf : min), null);
   const window = rangeWindow(range, AS_OF, earliest);
   const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
   const rows = sparklineRows({ accounts, snapshots, dates });
-  return { dates, ...addContributions(accounts, rows, groupSparklines(accounts, rows)) };
+  return { range, asOf: AS_OF, dates, ...addContributions(accounts, rows, groupSparklines(accounts, rows)) };
 }
 
 export function demoStack(from?: string, to?: string) {
