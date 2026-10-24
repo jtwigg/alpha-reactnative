@@ -154,7 +154,12 @@ describe('MCP handler', () => {
       expect(raw).toContain('list_accounts');
       expect(raw).toContain('delete_accounts');
       expect(raw).toContain('delete_transactions');
+      expect(raw).toContain('upsert_flows');
+      expect(raw).toContain('delete_flows');
+      expect(raw).toContain('upsert_returns');
       expect(raw).toContain('pendingTransactionId');
+      expect(raw).toContain('externalToInvestable');
+      expect(raw).toContain('finance.twr.v1');
 
       const called = await handler(
         new Request('http://localhost/api/mcp', {

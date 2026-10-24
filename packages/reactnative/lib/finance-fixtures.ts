@@ -419,3 +419,62 @@ export function demoHoldings(sourceId: string): HoldingsModel {
   });
   return holdingsView(rows, balance);
 }
+
+export function demoTwr(scope: string) {
+  const reliable = scope !== 'total';
+  const windows = (['3M', '6M', 'YTD', '1Y', '3Y', 'SI'] as const).map((window, index) => ({
+    window,
+    asOf: AS_OF,
+    startDate: window === 'YTD' ? '2026-01-01' : window === 'SI' ? '2021-03-01' : '2025-10-23',
+    cumulative: 0.021 + index * 0.018,
+    annualized: window === '3M' || window === '6M' ? null : 0.074 + index * 0.004,
+    reliable,
+    flowsFullyKnown: reliable,
+    note: reliable ? null : 'Sample: some 2024 contributions are estimated.',
+  }));
+  return { scope, asOf: AS_OF, windows };
+}
+
+export function demoFlows(accountId: string) {
+  if (!accountId.startsWith('acc_')) return [];
+  return [
+    {
+      flowId: `${accountId}_ext`,
+      date: '2026-08-15',
+      amount: 2500,
+      kind: 'external' as const,
+      counterpartAccountId: 'acc_checking',
+      counterpart: {
+        type: 'transaction' as const,
+        accountId: 'acc_checking',
+        sourceId: 'txn_demo_ext',
+        name: 'Transfer to brokerage',
+        date: '2026-08-15',
+        amount: -2500,
+      },
+    },
+    {
+      flowId: `${accountId}_xfer`,
+      date: '2026-06-01',
+      amount: 1000,
+      kind: 'internal_transfer' as const,
+      counterpartAccountId: 'acc_ira',
+      counterpart: { type: 'account' as const, accountId: 'acc_ira', name: 'Traditional IRA' },
+    },
+    {
+      flowId: `${accountId}_roth`,
+      date: '2026-04-10',
+      amount: 6500,
+      kind: 'roth_conversion' as const,
+      counterpartAccountId: 'acc_roth',
+      counterpart: {
+        type: 'flow' as const,
+        accountId: 'acc_roth',
+        flowId: 'acc_roth_roth',
+        date: '2026-04-10',
+        amount: 6500,
+        kind: 'roth_conversion',
+      },
+    },
+  ];
+}

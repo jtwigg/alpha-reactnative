@@ -156,4 +156,53 @@ export default defineSchema({
     refreshedAt: v.number(),
     lastAsOf: v.optional(v.string()),
   }).index('by_symbol', ['symbol']),
+
+  /** Cash flows that affect TWR (external, Roth, internal). Finance writes only. */
+  flows: defineTable({
+    flowId: v.string(),
+    accountId: v.string(),
+    date: v.string(),
+    amount: v.number(),
+    kind: v.union(
+      v.literal('internal_transfer'),
+      v.literal('roth_conversion'),
+      v.literal('external'),
+    ),
+    counterpartAccountId: v.optional(v.string()),
+    counterpartFlowId: v.optional(v.string()),
+    counterpartTxnId: v.optional(v.string()),
+    evidence: v.optional(v.string()),
+    externalToInvestable: v.boolean(),
+    updatedAt: v.number(),
+    contentHash: v.string(),
+  })
+    .index('by_flowId', ['flowId'])
+    .index('by_account_date', ['accountId', 'date']),
+
+  /** Precomputed time-weighted returns. Key is scope+window+asOf. Finance writes only. */
+  returns: defineTable({
+    scope: v.string(),
+    window: v.union(
+      v.literal('3M'),
+      v.literal('6M'),
+      v.literal('YTD'),
+      v.literal('1Y'),
+      v.literal('3Y'),
+      v.literal('SI'),
+    ),
+    asOf: v.string(),
+    startDate: v.string(),
+    cumulative: v.number(),
+    annualized: v.optional(v.number()),
+    reliable: v.boolean(),
+    startOnAnchor: v.boolean(),
+    flowsFullyKnown: v.boolean(),
+    method: v.literal('finance.twr.v1'),
+    note: v.optional(v.string()),
+    updatedAt: v.number(),
+    contentHash: v.string(),
+  })
+    .index('by_scope_window_asOf', ['scope', 'window', 'asOf'])
+    .index('by_scope_asOf', ['scope', 'asOf'])
+    .index('by_asOf', ['asOf']),
 });

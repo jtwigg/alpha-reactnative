@@ -24,7 +24,10 @@ import {
   pageResultValidator,
   snapshotDocValidator,
   snapshotsArgsValidator,
+  twrRowValidator,
+  flowRowValidator,
 } from './validators';
+import { TWR_WINDOWS, type TwrWindow } from './twrModel';
 import type { QueryCtx } from '../_generated/server';
 
 export const isAllowed = query({
@@ -220,5 +223,138 @@ export const page = query({
       range,
       asOf,
     });
+  },
+});
+
+function latestAsOf(rows: Array<{ asOf: string }>): string | null {
+  let max: string | null = null;
+  for (const row of rows) {
+    if (max == null || row.asOf > max) max = row.asOf;
+  }
+  return max;
+}
+
+export const twr = query({
+  args: { scope: v.string(), refreshNonce: v.optional(v.number()) },
+  returns: v.object({
+    scope: v.string(),
+    asOf: v.union(v.string(), v.null()),
+    windows: v.array(twrRowValidator),
+  }),
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    const rows = await ctx.db
+      .query('returns')
+      .withIndex('by_scope_asOf', (q) => q.eq('scope', args.scope))
+      .take(200);
+    const asOf = latestAsOf(rows);
+    const latest = asOf ? rows.filter((row) => row.asOf === asOf) : [];
+    const order = new Map(TWR_WINDOWS.map((window, index) => [window, index]));
+    latest.sort((a, b) => (order.get(a.window as TwrWindow) ?? 99) - (order.get(b.window as TwrWindow) ?? 99));
+    return {
+      scope: args.scope,
+      asOf,
+      windows: latest.map((row) => ({
+        scope: row.scope,
+        window: row.window,
+        asOf: row.asOf,
+        startDate: row.startDate,
+        cumulative: row.cumulative,
+        annualized: row.annualized ?? null,
+        reliable: row.reliable,
+        startOnAnchor: row.startOnAnchor,
+        flowsFullyKnown: row.flowsFullyKnown,
+        method: row.method,
+        note: row.note ?? null,
+      })),
+    };
+  },
+});
+
+export const flows = query({
+  args: { accountId: v.string(), refreshNonce: v.optional(v.number()) },
+  returns: v.array(flowRowValidator),
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    const rows = await ctx.db
+      .query('flows')
+      .withIndex('by_account_date', (q) => q.eq('accountId', args.accountId))
+      .order('desc')
+      .take(200);
+    const out: Array<{
+      flowId: string;
+      accountId: string;
+      date: string;
+      amount: number;
+      kind: 'internal_transfer' | 'roth_conversion' | 'external';
+      counterpartAccountId: string | null;
+      counterpartFlowId: string | null;
+      counterpartTxnId: string | null;
+      evidence: string | null;
+      externalToInvestable: boolean;
+      counterpart:
+        | { type: 'transaction'; accountId: string; sourceId: string; name: string; date: string; amount: number }
+        | { type: 'flow'; accountId: string; flowId: string; date: string; amount: number; kind: 'internal_transfer' | 'roth_conversion' | 'external' }
+        | { type: 'account'; accountId: string; name: string }
+        | null;
+    }> = [];
+    for (const row of rows) {
+      let counterpart: (typeof out)[number]['counterpart'] = null;
+      if (row.counterpartTxnId) {
+        const txn = await ctx.db
+          .query('transactions')
+          .withIndex('by_sourceId', (q) => q.eq('sourceId', row.counterpartTxnId as string))
+          .unique();
+        if (txn) {
+          counterpart = {
+            type: 'transaction' as const,
+            accountId: txn.accountId,
+            sourceId: txn.sourceId,
+            name: txn.name,
+            date: txn.date,
+            amount: txn.amount,
+          };
+        }
+      } else if (row.counterpartFlowId) {
+        const other = await ctx.db
+          .query('flows')
+          .withIndex('by_flowId', (q) => q.eq('flowId', row.counterpartFlowId as string))
+          .unique();
+        if (other) {
+          counterpart = {
+            type: 'flow' as const,
+            accountId: other.accountId,
+            flowId: other.flowId,
+            date: other.date,
+            amount: other.amount,
+            kind: other.kind,
+          };
+        }
+      } else if (row.counterpartAccountId) {
+        const account = await ctx.db
+          .query('accounts')
+          .withIndex('by_sourceId', (q) => q.eq('sourceId', row.counterpartAccountId as string))
+          .unique();
+        counterpart = {
+          type: 'account' as const,
+          accountId: row.counterpartAccountId,
+          name: account?.name ?? row.counterpartAccountId,
+        };
+      }
+      out.push({
+        flowId: row.flowId,
+        accountId: row.accountId,
+        date: row.date,
+        amount: row.amount,
+        kind: row.kind,
+        counterpartAccountId: row.counterpartAccountId ?? null,
+        counterpartFlowId: row.counterpartFlowId ?? null,
+        counterpartTxnId: row.counterpartTxnId ?? null,
+        evidence: row.evidence ?? null,
+        externalToInvestable: row.externalToInvestable,
+        counterpart,
+      });
+    }
+    return out;
   },
 });

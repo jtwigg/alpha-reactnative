@@ -364,7 +364,28 @@ Streamable HTTP. Clients send `Authorization: Bearer $FINANCE_MCP_TOKEN`. The ro
 https://alpha-theta-silk.vercel.app/api/mcp
 ```
 
-Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` cap 500 ids (Convex `_id` or `sourceId`).
+Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`, `upsert_flows`, `delete_flows`, `upsert_returns`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` / `delete_flows` cap 500 ids (Convex `_id` or `sourceId` / `flowId`).
+
+Time-weighted returns: Finance writes `flows` (keyed by `flowId`) and `returns` (keyed by `scope+window+asOf`). `upsert_returns` replaces every stored row for each `asOf` present in the batch. The app is read-only. `get_digest` adds table-level `flows` and `returns` `{ count, checksum }` — SHA-256 of sorted `finance.v1` content hashes joined by LF, same as `bucketHash`.
+
+```
+upsert_flows({ items: [{
+  flowId, accountId, date, amount,           // amount > 0 = into the investment account
+  kind: "internal_transfer" | "roth_conversion" | "external",
+  counterpartAccountId?, counterpartFlowId?, counterpartTxnId?, evidence?,
+  externalToInvestable: boolean
+}] })                                       // 1–500 items
+
+delete_flows({ ids: string[] })             // 1–500 Convex _id or flowId
+
+upsert_returns({ items: [{
+  scope: "account:<id>" | "total" | "reliable_subset",
+  window: "3M" | "6M" | "YTD" | "1Y" | "3Y" | "SI",
+  asOf, startDate, cumulative, annualized?, // annualized nullable
+  reliable, startOnAnchor, flowsFullyKnown,
+  method: "finance.twr.v1", note?
+}] })                                       // 1–500 items; replaces all rows for each asOf in the batch
+```
 
 Pending → posted: a posted `upsert_transactions` row deletes the pending row named by `pendingTransactionId` (same account). Without a link, a newly inserted posted row replaces at most one pending row on the same account with the same amount, normalized merchant/name, and date within 5 days (closest wins). Replacements and `delete_transactions` calls are written to the `finance_audit_log` table (no public read path). Digests are computed live, so deletes are reflected immediately.
 

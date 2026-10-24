@@ -66,6 +66,20 @@ describe('sentry never logs briefing content', () => {
     expect(scrubbed.date).toBe('2026-01-15');
   });
 
+  it('redacts TWR amounts and never treats finance routes as safe', () => {
+    const scrubbed = scrubSensitive({
+      cumulative: 0.08,
+      annualized: 0.07,
+      flowId: 'flow_1',
+      twr: 0.1,
+    }) as Record<string, unknown>;
+    expect(scrubbed.cumulative).toBe('[redacted]');
+    expect(scrubbed.annualized).toBe('[redacted]');
+    expect(scrubbed.flowId).toBe('[redacted]');
+    expect(scrubbed.twr).toBe('[redacted]');
+    expect(isSensitiveSurface('/finances/account/acc_1')).toBe(true);
+  });
+
   it('treats briefing routes as a sensitive surface', () => {
     expect(isSensitiveSurface('/briefings')).toBe(true);
     expect(isSensitiveSurface('email-briefing-deck')).toBe(true);

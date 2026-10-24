@@ -14,6 +14,7 @@ export const DELETE_ACCOUNT_IDS_MAX = 50;
 export const DELETE_ROW_BATCH = 200;
 export const DELETE_WRITE_BUDGET = 800;
 export const DELETE_TRANSACTION_IDS_MAX = 500;
+export const DELETE_FLOW_IDS_MAX = 500;
 export const PENDING_MATCH_READ_CAP = 500;
 
 export const snapshotSourceValidator = v.union(
@@ -34,7 +35,26 @@ export const financeTableValidator = v.union(
   v.literal('balance_snapshots'),
   v.literal('transactions'),
   v.literal('holdings'),
+  v.literal('flows'),
+  v.literal('returns'),
 );
+
+export const flowKindValidator = v.union(
+  v.literal('internal_transfer'),
+  v.literal('roth_conversion'),
+  v.literal('external'),
+);
+
+export const twrWindowValidator = v.union(
+  v.literal('3M'),
+  v.literal('6M'),
+  v.literal('YTD'),
+  v.literal('1Y'),
+  v.literal('3Y'),
+  v.literal('SI'),
+);
+
+export const twrMethodValidator = v.literal('finance.twr.v1');
 
 export const rowStatusValidator = v.union(
   v.literal('inserted'),
@@ -111,6 +131,107 @@ export const holdingInputValidator = v.object({
   qty: v.number(),
   value: v.number(),
   asOf: v.string(),
+});
+
+export const flowInputValidator = v.object({
+  flowId: v.string(),
+  accountId: v.string(),
+  date: v.string(),
+  amount: v.number(),
+  kind: flowKindValidator,
+  counterpartAccountId: v.optional(v.string()),
+  counterpartFlowId: v.optional(v.string()),
+  counterpartTxnId: v.optional(v.string()),
+  evidence: v.optional(v.string()),
+  externalToInvestable: v.boolean(),
+});
+
+export const returnInputValidator = v.object({
+  scope: v.string(),
+  window: twrWindowValidator,
+  asOf: v.string(),
+  startDate: v.string(),
+  cumulative: v.number(),
+  annualized: v.optional(v.union(v.number(), v.null())),
+  reliable: v.boolean(),
+  startOnAnchor: v.boolean(),
+  flowsFullyKnown: v.boolean(),
+  method: twrMethodValidator,
+  note: v.optional(v.string()),
+});
+
+export const deleteFlowsArgsValidator = v.object({
+  ids: v.array(v.string()),
+});
+
+export const deleteFlowsResultValidator = v.object({
+  requested: v.number(),
+  deleted: v.number(),
+  deletedRows: v.array(
+    v.object({
+      id: v.string(),
+      flowId: v.string(),
+      accountId: v.string(),
+      date: v.string(),
+    }),
+  ),
+  notFound: v.array(v.string()),
+});
+
+export const tableChecksumValidator = v.object({
+  count: v.number(),
+  checksum: v.string(),
+});
+
+export const twrRowValidator = v.object({
+  scope: v.string(),
+  window: twrWindowValidator,
+  asOf: v.string(),
+  startDate: v.string(),
+  cumulative: v.number(),
+  annualized: v.union(v.number(), v.null()),
+  reliable: v.boolean(),
+  startOnAnchor: v.boolean(),
+  flowsFullyKnown: v.boolean(),
+  method: twrMethodValidator,
+  note: v.union(v.string(), v.null()),
+});
+
+export const flowRowValidator = v.object({
+  flowId: v.string(),
+  accountId: v.string(),
+  date: v.string(),
+  amount: v.number(),
+  kind: flowKindValidator,
+  counterpartAccountId: v.union(v.string(), v.null()),
+  counterpartFlowId: v.union(v.string(), v.null()),
+  counterpartTxnId: v.union(v.string(), v.null()),
+  evidence: v.union(v.string(), v.null()),
+  externalToInvestable: v.boolean(),
+  counterpart: v.union(
+    v.object({
+      type: v.literal('transaction'),
+      accountId: v.string(),
+      sourceId: v.string(),
+      name: v.string(),
+      date: v.string(),
+      amount: v.number(),
+    }),
+    v.object({
+      type: v.literal('flow'),
+      accountId: v.string(),
+      flowId: v.string(),
+      date: v.string(),
+      amount: v.number(),
+      kind: flowKindValidator,
+    }),
+    v.object({
+      type: v.literal('account'),
+      accountId: v.string(),
+      name: v.string(),
+    }),
+    v.null(),
+  ),
 });
 
 export const upsertResultValidator = v.object({
@@ -239,6 +360,8 @@ export const digestResultValidator = v.object({
   buckets: v.array(digestBucketValidator),
   continueCursor: v.union(v.string(), v.null()),
   isDone: v.boolean(),
+  flows: tableChecksumValidator,
+  returns: tableChecksumValidator,
 });
 
 export const exportBucketArgsValidator = v.object({

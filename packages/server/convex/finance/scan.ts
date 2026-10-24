@@ -17,7 +17,7 @@ export const TABLE_ORDER: FinanceTable[] = [
   'holdings',
 ];
 
-export type DateIndexedTable = Exclude<FinanceTable, 'accounts'>;
+export type DateIndexedTable = Exclude<FinanceTable, 'accounts' | 'flows' | 'returns'>;
 
 export const TABLE_DATE_FIELD: Record<DateIndexedTable, 'asOf' | 'date'> = {
   balance_snapshots: 'asOf',
@@ -238,6 +238,7 @@ export async function collectDigestPage(
         break tableLoop;
       }
 
+      if (table === 'flows' || table === 'returns') continue;
       if (table === 'accounts') {
         const account = await source.loadAccountBucket(accountId);
         documentsRead += 1;
@@ -257,14 +258,15 @@ export async function collectDigestPage(
         continue;
       }
 
+      const dated = table as DateIndexedTable;
       const first = await source.firstDate(
-        table,
+        dated,
         accountId,
         args.fromDate,
         args.toDate,
       );
       const last = await source.lastDate(
-        table,
+        dated,
         accountId,
         args.fromDate,
         args.toDate,
@@ -289,7 +291,7 @@ export async function collectDigestPage(
           stoppedEarly = true;
           break tableLoop;
         }
-        const rows = await source.rowsInMonth(table, accountId, current);
+        const rows = await source.rowsInMonth(dated, accountId, current);
         documentsRead += rows.length;
         if (rows.length === 0) continue;
         await emit(table, accountId, current, rows);
