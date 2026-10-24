@@ -1,12 +1,12 @@
-const bundleIdentifier = process.env.IOS_BUNDLE_IDENTIFIER ?? 'com.example.johnsapp';
+const bundleIdentifier = process.env.IOS_BUNDLE_IDENTIFIER ?? 'com.twigg.alpha';
 const androidPackage = process.env.ANDROID_PACKAGE ?? 'com.example.johnsapp';
 // Filled by `eas init` / `eas update:configure`, or set EAS_PROJECT_ID.
-const projectId = process.env.EAS_PROJECT_ID;
+const projectId = process.env.EAS_PROJECT_ID ?? '45f0cfd7-2b50-4deb-b537-b5e44f76b937';
 
 module.exports = ({ config }) => ({
   ...config,
-  name: "John's App",
-  slug: 'johns-app',
+  name: 'Alpha',
+  slug: 'alpha-mono',
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
@@ -32,6 +32,7 @@ module.exports = ({ config }) => ({
     supportsTablet: true,
     bundleIdentifier,
     infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
       NSMicrophoneUsageDescription:
         'Allow microphone access so you can dictate chat messages.',
     },
@@ -83,5 +84,5 @@ module.exports = ({ config }) => ({
       projectId,
     },
   },
-  ...(process.env.EXPO_OWNER ? { owner: process.env.EXPO_OWNER } : {}),
+  owner: process.env.EXPO_OWNER ?? 'asdf989',
 });
