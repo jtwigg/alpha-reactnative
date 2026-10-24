@@ -11,9 +11,18 @@ import {
   addDeleteCounts,
   affectedBuckets,
   emptyDeleteCounts,
+  normalizeDeleteFlowIds,
   normalizeDeleteIds,
   normalizeDeleteTransactionIds,
 } from './delete';
+import {
+  assertFlowKind,
+  assertReturnMethod,
+  assertReturnScope,
+  assertReturnWindow,
+  dedupeReturnsByKey,
+  groupByAsOf,
+} from './twrModel';
 import { isLinkedPending, pendingWindow, pickPendingMatch, type PendingMatch } from './pending';
 import { transactionBucketDigests } from './sync';
 import {
@@ -43,6 +52,10 @@ import {
   holdingInputValidator,
   snapshotInputValidator,
   transactionInputValidator,
+  flowInputValidator,
+  returnInputValidator,
+  deleteFlowsArgsValidator,
+  deleteFlowsResultValidator,
   upsertResultValidator,
   upsertTransactionsResultValidator,
 } from './validators';
@@ -93,6 +106,33 @@ type HoldingInput = {
   qty: number;
   value: number;
   asOf: string;
+};
+
+type FlowInput = {
+  flowId: string;
+  accountId: string;
+  date: string;
+  amount: number;
+  kind: 'internal_transfer' | 'roth_conversion' | 'external';
+  counterpartAccountId?: string;
+  counterpartFlowId?: string;
+  counterpartTxnId?: string;
+  evidence?: string;
+  externalToInvestable: boolean;
+};
+
+type ReturnInput = {
+  scope: string;
+  window: '3M' | '6M' | 'YTD' | '1Y' | '3Y' | 'SI';
+  asOf: string;
+  startDate: string;
+  cumulative: number;
+  annualized?: number | null;
+  reliable: boolean;
+  startOnAnchor: boolean;
+  flowsFullyKnown: boolean;
+  method: 'finance.twr.v1';
+  note?: string;
 };
 
 function optionalDate(value: string | undefined, field: string): void {
@@ -476,6 +516,150 @@ export const upsertHoldings = internalMutation({
   },
 });
 
+function flowFields(item: FlowInput): FlowInput {
+  assertFlowKind(item.kind);
+  return omitUndefined({
+    flowId: item.flowId,
+    accountId: item.accountId,
+    date: item.date,
+    amount: item.amount,
+    kind: item.kind,
+    counterpartAccountId: item.counterpartAccountId,
+    counterpartFlowId: item.counterpartFlowId,
+    counterpartTxnId: item.counterpartTxnId,
+    evidence: item.evidence,
+    externalToInvestable: item.externalToInvestable,
+  });
+}
+
+function returnFields(item: ReturnInput): ReturnInput {
+  assertReturnScope(item.scope);
+  assertReturnWindow(item.window);
+  assertReturnMethod(item.method);
+  return omitUndefined({
+    ...item,
+    annualized: item.annualized ?? undefined,
+  });
+}
+
+export const upsertFlows = internalMutation({
+  args: { items: v.array(flowInputValidator) },
+  returns: upsertResultValidator,
+  handler: async (ctx, { items }) => {
+    assertBatchSize(items.length, BATCH_CAP);
+    const counts = emptyUpsertCounts();
+    const now = Date.now();
+    const lastWins = markBatchWinners(items, (item) => item.flowId, (_item, index) => index);
+    for (let i = 0; i < items.length; i += 1) {
+      const raw = items[i];
+      parseIsoDate(raw.date);
+      const item = flowFields(raw);
+      const key = item.flowId;
+      if (!lastWins[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
+      const contentHash = await financeContentHash('flows', item);
+      const existing = await ctx.db
+        .query('flows')
+        .withIndex('by_flowId', (q) => q.eq('flowId', item.flowId))
+        .unique();
+      const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
+      recordStatus(counts, key, status);
+      if (status === 'unchanged') continue;
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
+      if (existing) await ctx.db.replace(existing._id, doc);
+      else await ctx.db.insert('flows', doc);
+    }
+    return counts;
+  },
+});
+
+export const upsertReturns = internalMutation({
+  args: { items: v.array(returnInputValidator) },
+  returns: upsertResultValidator,
+  handler: async (ctx, { items }) => {
+    assertBatchSize(items.length, BATCH_CAP);
+    const counts = emptyUpsertCounts();
+    const now = Date.now();
+    for (const [asOf, group] of groupByAsOf(items)) {
+      parseIsoDate(asOf);
+      const keep = dedupeReturnsByKey(group);
+      const existing = await ctx.db
+        .query('returns')
+        .withIndex('by_asOf', (q) => q.eq('asOf', asOf))
+        .take(200);
+      const existingByKey = new Map(
+        existing.map((row) => [`${row.scope}|${row.window}`, row] as const),
+      );
+      const keepKeys = new Set(keep.map((item) => `${item.scope}|${item.window}`));
+      for (const row of existing) {
+        if (keepKeys.has(`${row.scope}|${row.window}`)) continue;
+        await ctx.db.delete(row._id);
+      }
+      for (const raw of keep) {
+        parseIsoDate(raw.startDate);
+        const item = returnFields(raw);
+        const key = `${item.scope}|${item.window}|${item.asOf}`;
+        const contentHash = await financeContentHash('returns', {
+          ...item,
+          annualized: item.annualized ?? null,
+        });
+        const found = existingByKey.get(`${item.scope}|${item.window}`);
+        const status = decidePlainWrite(found?.contentHash ?? null, contentHash);
+        recordStatus(counts, key, status);
+        if (status === 'unchanged') continue;
+        const doc = omitUndefined({
+          ...item,
+          annualized: item.annualized ?? undefined,
+          updatedAt: now,
+          contentHash,
+        });
+        if (found) await ctx.db.replace(found._id, doc);
+        else await ctx.db.insert('returns', doc);
+      }
+    }
+    return counts;
+  },
+});
+
+export const deleteFlows = internalMutation({
+  args: deleteFlowsArgsValidator,
+  returns: deleteFlowsResultValidator,
+  handler: async (ctx, args) => {
+    const ids = normalizeDeleteFlowIds(args.ids);
+    const rows = new Map<Id<'flows'>, Doc<'flows'>>();
+    const notFound: string[] = [];
+    for (const id of ids) {
+      const alphaId = ctx.db.normalizeId('flows', id);
+      const row =
+        (alphaId ? await ctx.db.get(alphaId) : null) ??
+        (await ctx.db.query('flows').withIndex('by_flowId', (q) => q.eq('flowId', id)).unique());
+      if (row) rows.set(row._id, row);
+      else notFound.push(id);
+    }
+    const deletedRows = [...rows.values()].map((row) => ({
+      id: row._id as string,
+      flowId: row.flowId,
+      accountId: row.accountId,
+      date: row.date,
+    }));
+    for (const id of rows.keys()) await ctx.db.delete(id);
+    await writeAudit(ctx, {
+      op: 'delete_flows',
+      ids,
+      count: deletedRows.length,
+      details: { deleted: deletedRows, notFound },
+    });
+    return {
+      requested: ids.length,
+      deleted: deletedRows.length,
+      deletedRows,
+      notFound,
+    };
+  },
+});
+
 export const fillGaps = internalMutation({
   args: fillGapsArgsValidator,
   returns: fillGapsResultValidator,
@@ -628,7 +812,7 @@ async function loadAnchors(
 
 async function deleteIndexedBatch(
   ctx: MutationCtx,
-  table: 'balance_snapshots' | 'transactions' | 'holdings',
+  table: 'balance_snapshots' | 'transactions' | 'holdings' | 'flows',
   accountId: string,
   remainingWrites: number,
 ): Promise<number> {
@@ -645,10 +829,15 @@ async function deleteIndexedBatch(
             .query('holdings')
             .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
             .take(take)
-        : await ctx.db
-            .query('balance_snapshots')
-            .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
-            .take(take);
+        : table === 'flows'
+          ? await ctx.db
+              .query('flows')
+              .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
+              .take(take)
+          : await ctx.db
+              .query('balance_snapshots')
+              .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+              .take(take);
   for (const row of rows) {
     await ctx.db.delete(row._id);
   }
@@ -692,6 +881,13 @@ export const deleteAccounts = internalMutation({
         DELETE_WRITE_BUDGET - writes,
       );
       writes = session.snapshots + session.transactions + session.holdings + session.accounts;
+      await deleteIndexedBatch(ctx, 'flows', accountId, DELETE_WRITE_BUDGET - writes);
+      const scoped = await ctx.db
+        .query('returns')
+        .withIndex('by_scope_asOf', (q) => q.eq('scope', `account:${accountId}`))
+        .take(DELETE_ROW_BATCH);
+      for (const row of scoped) await ctx.db.delete(row._id);
+      writes = session.snapshots + session.transactions + session.holdings + session.accounts;
 
       const leftoverSnaps = await ctx.db
         .query('balance_snapshots')
@@ -705,7 +901,11 @@ export const deleteAccounts = internalMutation({
         .query('holdings')
         .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
         .take(1);
-      if (leftoverSnaps.length || leftoverTxns.length || leftoverHolds.length) {
+      const leftoverFlows = await ctx.db
+        .query('flows')
+        .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
+        .take(1);
+      if (leftoverSnaps.length || leftoverTxns.length || leftoverHolds.length || leftoverFlows.length) {
         remainingIds.push(...ids.slice(i));
         break;
       }

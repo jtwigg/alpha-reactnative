@@ -7,6 +7,7 @@ import { AccountGroups, CHANGE_MODES, type AccountTrends, type ChangeMode } from
 import { ChartBlock } from '@/components/finance/benchmark-chart';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CompositionCard } from '@/components/finance/composition-card';
+import { TwrCard } from '@/components/finance/twr-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { HeroValue, changeTone } from '@/components/finance/hero-value';
 import { CoverageMarkerNotes } from '@/components/finance/net-worth-chart';
@@ -29,7 +30,7 @@ import { isClerkConfigured } from '@/lib/convex';
 import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
-import { demoAccountList, demoAccountSparklines, demoNetWorthPage } from '@/lib/finance-fixtures';
+import { demoAccountList, demoAccountSparklines, demoNetWorthPage, demoTwr } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
 import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { useRefreshSpinner } from '@/lib/use-refresh';
@@ -290,6 +291,15 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                   </View>
                 </Card>
               </View>
+
+              <TwrCard
+                scope="reliable_subset"
+                live={hasLive}
+                demo={usingDemo ? demoTwr('reliable_subset') : undefined}
+                allowAllToggle
+                title="Portfolio return"
+                refreshNonce={refreshNonce}
+              />
 
               <CompositionCard
                 live={hasLive}

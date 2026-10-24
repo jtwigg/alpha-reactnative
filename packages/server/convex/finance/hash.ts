@@ -11,7 +11,7 @@
  *      after the last field line.
  *   2. Line 1 is the ASCII header `finance.v1`.
  *   3. Line 2 is the table name (`accounts` | `balance_snapshots` |
- *      `transactions` | `holdings`).
+ *      `transactions` | `holdings` | `flows` | `returns`).
  *   4. Then one `name=value` line per business field, in the **declared**
  *      order for that table (not sorted at runtime). Accounts include
  *      `provider` immediately after `sourceId`; manual accounts hash
@@ -64,6 +64,8 @@ export const FINANCE_TABLES = [
   'balance_snapshots',
   'transactions',
   'holdings',
+  'flows',
+  'returns',
 ] as const;
 
 export type FinanceTable = (typeof FINANCE_TABLES)[number];
@@ -131,11 +133,40 @@ const HOLDING_FIELDS = [
   'asOf',
 ] as const;
 
+const FLOW_FIELDS = [
+  'flowId',
+  'accountId',
+  'date',
+  'amount',
+  'kind',
+  'counterpartAccountId',
+  'counterpartFlowId',
+  'counterpartTxnId',
+  'evidence',
+  'externalToInvestable',
+] as const;
+
+const RETURN_FIELDS = [
+  'scope',
+  'window',
+  'asOf',
+  'startDate',
+  'cumulative',
+  'annualized',
+  'reliable',
+  'startOnAnchor',
+  'flowsFullyKnown',
+  'method',
+  'note',
+] as const;
+
 export const FINANCE_FIELD_ORDER = {
   accounts: ACCOUNT_FIELDS,
   balance_snapshots: SNAPSHOT_FIELDS,
   transactions: TRANSACTION_FIELDS,
   holdings: HOLDING_FIELDS,
+  flows: FLOW_FIELDS,
+  returns: RETURN_FIELDS,
 } as const;
 
 const MONEY_FIELDS = new Set([
@@ -145,9 +176,11 @@ const MONEY_FIELDS = new Set([
   'amount',
   'qty',
   'value',
+  'cumulative',
+  'annualized',
 ]);
 
-const DATE_FIELDS = new Set(['asOf', 'date', 'coverageStart']);
+const DATE_FIELDS = new Set(['asOf', 'date', 'coverageStart', 'startDate']);
 const INTEGER_FIELDS = new Set(['syncedAt']);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

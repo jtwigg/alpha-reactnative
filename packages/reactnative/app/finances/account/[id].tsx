@@ -19,6 +19,7 @@ import {
   type TransactionsStatus,
 } from '@/components/finance/account-sections';
 import { ChartBlock } from '@/components/finance/benchmark-chart';
+import { TwrCard } from '@/components/finance/twr-card';
 import { HeroValue } from '@/components/finance/hero-value';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
@@ -39,9 +40,10 @@ import { useChartColors } from '@/lib/finance-colors';
 import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
-import { demoAccountDetail, demoHoldings, demoTransactions } from '@/lib/finance-fixtures';
+import { demoAccountDetail, demoFlows, demoHoldings, demoTransactions, demoTwr } from '@/lib/finance-fixtures';
 import { BENCHMARKS } from '../../../../server/convex/finance/benchmarks';
 import { groupKeyForClass, trimHistoryToRange } from '../../../../server/convex/finance/accountModel';
+import { accountScope } from '../../../../server/convex/finance/twrModel';
 import { signedAmount, type RangeKey } from '../../../../server/convex/finance/series';
 
 const PAGE_SIZE = 25;
@@ -220,6 +222,17 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
               />
             </View>
           </Card>
+
+          {groupKeyForClass(detail.class) === 'investments' ? (
+            <TwrCard
+              scope={accountScope(sourceId)}
+              live={live}
+              demo={live ? undefined : { windows: demoTwr(accountScope(sourceId)).windows, flows: demoFlows(sourceId) }}
+              title="Time-weighted return"
+              showFlowsFor={sourceId}
+              refreshNonce={refreshNonce}
+            />
+          ) : null}
 
           <HoldingsSection key={`h-${refreshNonce}`} sourceId={sourceId} live={live} accountValue={balance} />
           <TransactionsSection key={`t-${refreshNonce}`} sourceId={sourceId} live={live} />

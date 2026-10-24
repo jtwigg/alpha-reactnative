@@ -1,4 +1,8 @@
-import { DELETE_ACCOUNT_IDS_MAX, DELETE_TRANSACTION_IDS_MAX } from './validators';
+import {
+  DELETE_ACCOUNT_IDS_MAX,
+  DELETE_FLOW_IDS_MAX,
+  DELETE_TRANSACTION_IDS_MAX,
+} from './validators';
 
 export type DeleteCounts = {
   accounts: number;
@@ -44,6 +48,10 @@ export function normalizeDeleteIds(ids: string[]): string[] {
 
 export function normalizeDeleteTransactionIds(ids: string[]): string[] {
   return normalizeIds(ids, 'delete_transactions', DELETE_TRANSACTION_IDS_MAX);
+}
+
+export function normalizeDeleteFlowIds(ids: string[]): string[] {
+  return normalizeIds(ids, 'delete_flows', DELETE_FLOW_IDS_MAX);
 }
 
 /** Unique (accountId, YYYY-MM) transaction buckets touched by a set of rows, sorted. */

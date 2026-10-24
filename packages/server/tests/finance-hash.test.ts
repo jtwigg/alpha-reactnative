@@ -163,6 +163,31 @@ describe('canonicalizeFinanceRow', () => {
       'value',
       'asOf',
     ]);
+    expect([...FINANCE_FIELD_ORDER.flows]).toEqual([
+      'flowId',
+      'accountId',
+      'date',
+      'amount',
+      'kind',
+      'counterpartAccountId',
+      'counterpartFlowId',
+      'counterpartTxnId',
+      'evidence',
+      'externalToInvestable',
+    ]);
+    expect([...FINANCE_FIELD_ORDER.returns]).toEqual([
+      'scope',
+      'window',
+      'asOf',
+      'startDate',
+      'cumulative',
+      'annualized',
+      'reliable',
+      'startOnAnchor',
+      'flowsFullyKnown',
+      'method',
+      'note',
+    ]);
   });
 });
 

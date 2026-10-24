@@ -1,5 +1,5 @@
 const AMOUNT_KEY =
-  /amount|balance|value|worth|price|qty|quantity|dollars?|cents|holding|snapshot|net_?worth|market|cost|cash|equity|liabilit|asset|txn|transaction|gain|pnl|allocat|units?|position|credit|debt|available|principal|interest|nav|total|byclass|series/i;
+  /amount|balance|value|worth|price|qty|quantity|dollars?|cents|holding|snapshot|net_?worth|market|cost|cash|equity|liabilit|asset|txn|transaction|gain|pnl|allocat|units?|position|credit|debt|available|principal|interest|nav|total|byclass|series|twr|flowid|cumulative|annualized|startonanchor|flowsfully/i;
 
 /** Item text, senders, Gmail links, comments — never leave the device toward Sentry. */
 const BRIEFING_CONTENT_KEY =

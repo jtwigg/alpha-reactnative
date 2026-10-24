@@ -202,26 +202,51 @@ export const digest = internalQuery({
     );
     const bounds = rangeBounds(args.from, args.to);
     const cursor = decodeCursor<DigestCursor>(args.cursor);
-    const tables = args.table ? [args.table as FinanceTable] : TABLE_ORDER;
-    const page = await collectDigestPage(convexDigestSource(ctx), {
-      tables,
-      accountId: args.accountId,
-      fromDate: bounds.fromDate,
-      toDate: bounds.toDate,
-      cursor,
-      limit,
-      readBudget: CONVEX_QUERY_READ_BUDGET,
-      hash: bucketHash,
-    });
+    const table = args.table as FinanceTable | undefined;
+    const walkTables =
+      !table || table === 'flows' || table === 'returns' ? TABLE_ORDER : [table];
+    const skipBuckets = table === 'flows' || table === 'returns';
+    const page = skipBuckets
+      ? { buckets: [], continueCursor: null, isDone: true }
+      : await collectDigestPage(convexDigestSource(ctx), {
+          tables: walkTables,
+          accountId: args.accountId,
+          fromDate: bounds.fromDate,
+          toDate: bounds.toDate,
+          cursor,
+          limit,
+          readBudget: CONVEX_QUERY_READ_BUDGET,
+          hash: bucketHash,
+        });
     return {
       buckets: page.buckets,
-      continueCursor: page.continueCursor
-        ? encodeCursor(page.continueCursor)
-        : null,
+      continueCursor: page.continueCursor ? encodeCursor(page.continueCursor) : null,
       isDone: page.isDone,
+      flows: await tableChecksum(
+        (await ctx.db.query('flows').take(4000)).filter((row) => {
+          if (args.accountId && row.accountId !== args.accountId) return false;
+          if (bounds.fromDate && row.date < bounds.fromDate) return false;
+          if (bounds.toDate && row.date > bounds.toDate) return false;
+          return true;
+        }).map((row) => row.contentHash),
+      ),
+      returns: await tableChecksum(
+        (await ctx.db.query('returns').take(4000)).filter((row) => {
+          if (args.accountId && row.scope !== args.accountId && row.scope !== `account:${args.accountId}`) {
+            return false;
+          }
+          if (bounds.fromDate && row.asOf < bounds.fromDate) return false;
+          if (bounds.toDate && row.asOf > bounds.toDate) return false;
+          return true;
+        }).map((row) => row.contentHash),
+      ),
     };
   },
 });
+
+async function tableChecksum(hashes: string[]): Promise<{ count: number; checksum: string }> {
+  return { count: hashes.length, checksum: await bucketHash(hashes) };
+}
 
 function exportLimit(limit?: number): number {
   return Math.min(Math.max(limit ?? EXPORT_PAGE_DEFAULT, 1), EXPORT_PAGE_MAX);
@@ -236,6 +261,9 @@ export const exportBucket = internalQuery({
   args: exportBucketArgsValidator,
   returns: exportBucketResultValidator,
   handler: async (ctx, args) => {
+    if (args.table === 'flows' || args.table === 'returns') {
+      throw new Error('exportBucket: flows and returns use get_digest checksums');
+    }
     if (!isIsoMonth(args.month)) {
       throw new Error('exportBucket: month must be YYYY-MM');
     }

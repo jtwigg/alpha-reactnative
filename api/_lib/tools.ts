@@ -13,7 +13,12 @@ const FINANCE_TABLE = z.enum([
   'balance_snapshots',
   'transactions',
   'holdings',
+  'flows',
+  'returns',
 ]);
+
+const FLOW_KIND = z.enum(['internal_transfer', 'roth_conversion', 'external']);
+const TWR_WINDOW = z.enum(['3M', '6M', 'YTD', '1Y', '3Y', 'SI']);
 
 const accountItem = z.object({
   sourceId: z.string(),
@@ -123,6 +128,51 @@ export const deleteTransactionsSchema = z.object({
     .describe('Alpha transaction ids (Convex _id) and/or source transaction ids (sourceId)'),
 });
 
+const flowItem = z.object({
+  flowId: z.string(),
+  accountId: z.string(),
+  date: z.string().describe('YYYY-MM-DD'),
+  amount: z.number().describe('Positive = into the investment account'),
+  kind: FLOW_KIND,
+  counterpartAccountId: z.string().optional(),
+  counterpartFlowId: z.string().optional(),
+  counterpartTxnId: z.string().optional(),
+  evidence: z.string().optional(),
+  externalToInvestable: z.boolean(),
+});
+
+const returnItem = z.object({
+  scope: z
+    .string()
+    .describe("'account:<id>', 'total', or 'reliable_subset'"),
+  window: TWR_WINDOW,
+  asOf: z.string().describe('YYYY-MM-DD'),
+  startDate: z.string().describe('YYYY-MM-DD'),
+  cumulative: z.number(),
+  annualized: z.number().nullable().optional(),
+  reliable: z.boolean(),
+  startOnAnchor: z.boolean(),
+  flowsFullyKnown: z.boolean(),
+  method: z.literal('finance.twr.v1'),
+  note: z.string().optional(),
+});
+
+export const upsertFlowsSchema = z.object({
+  items: z.array(flowItem).min(1).max(500),
+});
+
+export const deleteFlowsSchema = z.object({
+  ids: z
+    .array(z.string())
+    .min(1)
+    .max(500)
+    .describe('Flow ids (Convex _id) and/or flowId'),
+});
+
+export const upsertReturnsSchema = z.object({
+  items: z.array(returnItem).min(1).max(500),
+});
+
 function asText(result: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -201,7 +251,7 @@ export function registerFinanceTools(
     {
       title: 'Get finance digest',
       description:
-        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Paginate with continueCursor.',
+        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Also returns table-level flows and returns {count, checksum} over sorted finance.v1 content hashes. Paginate with continueCursor.',
       inputSchema: getDigestSchema,
     },
     call('get_digest'),
@@ -249,5 +299,38 @@ export function registerFinanceTools(
       inputSchema: deleteTransactionsSchema,
     },
     call('delete_transactions'),
+  );
+
+  tool(
+    'upsert_flows',
+    {
+      title: 'Upsert TWR flows',
+      description:
+        'Insert or overwrite cash flows used for time-weighted returns. Batch cap 500. Dedup key flowId. amount > 0 is into the investment account. kind is internal_transfer | roth_conversion | external. Returns per-row inserted/updated/unchanged.',
+      inputSchema: upsertFlowsSchema,
+    },
+    call('upsert_flows'),
+  );
+
+  tool(
+    'delete_flows',
+    {
+      title: 'Delete TWR flows',
+      description:
+        'Delete flows by Alpha id (Convex _id) and/or flowId. Max 500 ids. Audit-logged. Digest checksums are computed live.',
+      inputSchema: deleteFlowsSchema,
+    },
+    call('delete_flows'),
+  );
+
+  tool(
+    'upsert_returns',
+    {
+      title: 'Upsert TWR returns',
+      description:
+        "Insert computed time-weighted returns. Batch cap 500. Key is scope+window+asOf. For each asOf in the batch, all stored rows with that asOf are replaced by the batch items for that asOf. scope is 'account:<id>', 'total', or 'reliable_subset'. window is 3M|6M|YTD|1Y|3Y|SI. method must be finance.twr.v1.",
+      inputSchema: upsertReturnsSchema,
+    },
+    call('upsert_returns'),
   );
 }
