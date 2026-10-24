@@ -1,30 +1,62 @@
 import { ClerkProvider, useAuth as useClerkAuth } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
-import { ConvexProviderWithClerk } from 'convex/react-clerk';
-import { type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, type ReactNode } from 'react';
 
 import { SentryAuthObserver } from '@/components/auth/sentry-auth-observer';
-import { getConvexCloudUrl, isClerkConfigured } from '@/lib/convex';
+import {
+  CONVEX_TOKEN_TIMEOUT_MS,
+  getConvexAccessToken,
+  getConvexCloudUrl,
+  isClerkConfigured,
+  withTimeout,
+} from '@/lib/convex';
 
 const convex = new ConvexReactClient(getConvexCloudUrl());
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '';
 
-// Clerk v4's useAuth() is a broader type than ConvexProviderWithClerk expects.
-// Forward getToken options as-is so Convex can request the default session
-// token (no `template`) when Clerk's Convex integration set aud: "convex".
-function useAuthForConvex() {
-  const auth = useClerkAuth();
-  return {
-    isLoaded: auth.isLoaded,
-    isSignedIn: auth.isSignedIn,
-    getToken: (options?: { template?: 'convex'; skipCache?: boolean }) =>
-      auth.getToken(options),
-    orgId: auth.orgId,
-    orgRole: auth.orgRole,
-    sessionId: auth.sessionId,
-    sessionClaims: auth.sessionClaims as Record<string, unknown> | null | undefined,
-  };
+/**
+ * Replaces ConvexProviderWithClerk, whose fetchAccessToken is memoized on
+ * orgId/orgRole only and so keeps the `sessionClaims` from before an in-app
+ * sign-in (null). That stale value sends it down the `convex` JWT template
+ * path, which this Clerk app does not have, so Convex never authenticates.
+ * Here the latest Clerk state is read through a ref at call time and the
+ * callback is rebuilt whenever the session changes.
+ */
+function useConvexAuthFromClerk() {
+  const { isLoaded, isSignedIn, getToken, sessionClaims, sessionId, orgId, orgRole } = useClerkAuth();
+  const latest = useRef({ getToken, sessionClaims });
+  latest.current = { getToken, sessionClaims };
+
+  const fetchAccessToken = useCallback(
+    async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
+      try {
+        const { getToken: currentGetToken, sessionClaims: currentClaims } = latest.current;
+        return await withTimeout(
+          getConvexAccessToken(
+            (options) => currentGetToken(options as Parameters<typeof currentGetToken>[0]),
+            currentClaims,
+            { skipCache: forceRefreshToken },
+          ),
+          CONVEX_TOKEN_TIMEOUT_MS,
+          null,
+        );
+      } catch {
+        return null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionId, orgId, orgRole],
+  );
+
+  return useMemo(
+    () => ({
+      isLoading: !isLoaded,
+      isAuthenticated: isSignedIn ?? false,
+      fetchAccessToken,
+    }),
+    [isLoaded, isSignedIn, fetchAccessToken],
+  );
 }
 
 function useUnauthenticatedConvexAuth() {
@@ -46,10 +78,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <ConvexProviderWithClerk client={convex} useAuth={useAuthForConvex}>
+      <ConvexProviderWithAuth client={convex} useAuth={useConvexAuthFromClerk}>
         <SentryAuthObserver />
         {children}
-      </ConvexProviderWithClerk>
+      </ConvexProviderWithAuth>
     </ClerkProvider>
   );
 }

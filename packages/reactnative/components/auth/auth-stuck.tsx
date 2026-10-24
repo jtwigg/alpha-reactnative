@@ -27,19 +27,23 @@ export function useConvexAuthStuck() {
   const waitingOnConvex = Boolean(isLoaded && isSignedIn && convexLoading && !convexAuthenticated);
   const rejectedByConvex = Boolean(isLoaded && isSignedIn && !convexLoading && !convexAuthenticated);
 
+  // Right after an in-app sign-in Convex briefly reports "not loading, not
+  // authenticated" before its first token round-trip, so rejection gets the
+  // same grace period as loading.
+  const notAuthenticated = waitingOnConvex || rejectedByConvex;
   useEffect(() => {
-    if (!waitingOnConvex) {
+    if (!notAuthenticated) {
       setTimedOut(false);
       return;
     }
     const timer = setTimeout(() => setTimedOut(true), CONVEX_STUCK_MS);
     return () => clearTimeout(timer);
-  }, [waitingOnConvex]);
+  }, [notAuthenticated]);
 
-  const stuck = rejectedByConvex || (waitingOnConvex && (audMismatch || timedOut));
+  const stuck = (waitingOnConvex && audMismatch) || (notAuthenticated && timedOut);
   const diagnostic = useMemo(
-    () => (stuck ? describeConvexAuthStuck(sessionClaims) : null),
-    [sessionClaims, stuck],
+    () => (stuck ? describeConvexAuthStuck(sessionClaims, rejectedByConvex ? 'rejected' : 'loading') : null),
+    [rejectedByConvex, sessionClaims, stuck],
   );
 
   useEffect(() => {
@@ -61,7 +65,7 @@ export function useConvexAuthStuck() {
       expectedAud: diagnostic.details.expectedAud,
       hasConvexAud: hasConvexAudience(sessionClaims),
     });
-    console.error('[auth] Clerk is signed in but Convex useConvexAuth is still loading', {
+    console.error('[auth] Clerk is signed in but Convex is not authenticated', {
       reason: diagnostic.reason,
       ...diagnostic.details,
       clerkIsSignedIn: isSignedIn,
