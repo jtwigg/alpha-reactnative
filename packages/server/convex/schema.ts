@@ -95,6 +95,54 @@ export default defineSchema({
     details: v.optional(v.any()),
   }).index('by_op_at', ['op', 'at']),
 
+  /** One row per (date, personal|crankcase). Structured items only — no email bodies. */
+  briefings: defineTable({
+    date: v.string(),
+    account: v.union(v.literal('personal'), v.literal('crankcase')),
+    deckName: v.union(v.literal('Personal'), v.literal('Crankcase')),
+    headline: v.string(),
+    sub: v.string(),
+    priorityHeading: v.optional(v.string()),
+    glanceHeading: v.optional(v.string()),
+    priorities: v.array(
+      v.object({
+        rank: v.number(),
+        deadline: v.string(),
+        threadId: v.string(),
+        sender: v.string(),
+        gist: v.string(),
+        todo: v.string(),
+        webUrl: v.string(),
+        mobileUrl: v.string(),
+      }),
+    ),
+    glance: v.array(
+      v.object({
+        threadId: v.string(),
+        sender: v.string(),
+        gist: v.string(),
+        webUrl: v.string(),
+        mobileUrl: v.string(),
+      }),
+    ),
+    rest: v.object({
+      total: v.number(),
+      breakdown: v.array(v.object({ label: v.string(), count: v.number() })),
+    }),
+    updatedAt: v.number(),
+  })
+    .index('by_date_account', ['date', 'account'])
+    .index('by_date', ['date']),
+
+  /** Append-only ingest record. No public query. */
+  briefing_audit_log: defineTable({
+    op: v.string(),
+    at: v.number(),
+    date: v.string(),
+    count: v.number(),
+    details: v.optional(v.any()),
+  }).index('by_op_at', ['op', 'at']),
+
   market_index_bars: defineTable({
     symbol: v.string(),
     asOf: v.string(),

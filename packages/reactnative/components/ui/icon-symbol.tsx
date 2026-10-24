@@ -18,6 +18,7 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'bubble.left.fill': 'chat',
   'chart.line.uptrend.xyaxis': 'show-chart',
+  'envelope.fill': 'mail',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
   'chevron.down': 'expand-more',

@@ -369,3 +369,18 @@ Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_hol
 Pending → posted: a posted `upsert_transactions` row deletes the pending row named by `pendingTransactionId` (same account). Without a link, a newly inserted posted row replaces at most one pending row on the same account with the same amount, normalized merchant/name, and date within 5 days (closest wins). Replacements and `delete_transactions` calls are written to the `finance_audit_log` table (no public read path). Digests are computed live, so deletes are reflected immediately.
 
 Local smoke (no deploy): unit tests in `packages/server/tests/finance-mcp.test.ts`. Against `vercel dev`, point the MCP inspector at `http://localhost:3000/api/mcp` with the bearer token.
+
+### Daily email briefings
+
+The Briefings tab (signed-in app, same Clerk allowlist as finance) shows one day at a time with **Personal** and **Crankcase** tabs: top priorities, worth-a-glance, counts, Remember / Stop / Comment, and swipe-left archive with a 5-second undo. Cards keep both Gmail links (desktop `href`, mobile on iOS/Android).
+
+Ingest is server-to-server:
+
+```
+POST https://posh-mink-581.convex.site/briefings/ingest
+Authorization: Bearer $BRIEFINGS_INGEST_SECRET
+```
+
+The body is one calendar day (`personal` + `crankcase`). Re-sends overwrite that date. Schema, a synthetic example, and the feedback webhook body are in [`docs/briefings.md`](docs/briefings.md). Item ids are `date-account-threadId`, not card position.
+
+Feedback is an allowlisted Convex action that POSTs to `FEEDBACK_WEBHOOK_URL` with `Authorization: Bearer $FEEDBACK_WEBHOOK_KEY` and `source: "email-briefing-deck"` — the same payload the old `/api/feedback` forwarded. Those two env vars stay on Convex; they are never `EXPO_PUBLIC_*`. Sentry redacts briefing item text. There is no public query on `briefing_audit_log`.
