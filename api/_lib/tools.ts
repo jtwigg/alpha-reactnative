@@ -55,6 +55,10 @@ const transactionItem = z.object({
   merchant: z.string().optional(),
   category: z.string().optional(),
   pending: z.boolean(),
+  pendingTransactionId: z
+    .string()
+    .optional()
+    .describe('On a posted row: sourceId of the pending row it replaces (same account)'),
 });
 
 const holdingItem = z.object({
@@ -111,6 +115,14 @@ export const deleteAccountsSchema = z.object({
   mergedInto: z.string().optional().describe('Optional account that these ids were merged into'),
 });
 
+export const deleteTransactionsSchema = z.object({
+  ids: z
+    .array(z.string())
+    .min(1)
+    .max(500)
+    .describe('Alpha transaction ids (Convex _id) and/or source transaction ids (sourceId)'),
+});
+
 function asText(result: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -156,7 +168,7 @@ export function registerFinanceTools(
     {
       title: 'Upsert transactions',
       description:
-        'Insert or overwrite transactions. Batch cap 500. Dedup key sourceId. CamelCase fields only. Returns per-row inserted/updated/unchanged.',
+        'Insert or overwrite transactions. Batch cap 500. Dedup key sourceId. CamelCase fields only. A posted (pending=false) row replaces its pending row: pendingTransactionId deletes the pending row with that sourceId on the same account; otherwise a newly inserted posted row replaces at most one pending row on the same account with the same amount, same normalized merchant/name, and date within 5 days (closest wins). Replacements are audit-logged. Returns per-row inserted/updated/unchanged plus replacedPending (with byLink/byMatch counts and replacements).',
       inputSchema: upsertTransactionsSchema,
     },
     call('upsert_transactions'),
@@ -226,5 +238,16 @@ export function registerFinanceTools(
       inputSchema: deleteAccountsSchema,
     },
     call('delete_accounts'),
+  );
+
+  tool(
+    'delete_transactions',
+    {
+      title: 'Delete transactions',
+      description:
+        'Delete transactions by Alpha id (Convex _id) and/or sourceId. Max 500 ids. Audit-logged. Digest is computed live, so get_digest reflects the delete immediately; the response includes recomputed digest buckets for each affected (accountId, month). Returns requested, deleted, deletedRows, and notFound.',
+      inputSchema: deleteTransactionsSchema,
+    },
+    call('delete_transactions'),
   );
 }
