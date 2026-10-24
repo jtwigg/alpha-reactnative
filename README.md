@@ -364,6 +364,8 @@ Streamable HTTP. Clients send `Authorization: Bearer $FINANCE_MCP_TOKEN`. The ro
 https://alpha-theta-silk.vercel.app/api/mcp
 ```
 
-Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`. Upsert batch cap 500; `fill_gaps` write cap 800.
+Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` cap 500 ids (Convex `_id` or `sourceId`).
+
+Pending → posted: a posted `upsert_transactions` row deletes the pending row named by `pendingTransactionId` (same account). Without a link, a newly inserted posted row replaces at most one pending row on the same account with the same amount, normalized merchant/name, and date within 5 days (closest wins). Replacements and `delete_transactions` calls are written to the `finance_audit_log` table (no public read path). Digests are computed live, so deletes are reflected immediately.
 
 Local smoke (no deploy): unit tests in `packages/server/tests/finance-mcp.test.ts`. Against `vercel dev`, point the MCP inspector at `http://localhost:3000/api/mcp` with the bearer token.
