@@ -9,7 +9,7 @@ import {
   monthStart,
   rangeBounds,
 } from './dates';
-import { decodeCursor, encodeCursor } from './lib';
+import { decodeCursor, encodeCursor, formatFixedSum } from './lib';
 import {
   collectDigestPage,
   decodeExportCursor,
@@ -129,6 +129,29 @@ async function monthRows(
     )
     .take(2000);
   return rows.map((row) => ({ contentHash: row.contentHash, amount: row.value }));
+}
+
+/**
+ * Fresh digest buckets for specific (accountId, month) transaction buckets,
+ * computed exactly like `digest` so callers can reconcile right after a write.
+ */
+export async function transactionBucketDigests(
+  ctx: QueryCtx,
+  buckets: { accountId: string; month: string }[],
+) {
+  const out = [];
+  for (const { accountId, month } of buckets) {
+    const rows = await monthRows(ctx, 'transactions', accountId, month);
+    out.push({
+      table: 'transactions' as const,
+      accountId,
+      month,
+      count: rows.length,
+      sum: formatFixedSum(rows.map((row) => row.amount)),
+      bucketHash: await bucketHash(rows.map((row) => row.contentHash)),
+    });
+  }
+  return out;
 }
 
 function convexDigestSource(ctx: QueryCtx): DigestSource {

@@ -86,6 +86,15 @@ export default defineSchema({
     .index('by_account_symbol_asOf', ['accountId', 'symbol', 'asOf'])
     .index('by_account_asOf', ['accountId', 'asOf']),
 
+  /** Append-only record of destructive finance writes (deletes, pending→posted replacements). */
+  finance_audit_log: defineTable({
+    op: v.string(),
+    at: v.number(),
+    ids: v.array(v.string()),
+    count: v.number(),
+    details: v.optional(v.any()),
+  }).index('by_op_at', ['op', 'at']),
+
   market_index_bars: defineTable({
     symbol: v.string(),
     asOf: v.string(),

@@ -13,6 +13,8 @@ export const CONVEX_QUERY_READ_BUDGET = 3200;
 export const DELETE_ACCOUNT_IDS_MAX = 50;
 export const DELETE_ROW_BATCH = 200;
 export const DELETE_WRITE_BUDGET = 800;
+export const DELETE_TRANSACTION_IDS_MAX = 500;
+export const PENDING_MATCH_READ_CAP = 500;
 
 export const snapshotSourceValidator = v.union(
   v.literal('manual'),
@@ -99,6 +101,8 @@ export const transactionInputValidator = v.object({
   merchant: v.optional(v.string()),
   category: v.optional(v.string()),
   pending: v.boolean(),
+  /** Provider's id for the pending row this posted row replaces. Not stored or hashed. */
+  pendingTransactionId: v.optional(v.string()),
 });
 
 export const holdingInputValidator = v.object({
@@ -118,6 +122,58 @@ export const upsertResultValidator = v.object({
     v.object({
       key: v.string(),
       status: rowStatusValidator,
+    }),
+  ),
+});
+
+export const pendingReplacementValidator = v.object({
+  postedId: v.string(),
+  pendingId: v.string(),
+  accountId: v.string(),
+  match: v.union(v.literal('pending_transaction_id'), v.literal('fuzzy')),
+});
+
+export const upsertTransactionsResultValidator = v.object({
+  inserted: v.number(),
+  updated: v.number(),
+  unchanged: v.number(),
+  skippedLowerPrecedence: v.number(),
+  results: v.array(
+    v.object({
+      key: v.string(),
+      status: rowStatusValidator,
+    }),
+  ),
+  replacedPending: v.number(),
+  replacedPendingByLink: v.number(),
+  replacedPendingByMatch: v.number(),
+  replacements: v.array(pendingReplacementValidator),
+});
+
+export const deleteTransactionsArgsValidator = v.object({
+  ids: v.array(v.string()),
+});
+
+export const deleteTransactionsResultValidator = v.object({
+  requested: v.number(),
+  deleted: v.number(),
+  deletedRows: v.array(
+    v.object({
+      id: v.string(),
+      sourceId: v.string(),
+      accountId: v.string(),
+      date: v.string(),
+    }),
+  ),
+  notFound: v.array(v.string()),
+  digest: v.array(
+    v.object({
+      table: v.literal('transactions'),
+      accountId: v.string(),
+      month: v.string(),
+      count: v.number(),
+      sum: v.string(),
+      bucketHash: v.string(),
     }),
   ),
 });

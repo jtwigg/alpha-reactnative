@@ -2,16 +2,20 @@ import { internalMutation } from '../_generated/server';
 import { internal } from '../_generated/api';
 import { v } from 'convex/values';
 import type { MutationCtx } from '../_generated/server';
-import type { Id } from '../_generated/dataModel';
+import type { Doc, Id } from '../_generated/dataModel';
 import { financeContentHash } from './hash';
 import type { SnapshotSource } from './hash';
 import { parseIsoDate } from './dates';
 import { fillGapsWindow } from './scan';
 import {
   addDeleteCounts,
+  affectedBuckets,
   emptyDeleteCounts,
   normalizeDeleteIds,
+  normalizeDeleteTransactionIds,
 } from './delete';
+import { isLinkedPending, pendingWindow, pickPendingMatch, type PendingMatch } from './pending';
+import { transactionBucketDigests } from './sync';
 import {
   assertBatchSize,
   decidePlainWrite,
@@ -28,8 +32,11 @@ import {
   DELETE_WRITE_BUDGET,
   FILL_GAPS_READ_CAP,
   FILL_GAPS_WRITE_CAP,
+  PENDING_MATCH_READ_CAP,
   deleteAccountsArgsValidator,
   deleteAccountsResultValidator,
+  deleteTransactionsArgsValidator,
+  deleteTransactionsResultValidator,
   accountInputValidator,
   fillGapsArgsValidator,
   fillGapsResultValidator,
@@ -37,6 +44,7 @@ import {
   snapshotInputValidator,
   transactionInputValidator,
   upsertResultValidator,
+  upsertTransactionsResultValidator,
 } from './validators';
 
 type AccountInput = {
@@ -76,6 +84,7 @@ type TransactionInput = {
   merchant?: string;
   category?: string;
   pending: boolean;
+  pendingTransactionId?: string;
 };
 
 type HoldingInput = {
@@ -259,9 +268,52 @@ export const upsertSnapshots = internalMutation({
   },
 });
 
+type PendingReplacement = { postedId: string; pendingId: string; accountId: string; match: PendingMatch };
+
+async function writeAudit(
+  ctx: MutationCtx,
+  entry: { op: string; ids: string[]; count: number; details?: unknown },
+): Promise<void> {
+  await ctx.db.insert('finance_audit_log', omitUndefined({ ...entry, at: Date.now() }));
+}
+
+async function findPendingReplacement(
+  ctx: MutationCtx,
+  posted: TransactionInput,
+  excluded: ReadonlySet<string>,
+  allowFuzzy: boolean,
+): Promise<{ row: Doc<'transactions'>; match: PendingMatch } | null> {
+  const linkedId = posted.pendingTransactionId?.trim();
+  if (linkedId && linkedId !== posted.sourceId && !excluded.has(linkedId)) {
+    const linked = await ctx.db
+      .query('transactions')
+      .withIndex('by_sourceId', (q) => q.eq('sourceId', linkedId))
+      .unique();
+    if (linked && isLinkedPending(posted, linked)) return { row: linked, match: 'pending_transaction_id' };
+  }
+  if (!allowFuzzy) return null;
+  const window = pendingWindow(posted.date);
+  const candidates = await ctx.db
+    .query('transactions')
+    .withIndex('by_account_date', (q) =>
+      q.eq('accountId', posted.accountId).gte('date', window.from).lte('date', window.to),
+    )
+    .take(PENDING_MATCH_READ_CAP);
+  const row = pickPendingMatch(posted, candidates, excluded);
+  return row ? { row, match: 'fuzzy' } : null;
+}
+
+/**
+ * Posted rows replace the pending row they settle: first by the provider's
+ * `pendingTransactionId` (same account, still pending), else by a single
+ * fuzzy match (same account, amount, normalized payee, ±5 days, closest).
+ * The fuzzy path only runs when the posted row is new, so re-sending an
+ * unchanged posted row never removes a later, unrelated pending charge.
+ * Pending rows that are themselves in the batch are never replaced.
+ */
 export const upsertTransactions = internalMutation({
   args: { items: v.array(transactionInputValidator) },
-  returns: upsertResultValidator,
+  returns: upsertTransactionsResultValidator,
   handler: async (ctx, { items }) => {
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
@@ -271,8 +323,11 @@ export const upsertTransactions = internalMutation({
       (item) => item.sourceId,
       (_item, index) => index,
     );
+    const batchIds = new Set(items.map((item) => item.sourceId));
+    const claimed = new Set<string>(batchIds);
+    const replacements: PendingReplacement[] = [];
     for (let i = 0; i < items.length; i += 1) {
-      const item = items[i];
+      const { pendingTransactionId, ...item } = items[i];
       parseIsoDate(item.date);
       const key = item.sourceId;
       if (!lastWins[i]) {
@@ -286,15 +341,94 @@ export const upsertTransactions = internalMutation({
         .unique();
       const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
       recordStatus(counts, key, status);
-      if (status === 'unchanged') continue;
-      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
-      if (existing) {
-        await ctx.db.replace(existing._id, doc);
-      } else {
-        await ctx.db.insert('transactions', doc);
+      if (status !== 'unchanged') {
+        const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
+        if (existing) {
+          await ctx.db.replace(existing._id, doc);
+        } else {
+          await ctx.db.insert('transactions', doc);
+        }
       }
+
+      if (item.pending) continue;
+      const allowFuzzy = status === 'inserted';
+      if (!pendingTransactionId && !allowFuzzy) continue;
+      const found = await findPendingReplacement(ctx, { ...item, pendingTransactionId }, claimed, allowFuzzy);
+      if (!found) continue;
+      claimed.add(found.row.sourceId);
+      await ctx.db.delete(found.row._id);
+      replacements.push({
+        postedId: item.sourceId,
+        pendingId: found.row.sourceId,
+        accountId: item.accountId,
+        match: found.match,
+      });
     }
-    return counts;
+
+    if (replacements.length > 0) {
+      await writeAudit(ctx, {
+        op: 'upsert_transactions.replace_pending',
+        ids: replacements.map((r) => r.pendingId),
+        count: replacements.length,
+        details: { replacements },
+      });
+    }
+    const byLink = replacements.filter((r) => r.match === 'pending_transaction_id').length;
+    return {
+      ...counts,
+      replacedPending: replacements.length,
+      replacedPendingByLink: byLink,
+      replacedPendingByMatch: replacements.length - byLink,
+      replacements,
+    };
+  },
+});
+
+/**
+ * Delete transactions by Alpha id (Convex `_id`) or by `sourceId` (the
+ * upsert key). Unknown ids are reported, not errors. Writes one audit entry
+ * and returns the recomputed digest for every touched (account, month).
+ */
+export const deleteTransactions = internalMutation({
+  args: deleteTransactionsArgsValidator,
+  returns: deleteTransactionsResultValidator,
+  handler: async (ctx, args) => {
+    const ids = normalizeDeleteTransactionIds(args.ids);
+    const rows = new Map<Id<'transactions'>, Doc<'transactions'>>();
+    const notFound: string[] = [];
+    for (const id of ids) {
+      const alphaId = ctx.db.normalizeId('transactions', id);
+      const row =
+        (alphaId ? await ctx.db.get(alphaId) : null) ??
+        (await ctx.db
+          .query('transactions')
+          .withIndex('by_sourceId', (q) => q.eq('sourceId', id))
+          .unique());
+      if (row) rows.set(row._id, row);
+      else notFound.push(id);
+    }
+    const deletedRows = [...rows.values()].map((row) => ({
+      id: row._id as string,
+      sourceId: row.sourceId,
+      accountId: row.accountId,
+      date: row.date,
+    }));
+    for (const id of rows.keys()) await ctx.db.delete(id);
+
+    await writeAudit(ctx, {
+      op: 'delete_transactions',
+      ids,
+      count: deletedRows.length,
+      details: { deleted: deletedRows, notFound },
+    });
+
+    return {
+      requested: ids.length,
+      deleted: deletedRows.length,
+      deletedRows,
+      notFound,
+      digest: await transactionBucketDigests(ctx, affectedBuckets(deletedRows)),
+    };
   },
 });
 

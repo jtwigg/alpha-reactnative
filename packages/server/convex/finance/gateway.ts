@@ -14,6 +14,7 @@ export const FINANCE_OPS = [
   'export_bucket',
   'list_accounts',
   'delete_accounts',
+  'delete_transactions',
 ] as const;
 
 export type FinanceOp = (typeof FINANCE_OPS)[number];
@@ -83,6 +84,10 @@ export async function dispatchFinanceOp(
       return await ctx.runMutation(internal.finance.ingest.deleteAccounts, {
         ids: args.ids,
         mergedInto: args.mergedInto,
+      });
+    case 'delete_transactions':
+      return await ctx.runMutation(internal.finance.ingest.deleteTransactions, {
+        ids: args.ids,
       });
     default:
       throw new Error(`Unknown finance op: ${op}`);
