@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest';
+import {
+  APP_VERSION,
+  JS_OTA_BUILD,
+  formatBuildDetail,
+  formatPacific,
+  jsVersionLabel,
+  shortUpdateId,
+} from '../../reactnative/lib/app-version';
+
+describe('app version stamp', () => {
+  it('keeps the binary version at 1.0.0 and starts the JS OTA counter at 2', () => {
+    expect(APP_VERSION).toBe('1.0.0');
+    expect(JS_OTA_BUILD).toBe(2);
+    expect(jsVersionLabel()).toBe('v1.0.0 (ota 2)');
+  });
+
+  it('shortens an expo-updates UUID and formats createdAt in Pacific time', () => {
+    expect(shortUpdateId('a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBe('a1b2c3d4');
+    expect(shortUpdateId(null)).toBeNull();
+    // 2026-10-24T23:12:00Z is 4:12 PM PDT
+    expect(formatPacific(new Date('2026-10-24T23:12:00.000Z'))).toBe('Oct 24, 2026, 4:12 PM PDT');
+    expect(
+      formatBuildDetail({
+        updateId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+        createdAt: new Date('2026-10-24T23:12:00.000Z'),
+        embedded: false,
+      }),
+    ).toBe('1.0.0 · a1b2c3d4 · Oct 24, 2026, 4:12 PM PDT');
+  });
+
+  it('says embedded when there is no downloaded update', () => {
+    expect(formatBuildDetail({ updateId: null, createdAt: null, embedded: true })).toBe(
+      '1.0.0 · embedded',
+    );
+    expect(
+      formatBuildDetail({
+        updateId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+        createdAt: new Date('2026-10-24T23:12:00.000Z'),
+        embedded: true,
+      }),
+    ).toBe('1.0.0 · embedded');
+  });
+});

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AppBuildLabel } from '@/components/app-build-label';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
@@ -19,7 +20,19 @@ import { isClerkConfigured } from '@/lib/convex';
 
 export default function HomeScreen() {
   if (!isClerkConfigured()) {
-    return null;
+    return (
+      <ThemedView style={styles.flex}>
+        <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
+          <View style={styles.header}>
+            <View style={styles.headerText}>
+              <ThemedText type="title">Home</ThemedText>
+            </View>
+          </View>
+          <View style={styles.flex} />
+          <AppBuildLabel />
+        </SafeAreaView>
+      </ThemedView>
+    );
   }
   return <SignedInHome />;
 }
@@ -58,7 +71,7 @@ function SignedInHome() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <View style={styles.headerText}>
             <ThemedText type="title">{greeting ?? 'Home'}</ThemedText>
@@ -118,6 +131,7 @@ function SignedInHome() {
             </View>
           )}
         />
+        <AppBuildLabel />
       </SafeAreaView>
     </ThemedView>
   );
