@@ -27,6 +27,7 @@ import {
   rollupUnchanged,
   shouldPatchRebuildState,
   ROLLUP_DIRTY_DRAIN,
+  ROLLUP_STALE_MS,
   type ComputedDay,
   type DirtyTouch,
   type RebuildCursor,
@@ -595,6 +596,34 @@ export const rebuildStep = internalMutation({
   returns: rebuildStepResultValidator,
   handler: async (ctx, args) => {
     const state = await getOrCreateState(ctx);
+    // Self-heal: a step that throws (e.g. timeout) kills the chain silently. If the
+    // state is stale, resume from the saved cursor with half the span.
+    if (
+      args.stepId == null &&
+      (state.status === 'rebuilding' || state.status === 'pending') &&
+      state.cursor &&
+      Date.now() - state.updatedAt > ROLLUP_STALE_MS
+    ) {
+      const saved = decodeRebuildCursor(state.cursor);
+      if (saved) {
+        const prev = saved.span ?? 30;
+        const resumed: RebuildCursor = { ...saved, span: Math.max(1, Math.floor(prev / 2)) };
+        console.warn('rollup rebuild chain stalled; resuming', resumed.day, 'span', resumed.span);
+        await ctx.db.patch(state._id, { cursor: encodeRebuildCursor(resumed), updatedAt: Date.now() });
+        await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {
+          stepId: state.version,
+          cursor: encodeRebuildCursor(resumed),
+        });
+        return {
+          done: false,
+          status: state.status,
+          wrote: 0,
+          from: resumed.from,
+          to: resumed.to,
+          rebuiltThrough: state.rebuiltThrough ?? null,
+        };
+      }
+    }
     if (args.stepId == null && state.status === 'rebuilding' && state.cursor) {
       return {
         done: false,
@@ -712,6 +741,7 @@ export const rebuildStep = internalMutation({
       to: cursor.to,
       day: cursor.day,
       accountCount: accounts.length,
+      span: cursor.span,
     });
     const wrote = span.start <= span.end ? await rebuildSpan(ctx, span.start, span.end, state.version) : 0;
 
