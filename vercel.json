@@ -22,11 +22,31 @@
       "headers": [
         { "key": "Content-Type", "value": "application/json" }
       ]
+    },
+    {
+      "source": "/well-known/apple-app-site-association.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" }
+      ]
+    },
+    {
+      "source": "/well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" }
+      ]
     }
   ],
   "rewrites": [
     {
-      "source": "/((?!_expo(?:/|$)|assets(?:/|$)|api(?:/|$)|\\.well-known(?:/|$)).*)",
+      "source": "/.well-known/apple-app-site-association",
+      "destination": "/well-known/apple-app-site-association.json"
+    },
+    {
+      "source": "/.well-known/assetlinks.json",
+      "destination": "/well-known/assetlinks.json"
+    },
+    {
+      "source": "/((?!_expo(?:/|$)|assets(?:/|$)|api(?:/|$)|\\.well-known(?:/|$)|well-known(?:/|$)).*)",
       "destination": "/index.html"
     }
   ]

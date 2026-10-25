@@ -57,10 +57,20 @@ const assetLinks = [
 ];
 
 function writeDir(dir) {
-  const wellKnown = join(dir, '.well-known');
-  mkdirSync(wellKnown, { recursive: true });
-  writeFileSync(join(wellKnown, 'apple-app-site-association'), `${JSON.stringify(aasa)}\n`);
-  writeFileSync(join(wellKnown, 'assetlinks.json'), `${JSON.stringify(assetLinks, null, 2)}\n`);
+  const aasaBody = `${JSON.stringify(aasa)}\n`;
+  const assetBody = `${JSON.stringify(assetLinks, null, 2)}\n`;
+
+  const hidden = join(dir, '.well-known');
+  mkdirSync(hidden, { recursive: true });
+  writeFileSync(join(hidden, 'apple-app-site-association'), aasaBody);
+  writeFileSync(join(hidden, 'assetlinks.json'), assetBody);
+
+  // Non-dot .json copies: Vercel static output often skips hidden dirs and
+  // extensionless files. vercel.json rewrites the spec URLs onto these.
+  const visible = join(dir, 'well-known');
+  mkdirSync(visible, { recursive: true });
+  writeFileSync(join(visible, 'apple-app-site-association.json'), aasaBody);
+  writeFileSync(join(visible, 'assetlinks.json'), assetBody);
 }
 
 const dests = [join(appRoot, 'public')];
