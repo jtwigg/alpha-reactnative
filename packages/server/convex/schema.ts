@@ -169,6 +169,7 @@ export default defineSchema({
     sp500Equiv: v.number(),
     valueInterpolated: v.boolean(),
     estimated: v.boolean(),
+    method: v.optional(v.string()),
     updatedAt: v.number(),
     contentHash: v.string(),
   })
@@ -195,7 +196,8 @@ export default defineSchema({
     contentHash: v.string(),
   })
     .index('by_flowId', ['flowId'])
-    .index('by_account_date', ['accountId', 'date']),
+    .index('by_account_date', ['accountId', 'date'])
+    .index('by_date', ['date']),
 
   /**
    * Materialized net-worth layers. One row per (grain, scopeKind, scopeId, asOf).
@@ -261,4 +263,11 @@ export default defineSchema({
     .index('by_scope_window_asOf', ['scope', 'window', 'asOf'])
     .index('by_scope_asOf', ['scope', 'asOf'])
     .index('by_asOf', ['asOf']),
+
+  /** First `upsert_series` batch of a replaceScope rewrite, keyed by replaceBatchId. */
+  series_replace_batches: defineTable({
+    batchId: v.string(),
+    scopes: v.array(v.string()),
+    createdAt: v.number(),
+  }).index('by_batchId', ['batchId']),
 });

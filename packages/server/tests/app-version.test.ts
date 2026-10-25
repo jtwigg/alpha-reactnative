@@ -11,8 +11,8 @@ import {
 describe('app version stamp', () => {
   it('keeps the binary version at 1.0.0 and bumps the JS OTA counter', () => {
     expect(APP_VERSION).toBe('1.0.0');
-    expect(JS_OTA_BUILD).toBe(8);
-    expect(jsVersionLabel()).toBe('v1.0.0 (ota 8)');
+    expect(JS_OTA_BUILD).toBe(9);
+    expect(jsVersionLabel()).toBe('v1.0.0 (ota 9)');
   });
 
   it('shortens an expo-updates UUID and formats createdAt in Pacific time', () => {

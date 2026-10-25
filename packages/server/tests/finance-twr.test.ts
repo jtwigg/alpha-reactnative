@@ -107,7 +107,18 @@ describe('gateway TWR ops', () => {
     await dispatchFinanceOp({ runMutation, runQuery }, 'delete_flows', { ids: ['flow_wf_1'] });
     await dispatchFinanceOp({ runMutation, runQuery }, 'upsert_returns', { items: [RETURN] });
     await dispatchFinanceOp({ runMutation, runQuery }, 'upsert_series', {
-      items: [{ scope: 'total', date: '2026-10-23', value: 1, netInvested: 1, sp500Equiv: 1, valueInterpolated: false, estimated: false }],
+      items: [{
+        scope: 'total',
+        date: '2026-10-23',
+        value: 1,
+        netInvested: 1,
+        sp500Equiv: 1,
+        valueInterpolated: false,
+        estimated: false,
+        method: 'finance.bench.v1',
+      }],
+      replaceScope: true,
+      replaceBatchId: 'rewrite-1',
     });
     await dispatchFinanceOp({ runMutation, runQuery }, 'delete_series', {
       scope: 'total',

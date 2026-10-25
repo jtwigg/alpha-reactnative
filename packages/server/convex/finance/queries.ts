@@ -438,15 +438,38 @@ export const twr = query({
 });
 
 export const flows = query({
-  args: { accountId: v.string(), refreshNonce: v.optional(v.number()) },
+  args: {
+    accountId: v.optional(v.string()),
+    from: v.optional(v.string()),
+    to: v.optional(v.string()),
+    refreshNonce: v.optional(v.number()),
+  },
   returns: v.array(flowRowValidator),
   handler: async (ctx, args) => {
     await requireAllowedIdentity(ctx);
-    const rows = await ctx.db
-      .query('flows')
-      .withIndex('by_account_date', (q) => q.eq('accountId', args.accountId))
-      .order('desc')
-      .take(200);
+    const rows = args.accountId
+      ? await ctx.db
+          .query('flows')
+          .withIndex('by_account_date', (q) => {
+            const base = q.eq('accountId', args.accountId as string);
+            if (args.from && args.to) return base.gte('date', args.from).lte('date', args.to);
+            if (args.from) return base.gte('date', args.from);
+            if (args.to) return base.lte('date', args.to);
+            return base;
+          })
+          .order('desc')
+          .take(200)
+      : args.from || args.to
+        ? await ctx.db
+            .query('flows')
+            .withIndex('by_date', (q) => {
+              if (args.from && args.to) return q.gte('date', args.from).lte('date', args.to);
+              if (args.from) return q.gte('date', args.from);
+              return q.lte('date', args.to as string);
+            })
+            .order('desc')
+            .take(200)
+        : await ctx.db.query('flows').withIndex('by_date').order('desc').take(200);
     const out: Array<{
       flowId: string;
       accountId: string;

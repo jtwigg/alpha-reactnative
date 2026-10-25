@@ -59,6 +59,7 @@ export const twrWindowValidator = v.union(
 );
 
 export const twrMethodValidator = v.literal('finance.twr.v1');
+export const seriesMethodValidator = v.literal('finance.bench.v1');
 
 export const rowStatusValidator = v.union(
   v.literal('inserted'),
@@ -172,6 +173,13 @@ export const seriesInputValidator = v.object({
   sp500Equiv: v.number(),
   valueInterpolated: v.boolean(),
   estimated: v.boolean(),
+  method: seriesMethodValidator,
+});
+
+export const upsertSeriesArgsValidator = v.object({
+  items: v.array(seriesInputValidator),
+  replaceScope: v.optional(v.boolean()),
+  replaceBatchId: v.optional(v.string()),
 });
 
 export const deleteSeriesArgsValidator = v.object({
@@ -267,6 +275,7 @@ export const upsertResultValidator = v.object({
   updated: v.number(),
   unchanged: v.number(),
   skippedLowerPrecedence: v.number(),
+  replaced: v.optional(v.number()),
   results: v.array(
     v.object({
       key: v.string(),

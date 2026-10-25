@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { moneyAndPct, type TooltipRow } from '@/components/finance/chart-tooltip';
 import { CompareCard } from '@/components/finance/compare-card';
-import { LineChart, type ChartSeries } from '@/components/finance/line-chart';
+import { LineChart, type ChartMarker, type ChartSeries } from '@/components/finance/line-chart';
 import { LegendChip } from '@/components/finance/legend-chip';
-import { FText, LegendItem, TABULAR, useFinancePalette } from '@/components/finance/ui';
+import { Badge, FText, LegendItem, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { useSeriesHighlight } from '@/hooks/use-series-highlight';
 import { useChartColors } from '@/lib/finance-colors';
-import { formatPct } from '@/lib/finance-coverage';
+import { formatPct, formatUsdSigned } from '@/lib/finance-coverage';
+import { flowAdjustedOverlay } from '../../../server/convex/finance/seriesModel';
 
 export type TwrChartPoint = {
   asOf: string;
@@ -28,20 +29,76 @@ export type TwrChartHeader = {
   source: 'returns' | 'computed';
 };
 
+export type TwrFlowMark = {
+  flowId: string;
+  date: string;
+  amount: number;
+  counterpartLabel: string | null;
+  onPress?: () => void;
+};
+
+export function counterpartLabel(flow: {
+  counterpart:
+    | { type: 'transaction'; name: string }
+    | { type: 'flow'; kind: string }
+    | { type: 'account'; name: string }
+    | null;
+}): string | null {
+  if (flow.counterpart?.type === 'transaction') return flow.counterpart.name;
+  if (flow.counterpart?.type === 'account') return flow.counterpart.name;
+  if (flow.counterpart?.type === 'flow') return flow.counterpart.kind;
+  return null;
+}
+
+export function flowTargetAccount(flow: {
+  counterpartAccountId: string | null;
+  counterpart:
+    | { type: 'transaction'; accountId: string }
+    | { type: 'flow'; accountId: string }
+    | { type: 'account'; accountId: string }
+    | null;
+}): string | null {
+  if (flow.counterpart?.type === 'transaction') return flow.counterpart.accountId;
+  if (flow.counterpart?.type === 'flow') return flow.counterpart.accountId;
+  if (flow.counterpart?.type === 'account') return flow.counterpart.accountId;
+  return flow.counterpartAccountId;
+}
+
+export function incompleteDeposit(windows: Array<{ reliable: boolean; flowsFullyKnown: boolean }>): boolean {
+  return windows.some((row) => !row.reliable || !row.flowsFullyKnown);
+}
+
+export function IncompleteDepositBadge({ note }: { note?: string | null }) {
+  const open = () => {
+    if (!note) return;
+    Alert.alert('Return note', note);
+  };
+  return (
+    <Pressable onPress={open} disabled={!note} accessibilityRole="button" accessibilityLabel="Incomplete deposit data">
+      <Badge label="Incomplete deposit data" tone="accent" />
+    </Pressable>
+  );
+}
+
 export function TwrChart({
   points,
   height = 220,
   showSp500 = true,
+  rebaseSp500 = false,
   color,
   scrubIndex,
   onScrub,
+  flows = [],
 }: {
   points: TwrChartPoint[];
   height?: number;
   showSp500?: boolean;
+  /** Rebase the S&P path onto the window's first-day value (short ranges). */
+  rebaseSp500?: boolean;
   color?: string;
   scrubIndex?: number | null;
   onScrub?: (index: number | null) => void;
+  flows?: TwrFlowMark[];
 }) {
   const palette = useFinancePalette();
   const colors = useChartColors();
@@ -56,6 +113,15 @@ export function TwrChart({
     [points],
   );
   const hasDim = dimFlags.some(Boolean);
+  const sp500Values = useMemo(() => {
+    if (!showSp500) return [];
+    if (!rebaseSp500) return points.map((point) => point.sp500Equiv);
+    return flowAdjustedOverlay(
+      dates,
+      points[0]?.value ?? 0,
+      points,
+    );
+  }, [dates, points, rebaseSp500, showSp500]);
   const series = useMemo<ChartSeries[]>(() => {
     const out: ChartSeries[] = [
       {
@@ -63,7 +129,8 @@ export function TwrChart({
         label: 'Value',
         color: valueColor,
         values: points.map((point) => point.value),
-        gaps: points.map((point) => point.valueInterpolated || point.estimated),
+        gaps: points.map((point) => point.valueInterpolated),
+        dots: points.map((point) => !point.valueInterpolated),
         strokeWidth: 2.2,
       },
       {
@@ -80,13 +147,17 @@ export function TwrChart({
         key: 'sp500',
         label: 'S&P 500',
         color: colors.benchmark,
-        values: points.map((point) => point.sp500Equiv),
+        values: sp500Values,
         dashed: true,
         strokeWidth: 1.6,
       });
     }
     return out;
-  }, [colors.benchmark, palette.muted, points, showSp500, valueColor]);
+  }, [colors.benchmark, palette.muted, points, showSp500, sp500Values, valueColor]);
+  const markers = useMemo<ChartMarker[]>(
+    () => flows.map((flow) => ({ asOf: flow.date, color: flow.amount >= 0 ? palette.positive : palette.negative })),
+    [flows, palette.negative, palette.positive],
+  );
 
   if (points.length < 2) {
     return (
@@ -115,17 +186,22 @@ export function TwrChart({
       },
     ];
     if (showSp500) {
-      rows.push({
-        key: 'sp500',
-        label: 'S&P 500',
-        color: colors.benchmark,
-        ...moneyAndPct(point.sp500Equiv, first.sp500Equiv),
-      });
+      const start = sp500Values.find((value) => value != null);
+      const current = sp500Values[index];
+      if (current != null && start != null) {
+        rows.push({
+          key: 'sp500',
+          label: 'S&P 500',
+          color: colors.benchmark,
+          ...moneyAndPct(current, start),
+        });
+      }
     }
     return rows;
   };
   const invested = series.find((item) => item.key === 'invested');
   const sp500 = series.find((item) => item.key === 'sp500');
+  const visibleFlows = flows.filter((flow) => flow.date >= dates[0] && flow.date <= dates[dates.length - 1]);
 
   return (
     <View style={styles.wrap}>
@@ -137,6 +213,7 @@ export function TwrChart({
         tooltipRows={tooltipRows}
         height={height}
         highlight={highlight}
+        markers={markers}
         dimFlags={dimFlags}
         bands={[
           {
@@ -170,6 +247,29 @@ export function TwrChart({
           />
         )}
       />
+      {visibleFlows.length > 0 ? (
+        <View style={styles.flows}>
+          {visibleFlows.map((flow) => (
+            <Pressable
+              key={flow.flowId}
+              onPress={flow.onPress}
+              disabled={!flow.onPress}
+              style={[styles.flowChip, { borderColor: palette.hairline }]}
+              accessibilityRole="button"
+              accessibilityLabel={`${formatUsdSigned(flow.amount)}${flow.counterpartLabel ? ` ${flow.counterpartLabel}` : ''}`}
+            >
+              <FText variant="caption" style={TABULAR} tone={flow.amount >= 0 ? 'positive' : 'negative'}>
+                {formatUsdSigned(flow.amount)}
+              </FText>
+              {flow.counterpartLabel ? (
+                <FText variant="caption" tone="subtle" numberOfLines={1}>
+                  {flow.counterpartLabel}
+                </FText>
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.legend}>
         <LegendChip seriesKey="value" label="Value" color={valueColor} highlight={highlight} />
         <LegendChip
@@ -234,4 +334,13 @@ const styles = StyleSheet.create({
   legend: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   stats: { flexDirection: 'row', gap: 24, marginTop: 4, marginBottom: 4 },
   stat: { flex: 1, gap: 2 },
+  flows: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  flowChip: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    maxWidth: '100%',
+    gap: 1,
+  },
 });

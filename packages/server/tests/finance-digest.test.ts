@@ -4,8 +4,10 @@ import { bucketHash } from '../convex/finance/hash';
 import {
   applyExportCursor,
   collectDigestPage,
+  collectSeriesDigestPage,
   fillGapsWindow,
   memoryDigestSource,
+  memorySeriesDigestSource,
   rowsInDateRange,
   takeThenFilter,
   type DigestCursor,
@@ -165,6 +167,55 @@ describe('fillGaps window', () => {
       windowTo: '2026-07-31',
       continueFrom: null,
     });
+  });
+});
+
+describe('series digest buckets', () => {
+  const rows = eachDate(START, END).map((date, index) => ({
+    scope: 'account:acc_1',
+    date,
+    value: 1000 + index,
+    contentHash: `s${date}`,
+  }));
+
+  it('buckets by scope+month with count, 8dp sum, and bucketHash', async () => {
+    const page = await collectSeriesDigestPage(memorySeriesDigestSource(rows), {
+      scope: 'acc_1',
+      fromDate: '2026-07-01',
+      toDate: monthEnd('2026-07'),
+      cursor: null,
+      limit: 10,
+      readBudget: CONVEX_QUERY_READ_BUDGET,
+      hash: bucketHash,
+    });
+    expect(page.isDone).toBe(true);
+    expect(page.buckets).toHaveLength(1);
+    expect(page.buckets[0]).toMatchObject({
+      table: 'series',
+      accountId: 'account:acc_1',
+      month: '2026-07',
+      count: 31,
+    });
+    expect(page.buckets[0].sum).toMatch(/^\d+\.\d{8}$/);
+    expect(page.buckets[0].bucketHash).toHaveLength(64);
+    expect(page.rowHashes).toHaveLength(31);
+  });
+
+  it('does not drop late months the way take(4000) would', async () => {
+    expect(rows.length).toBeGreaterThan(4000);
+    const page = await collectSeriesDigestPage(memorySeriesDigestSource(rows), {
+      fromDate: '2026-10-01',
+      toDate: monthEnd('2026-10'),
+      cursor: null,
+      limit: 10,
+      readBudget: CONVEX_QUERY_READ_BUDGET,
+      hash: bucketHash,
+    });
+    expect(takeThenFilter(rows, (row) => row.date, 4000, '2026-10-01', monthEnd('2026-10'))).toHaveLength(0);
+    expect(page.buckets[0]?.month).toBe('2026-10');
+    expect(page.buckets[0]?.count).toBe(
+      rowsInDateRange(rows, (row) => row.date, '2026-10-01', monthEnd('2026-10')).length,
+    );
   });
 });
 

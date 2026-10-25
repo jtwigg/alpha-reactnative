@@ -21,7 +21,14 @@ import {
 import { ChartBlock } from '@/components/finance/benchmark-chart';
 import { ChartToggles } from '@/components/finance/chart-toggles';
 import { TwrCard } from '@/components/finance/twr-card';
-import { TwrChart, TwrHeader } from '@/components/finance/twr-chart';
+import {
+  counterpartLabel,
+  flowTargetAccount,
+  IncompleteDepositBadge,
+  incompleteDeposit,
+  TwrChart,
+  TwrHeader,
+} from '@/components/finance/twr-chart';
 import { HeroValue } from '@/components/finance/hero-value';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
@@ -115,7 +122,22 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
     live && isDailyRange(range) ? { sourceId, range, refreshNonce } : 'skip',
   );
   const liveSeries = useQuery(api.finance.queries.series, live ? { scope, range, refreshNonce } : 'skip');
+  const liveTwr = useQuery(api.finance.queries.twr, live ? { scope, refreshNonce } : 'skip');
+  const liveFlows = useQuery(api.finance.queries.flows, live ? { accountId: sourceId, refreshNonce } : 'skip');
   const demoSeriesModel = useMemo(() => (live ? undefined : demoTwr(scope, range)), [live, range, scope]);
+  const flowMarks = useMemo(() => {
+    const rows = live ? (liveFlows ?? []) : demoFlows(sourceId);
+    return rows.map((flow) => ({
+      flowId: flow.flowId,
+      date: flow.date,
+      amount: flow.amount,
+      counterpartLabel: counterpartLabel(flow),
+      onPress: () => {
+        const target = flowTargetAccount(flow);
+        if (target) router.push(`/finances/account/${encodeURIComponent(target)}`);
+      },
+    }));
+  }, [live, liveFlows, router, sourceId]);
   const [held, setHeld] = useState(liveDetail);
   useEffect(() => {
     if (liveDetail !== undefined) setHeld(liveDetail);
@@ -171,6 +193,9 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const hasSeries = seriesPoints.length >= 2;
   const twrOn = timeWeighted;
   const sp500On = showSp500 && group !== 'liability';
+  const twrWindows = live ? (liveTwr?.windows ?? []) : (demoSeriesModel?.windows ?? []);
+  const depositIncomplete = incompleteDeposit(twrWindows);
+  const depositNote = twrWindows.find((row) => row.note)?.note ?? null;
 
   return (
     <ScrollLockProvider>
@@ -216,6 +241,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
                   sp500Twr={live ? (liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)}
                   showSp500={sp500On}
                 />
+                {depositIncomplete ? <IncompleteDepositBadge note={depositNote} /> : null}
                 {live && liveSeries === undefined ? (
                   <ActivityIndicator />
                 ) : (
@@ -223,9 +249,11 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
                     points={seriesPoints}
                     height={width >= 720 ? 260 : 210}
                     showSp500={sp500On}
+                    rebaseSp500={range !== 'All'}
                     color={color}
                     scrubIndex={scrubIndex}
                     onScrub={setScrubIndex}
+                    flows={flowMarks}
                   />
                 )}
               </>

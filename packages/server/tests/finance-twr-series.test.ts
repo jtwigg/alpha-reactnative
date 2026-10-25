@@ -9,7 +9,9 @@ import {
   headerFromComputed,
   headerFromReturn,
   headerFromStoredSp500,
+  scopesInSeriesBatch,
   seriesPointFromDoc,
+  shouldReplaceSeriesScope,
   sp500ReturnScope,
   twrFromFlowAdjusted,
   twrWindowForRange,
@@ -24,6 +26,7 @@ const SERIES = {
   sp500Equiv: 118250.25,
   valueInterpolated: false,
   estimated: true,
+  method: 'finance.bench.v1',
 };
 
 const SERIES_CANONICAL = [
@@ -36,6 +39,7 @@ const SERIES_CANONICAL = [
   'sp500Equiv=118250.25000000',
   'valueInterpolated=false',
   'estimated=true',
+  'method=finance.bench.v1',
 ].join('\n');
 
 describe('series scopes and windows', () => {
@@ -161,5 +165,19 @@ describe('finance.v1 series hash', () => {
     const hash = await financeContentHash('series', SERIES);
     expect(hash).toHaveLength(64);
     expect(await bucketHash([hash, 'aa'])).toBe(await bucketHash(['aa', hash]));
+  });
+});
+
+describe('upsert_series replaceScope', () => {
+  it('wipes only on the first batch of a replaceBatchId rewrite', () => {
+    expect(scopesInSeriesBatch([{ scope: 'total' }, { scope: 'account:a' }, { scope: 'total' }])).toEqual([
+      'account:a',
+      'total',
+    ]);
+    expect(shouldReplaceSeriesScope({ replaceScope: true })).toBe(true);
+    expect(shouldReplaceSeriesScope({ replaceScope: true, replaceBatchId: 'r1', seenBatchId: false })).toBe(true);
+    expect(shouldReplaceSeriesScope({ replaceScope: true, replaceBatchId: 'r1', seenBatchId: true })).toBe(false);
+    expect(shouldReplaceSeriesScope({ replaceScope: false, replaceBatchId: 'r1' })).toBe(false);
+    expect(shouldReplaceSeriesScope({})).toBe(false);
   });
 });

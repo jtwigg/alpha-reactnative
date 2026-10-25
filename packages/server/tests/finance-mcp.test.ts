@@ -3,7 +3,7 @@ import { bearerMatches, timingSafeEqualString } from '../convex/finance/secret';
 import { dispatchFinanceOp } from '../convex/finance/gateway';
 import { createFinanceMcpHandler } from '../../../api/_lib/handler';
 import { convexSiteUrl } from '../../../api/_lib/convex';
-import { upsertReturnsSchema } from '../../../api/_lib/tools';
+import { upsertReturnsSchema, upsertSeriesSchema } from '../../../api/_lib/tools';
 
 describe('timing-safe bearer compare', () => {
   it('accepts an exact Bearer token', () => {
@@ -100,6 +100,26 @@ describe('upsert_returns scope', () => {
   });
 });
 
+describe('upsert_series schema', () => {
+  const item = {
+    scope: 'reliable_subset',
+    date: '2026-10-23',
+    value: 1,
+    netInvested: 1,
+    sp500Equiv: 1,
+    valueInterpolated: false,
+    estimated: false,
+    method: 'finance.bench.v1' as const,
+  };
+
+  it('requires finance.bench.v1 and accepts a multi-batch replace', () => {
+    expect(upsertSeriesSchema.parse({ items: [item], replaceScope: true, replaceBatchId: 'r1' }).replaceBatchId).toBe(
+      'r1',
+    );
+    expect(() => upsertSeriesSchema.parse({ items: [{ ...item, method: 'finance.twr.v1' }] })).toThrow();
+  });
+});
+
 describe('MCP handler', () => {
   it('returns 401 without a matching bearer token', async () => {
     const previous = process.env.FINANCE_MCP_TOKEN;
@@ -186,6 +206,9 @@ describe('MCP handler', () => {
       expect(raw).toContain('pendingTransactionId');
       expect(raw).toContain('externalToInvestable');
       expect(raw).toContain('finance.twr.v1');
+      expect(raw).toContain('finance.bench.v1');
+      expect(raw).toContain('replaceScope');
+      expect(raw).toContain('replaceBatchId');
 
       const called = await handler(
         new Request('http://localhost/api/mcp', {

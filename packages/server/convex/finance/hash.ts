@@ -169,6 +169,7 @@ const SERIES_FIELDS = [
   'sp500Equiv',
   'valueInterpolated',
   'estimated',
+  'method',
 ] as const;
 
 export const FINANCE_FIELD_ORDER = {

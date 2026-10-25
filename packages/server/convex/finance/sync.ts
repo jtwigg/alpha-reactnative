@@ -3,6 +3,7 @@ import type { QueryCtx } from '../_generated/server';
 import { bucketHash } from './hash';
 import type { FinanceTable } from './hash';
 import {
+  addDays,
   isIsoMonth,
   monthEnd,
   monthFromTimestampMs,
@@ -12,6 +13,7 @@ import {
 import { decodeCursor, encodeCursor, formatFixedSum } from './lib';
 import {
   collectDigestPage,
+  collectSeriesDigestPage,
   decodeExportCursor,
   applyExportCursor,
   exportIndexStart,
@@ -203,27 +205,45 @@ export const digest = internalQuery({
     const bounds = rangeBounds(args.from, args.to);
     const cursor = decodeCursor<DigestCursor>(args.cursor);
     const table = args.table as FinanceTable | undefined;
-    const walkTables =
-      !table || table === 'flows' || table === 'returns' || table === 'series'
-        ? TABLE_ORDER
-        : [table];
-    const skipBuckets = table === 'flows' || table === 'returns' || table === 'series';
-    const page = skipBuckets
-      ? { buckets: [], continueCursor: null, isDone: true }
-      : await collectDigestPage(convexDigestSource(ctx), {
-          tables: walkTables,
-          accountId: args.accountId,
-          fromDate: bounds.fromDate,
-          toDate: bounds.toDate,
-          cursor,
-          limit,
-          readBudget: CONVEX_QUERY_READ_BUDGET,
-          hash: bucketHash,
-        });
+    const wantAccountBuckets = !table || (table !== 'flows' && table !== 'returns' && table !== 'series');
+    const wantSeriesBuckets = !table || table === 'series';
+    const resumeSeries = cursor?.table === 'series';
+    const walkTables = !table || table === 'flows' || table === 'returns' || table === 'series' ? TABLE_ORDER : [table];
+    const accountPage =
+      wantAccountBuckets && !resumeSeries
+        ? await collectDigestPage(convexDigestSource(ctx), {
+            tables: walkTables,
+            accountId: args.accountId,
+            fromDate: bounds.fromDate,
+            toDate: bounds.toDate,
+            cursor,
+            limit,
+            readBudget: CONVEX_QUERY_READ_BUDGET,
+            hash: bucketHash,
+          })
+        : { buckets: [], continueCursor: null, isDone: true, documentsRead: 0 };
+    const remaining = limit - accountPage.buckets.length;
+    const seriesPage =
+      wantSeriesBuckets && accountPage.isDone && remaining > 0
+        ? await collectSeriesDigestPage(convexSeriesDigestSource(ctx), {
+            scope: args.accountId,
+            fromDate: bounds.fromDate,
+            toDate: bounds.toDate,
+            cursor: resumeSeries || accountPage.buckets.length === 0 ? cursor : null,
+            limit: remaining,
+            readBudget: Math.max(CONVEX_QUERY_READ_BUDGET - accountPage.documentsRead, 200),
+            hash: bucketHash,
+          })
+        : { buckets: [], continueCursor: null, isDone: true, documentsRead: 0, rowHashes: [] };
+    const buckets = [...accountPage.buckets, ...seriesPage.buckets];
+    const continueCursor = !accountPage.isDone
+      ? accountPage.continueCursor
+      : seriesPage.continueCursor;
+    const seriesScopes = await listSeriesScopes(ctx, args.accountId);
     return {
-      buckets: page.buckets,
-      continueCursor: page.continueCursor ? encodeCursor(page.continueCursor) : null,
-      isDone: page.isDone,
+      buckets,
+      continueCursor: continueCursor ? encodeCursor(continueCursor) : null,
+      isDone: accountPage.isDone && seriesPage.isDone,
       flows: await tableChecksum(
         (await ctx.db.query('flows').take(4000)).filter((row) => {
           if (args.accountId && row.accountId !== args.accountId) return false;
@@ -242,26 +262,133 @@ export const digest = internalQuery({
           return true;
         }).map((row) => row.contentHash),
       ),
-      series: await tableChecksum(
-        (await ctx.db.query('series').take(4000)).filter((row) => {
-          if (
-            args.accountId &&
-            row.scope !== args.accountId &&
-            row.scope !== `account:${args.accountId}`
-          ) {
-            return false;
-          }
-          if (bounds.fromDate && row.date < bounds.fromDate) return false;
-          if (bounds.toDate && row.date > bounds.toDate) return false;
-          return true;
-        }).map((row) => row.contentHash),
-      ),
+      series: await checksumSeriesTable(ctx, seriesScopes, bounds.fromDate, bounds.toDate, seriesPage.rowHashes),
     };
   },
 });
 
 async function tableChecksum(hashes: string[]): Promise<{ count: number; checksum: string }> {
   return { count: hashes.length, checksum: await bucketHash(hashes) };
+}
+
+function seriesScopeCandidates(accountId?: string): string[] {
+  if (!accountId) return [];
+  if (accountId === 'total' || accountId === 'reliable_subset' || accountId.startsWith('account:')) {
+    return [accountId];
+  }
+  return [accountId, `account:${accountId}`];
+}
+
+async function listSeriesScopes(ctx: QueryCtx, accountId?: string): Promise<string[]> {
+  const candidates = accountId
+    ? seriesScopeCandidates(accountId)
+    : [
+        'total',
+        'reliable_subset',
+        ...(await ctx.db.query('accounts').take(500)).map((row) => `account:${row.sourceId}`),
+      ];
+  const found: string[] = [];
+  for (const scope of candidates) {
+    const row = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope))
+      .take(1);
+    if (row[0]) found.push(scope);
+  }
+  return found.sort();
+}
+
+async function loadSeriesMonthRows(ctx: QueryCtx, scope: string, month: string) {
+  const fromDate = monthStart(month);
+  const toDate = monthEnd(month);
+  const rows: Array<{ contentHash: string; amount: number }> = [];
+  let after = fromDate;
+  while (after <= toDate) {
+    const page = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope).gte('date', after).lte('date', toDate))
+      .take(500);
+    if (page.length === 0) break;
+    for (const row of page) rows.push({ contentHash: row.contentHash, amount: row.value });
+    if (page.length < 500) break;
+    after = addDays(page[page.length - 1].date, 1);
+  }
+  return rows;
+}
+
+async function loadSeriesScopeHashes(
+  ctx: QueryCtx,
+  scope: string,
+  fromDate?: string,
+  toDate?: string,
+): Promise<string[]> {
+  const hashes: string[] = [];
+  let after = fromDate ?? '0000-01-01';
+  const end = toDate ?? '9999-12-31';
+  while (after <= end) {
+    const page = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope).gte('date', after).lte('date', end))
+      .take(500);
+    if (page.length === 0) break;
+    for (const row of page) hashes.push(row.contentHash);
+    if (page.length < 500) break;
+    after = addDays(page[page.length - 1].date, 1);
+  }
+  return hashes;
+}
+
+/**
+ * Complete checksum for one or few scopes (paginated, no table-wide take(4000)).
+ * When many scopes would exceed the read budget, fall back to this page's bucket hashes.
+ */
+async function checksumSeriesTable(
+  ctx: QueryCtx,
+  scopes: string[],
+  fromDate: string | undefined,
+  toDate: string | undefined,
+  pageHashes: string[],
+): Promise<{ count: number; checksum: string }> {
+  if (scopes.length === 1) {
+    return tableChecksum(await loadSeriesScopeHashes(ctx, scopes[0], fromDate, toDate));
+  }
+  if (scopes.length === 0) return tableChecksum([]);
+  return tableChecksum(pageHashes);
+}
+
+function convexSeriesDigestSource(ctx: QueryCtx) {
+  return {
+    listScopes: (scope?: string) => listSeriesScopes(ctx, scope),
+    async firstDate(scope: string, fromDate?: string, toDate?: string) {
+      const rows = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => {
+          const base = q.eq('scope', scope);
+          if (fromDate && toDate) return base.gte('date', fromDate).lte('date', toDate);
+          if (fromDate) return base.gte('date', fromDate);
+          if (toDate) return base.lte('date', toDate);
+          return base;
+        })
+        .order('asc')
+        .take(1);
+      return rows[0]?.date ?? null;
+    },
+    async lastDate(scope: string, fromDate?: string, toDate?: string) {
+      const rows = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => {
+          const base = q.eq('scope', scope);
+          if (fromDate && toDate) return base.gte('date', fromDate).lte('date', toDate);
+          if (fromDate) return base.gte('date', fromDate);
+          if (toDate) return base.lte('date', toDate);
+          return base;
+        })
+        .order('desc')
+        .take(1);
+      return rows[0]?.date ?? null;
+    },
+    rowsInMonth: (scope: string, month: string) => loadSeriesMonthRows(ctx, scope, month),
+  };
 }
 
 function exportLimit(limit?: number): number {
