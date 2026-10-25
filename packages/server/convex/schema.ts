@@ -316,4 +316,16 @@ export default defineSchema({
     scopes: v.array(v.string()),
     createdAt: v.number(),
   }).index('by_batchId', ['batchId']),
+
+  /**
+   * Singleton native-release pointer John sets after each TestFlight submit.
+   * The app compares `latestBuildNumber` to expo-application `nativeBuildVersion`.
+   */
+  app_release: defineTable({
+    key: v.literal('latest'),
+    latestBuildNumber: v.string(),
+    runtimeVersion: v.string(),
+    testflightUrl: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
 });

@@ -17,6 +17,7 @@
     "ios:testflight": "bash ./scripts/ios-testflight.sh",
     "update:preview": "bash ./scripts/eas-update.sh preview",
     "update:production": "bash ./scripts/eas-update.sh production",
+    "check:native": "node ./scripts/check-native.mjs",
     "lint": "expo lint"
   },
   "dependencies": {

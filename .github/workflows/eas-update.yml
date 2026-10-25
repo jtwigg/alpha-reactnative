@@ -103,7 +103,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check native fingerprint
+        id: native
+        run: |
+          set +e
+          pnpm check:native
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$status" -eq 2 ]; then
+            echo "::warning title=Native fingerprint changed::Native-affecting inputs differ from the last TestFlight baseline. Skipping OTA — cut a new iOS build and run pnpm check:native --write after submit."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::pnpm check:native failed with exit $status"
+          exit "$status"
+
       - name: Publish EAS Update
+        if: steps.native.outputs.changed != 'true'
         working-directory: packages/reactnative
         env:
           UPDATE_MESSAGE: ${{ github.event.head_commit.message || github.ref_name }}
@@ -112,3 +132,7 @@ jobs:
           # eas update --message is a single string; collapse newlines from commit bodies
           message="${message//$'\n'/ / }"
           eas update --channel "$CHANNEL" --non-interactive --message "$message"
+
+      - name: Skip OTA (native changed)
+        if: steps.native.outputs.changed == 'true'
+        run: echo "Skipped eas update because the native fingerprint changed."

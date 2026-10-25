@@ -38,6 +38,13 @@
         "command": "bash ./scripts/ios-testflight.sh",
         "cwd": "packages/reactnative"
       }
+    },
+    "check:native": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node ./scripts/check-native.mjs",
+        "cwd": "packages/reactnative"
+      }
     }
   },
   "tags": []
