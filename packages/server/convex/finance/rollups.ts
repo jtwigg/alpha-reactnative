@@ -1,5 +1,6 @@
 import {
   addDays,
+  daysBetween,
   eachDate,
   eachMonthEnd,
   eachWeekEnd,
@@ -42,6 +43,9 @@ export const ROLLUP_WRITE_BUDGET = 700;
 export const ROLLUP_DELETE_BATCH = 400;
 export const ROLLUP_CONSISTENCY_SAMPLE = 16;
 export const ROLLUP_CONSISTENCY_EPS = 0.02;
+/** Persist finance_rollup_state at most this often during a rebuild. */
+export const ROLLUP_STATE_PATCH_DAYS = 7;
+export const ROLLUP_DIRTY_DRAIN = 200;
 
 export type RollupRow = {
   grain: RollupGrain;
@@ -159,6 +163,24 @@ export function planRebuildSpan(args: {
   const end = rawEnd < args.to ? rawEnd : args.to;
   const next = end < args.to ? addDays(end, 1) : null;
   return { start, end, next };
+}
+
+/** Skip patching the global state doc unless status/wipe changed or the cursor moved a week. */
+export function shouldPatchRebuildState(args: {
+  prevDay: string;
+  nextDay: string;
+  prevStatus: RollupStatus;
+  nextStatus: RollupStatus;
+  prevWipe: boolean;
+  nextWipe: boolean;
+  drained: boolean;
+  done: boolean;
+}): boolean {
+  if (args.done) return true;
+  if (args.drained) return true;
+  if (args.prevStatus !== args.nextStatus) return true;
+  if (args.prevWipe !== args.nextWipe) return true;
+  return daysBetween(args.prevDay, args.nextDay) >= ROLLUP_STATE_PATCH_DAYS;
 }
 
 export function encodeRebuildCursor(cursor: RebuildCursor): string {
