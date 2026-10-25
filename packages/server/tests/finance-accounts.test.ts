@@ -31,6 +31,11 @@ const INDEXES: Record<string, Record<string, string[]>> = {
   balance_snapshots: { by_account_asOf: ['accountId', 'asOf'], by_asOf: ['asOf'] },
   transactions: { by_account_date: ['accountId', 'date'], by_sourceId: ['sourceId'] },
   holdings: { by_account_asOf: ['accountId', 'asOf'] },
+  finance_rollups: {
+    by_grain_scope_asOf: ['grain', 'scopeKind', 'scopeId', 'asOf'],
+    by_grain_kind_asOf: ['grain', 'scopeKind', 'asOf'],
+  },
+  finance_rollup_state: { by_key: ['key'] },
 };
 
 type Row = Record<string, unknown> & { _id: string; _creationTime: number };

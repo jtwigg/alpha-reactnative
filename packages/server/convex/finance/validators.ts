@@ -10,6 +10,8 @@ export const FILL_GAPS_WRITE_CAP = 800;
 export const FILL_GAPS_READ_CAP = 800;
 /** Documents a digest/export query may read before returning a cursor. */
 export const CONVEX_QUERY_READ_BUDGET = 3200;
+export const ROLLUP_WRITE_BUDGET = 700;
+export const ROLLUP_DELETE_BATCH = 400;
 export const DELETE_ACCOUNT_IDS_MAX = 50;
 export const DELETE_ROW_BATCH = 200;
 export const DELETE_WRITE_BUDGET = 800;
@@ -476,6 +478,9 @@ export const pageAccountValidator = v.object({
   latestSnapshot: v.union(snapshotLiteValidator, v.null()),
 });
 
+export const rollupGrainValidator = v.union(v.literal('day'), v.literal('week'), v.literal('month'));
+export const rollupFreshnessValidator = v.union(v.literal('live'), v.literal('stale'), v.literal('raw'));
+
 export const pageResultValidator = v.object({
   range: rangeKeyValidator,
   asOf: v.string(),
@@ -488,6 +493,36 @@ export const pageResultValidator = v.object({
   points: v.array(chartPointValidator),
   coverageMarkers: v.array(coverageMarkerValidator),
   accounts: v.array(pageAccountValidator),
+  grain: rollupGrainValidator,
+  rollup: rollupFreshnessValidator,
+});
+
+export const rebuildStepResultValidator = v.object({
+  done: v.boolean(),
+  status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding')),
+  wrote: v.number(),
+  from: v.union(v.string(), v.null()),
+  to: v.union(v.string(), v.null()),
+  rebuiltThrough: v.union(v.string(), v.null()),
+});
+
+export const rebuildAllResultValidator = v.object({
+  scheduled: v.boolean(),
+  dirtyFrom: v.union(v.string(), v.null()),
+  version: v.number(),
+});
+
+export const consistencyMismatchValidator = v.object({
+  asOf: v.string(),
+  ok: v.boolean(),
+});
+
+export const consistencyResultValidator = v.object({
+  checked: v.number(),
+  matched: v.number(),
+  mismatches: v.array(consistencyMismatchValidator),
+  rebuiltThrough: v.union(v.string(), v.null()),
+  status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding'), v.literal('missing')),
 });
 
 export const snapshotsArgsValidator = v.object({

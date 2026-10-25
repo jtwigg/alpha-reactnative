@@ -43,20 +43,17 @@ describe('Los Angeles calendar dates', () => {
 });
 
 describe('chart downsampling', () => {
-  it('uses weekly points for All and daily for 1Y', () => {
-    expect(chartStep('All')).toBe('week');
-    expect(chartStep('1Y')).toBe('day');
-    const weekly = chartDates('All', '2025-01-01', '2025-02-12');
-    expect(weekly).toEqual([
-      '2025-01-01',
-      '2025-01-08',
-      '2025-01-15',
-      '2025-01-22',
-      '2025-01-29',
-      '2025-02-05',
-      '2025-02-12',
-    ]);
-    const daily = chartDates('1Y', '2026-10-20', MAX_AS_OF);
+  it('uses monthly points for All, weekly for 1Y, daily for 1M', () => {
+    expect(chartStep('All')).toBe('month');
+    expect(chartStep('1Y')).toBe('week');
+    expect(chartStep('1M')).toBe('day');
+    const monthly = chartDates('All', '2025-01-01', '2025-02-12');
+    expect(monthly).toEqual(['2025-01-01', '2025-01-31', '2025-02-12']);
+    const weekly = chartDates('1Y', '2026-10-13', MAX_AS_OF);
+    expect(weekly[0]).toBe('2026-10-13');
+    expect(weekly[weekly.length - 1]).toBe(MAX_AS_OF);
+    expect(weekly).toContain('2026-10-18');
+    const daily = chartDates('1M', '2026-10-20', MAX_AS_OF);
     expect(daily).toEqual(['2026-10-20', '2026-10-21', '2026-10-22']);
     expect(eachWeek(START, MAX_AS_OF)[0]).toBe(START);
     expect(eachWeek(START, MAX_AS_OF).at(-1)).toBe(MAX_AS_OF);

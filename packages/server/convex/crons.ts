@@ -9,4 +9,10 @@ crons.daily(
   internal.finance.market.refreshAll,
 );
 
+crons.interval(
+  'drain finance rollup rebuild',
+  { minutes: 15 },
+  internal.finance.rollupJobs.rebuildStep,
+);
+
 export default crons;

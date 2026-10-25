@@ -73,7 +73,7 @@ describe('buildNetWorthModel', () => {
       ],
     });
 
-    const before = model.points.find((point) => point.asOf === '2026-07-15');
+    const before = model.points.find((point) => point.asOf === '2026-07-31');
     const onJoin = model.points.find((point) => point.asOf === '2026-08-05');
     expect(before?.total).toBe(500);
     expect(before?.byClass.investments).toBeUndefined();
@@ -102,7 +102,7 @@ describe('5Y range', () => {
   it('spans five years weekly, clamped to the first data point', () => {
     expect(rangeWindow('5Y', '2026-10-23', '2019-06-01')).toEqual({ from: '2021-10-23', to: '2026-10-23' });
     expect(rangeWindow('5Y', '2026-10-23', '2024-02-01')).toEqual({ from: '2024-02-01', to: '2026-10-23' });
-    expect(chartStep('5Y')).toBe('week');
+    expect(chartStep('5Y')).toBe('month');
   });
 
   it('trims an All model to 5Y and recomputes the change', () => {

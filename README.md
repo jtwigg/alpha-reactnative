@@ -346,7 +346,11 @@ npx convex run finance/ingest:upsertHoldings '{"items":[...]}'
 npx convex run finance/ingest:fillGaps '{"accountId":"acc_1","from":"2026-07-31","to":"2026-10-12"}'
 npx convex run finance/sync:digest '{"from":"2026-07","to":"2026-10"}'
 npx convex run finance/sync:exportBucket '{"table":"balance_snapshots","accountId":"acc_1","month":"2026-07"}'
+npx convex run finance/rollupJobs:rebuildAll
+npx convex run finance/rollupJobs:checkConsistency '{"sample":16}'
 ```
+
+Net-worth charts read materialized `finance_rollups` at day / week / month grain (per account, class, group, total, and S&P if bars exist). `1M`/`3M`/`YTD` use daily rows, `1Y` weekly, `5Y`/`All` monthly. Every ingest or delete path records the earliest affected date and `finance/rollupJobs:rebuildStep` rematerializes from that date forward in scheduled batches. While a rebuild is pending the page query serves stale rollups marked `rollup: "stale"`, or falls back to raw snapshot probes (`rollup: "raw"`). After deploy, run **`finance/rollupJobs:rebuildAll`** once.
 
 Each upsert takes `{ items: [...] }` (cap 500). The pusher is master: a sent row overwrites the stored row for the same key. Within one batch, if keys collide, the highest-precedence snapshot is kept (**manual > observed > reconstructed > interpolated**). Dedup keys: accounts + transactions by `sourceId`; snapshots by `accountId+asOf`; holdings by `accountId+symbol+asOf`. Manual assets use `provider: "manual"` (no `connectionId`) and snapshot `source: "manual"`.
 

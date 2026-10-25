@@ -20,6 +20,7 @@ import type * as finance_gateway from "../finance/gateway.js";
 import type * as finance_ingest from "../finance/ingest.js";
 import type * as finance_market from "../finance/market.js";
 import type * as finance_queries from "../finance/queries.js";
+import type * as finance_rollupJobs from "../finance/rollupJobs.js";
 import type * as finance_sync from "../finance/sync.js";
 import type * as http from "../http.js";
 import type * as messages from "../messages.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   "finance/ingest": typeof finance_ingest;
   "finance/market": typeof finance_market;
   "finance/queries": typeof finance_queries;
+  "finance/rollupJobs": typeof finance_rollupJobs;
   "finance/sync": typeof finance_sync;
   http: typeof http;
   messages: typeof messages;

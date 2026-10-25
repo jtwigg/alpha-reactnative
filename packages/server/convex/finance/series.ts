@@ -2,7 +2,8 @@ import {
   addDays,
   daysBetween,
   eachDate,
-  eachWeek,
+  eachMonthEnd,
+  eachWeekEnd,
   parseIsoDate,
   todayInTimeZone,
 } from './dates';
@@ -11,6 +12,15 @@ import { roundMoney, type SnapshotSource } from './hash';
 
 export const RANGE_KEYS = ['1M', '3M', 'YTD', '1Y', '5Y', 'All'] as const;
 export type RangeKey = (typeof RANGE_KEYS)[number];
+export type RollupGrain = 'day' | 'week' | 'month';
+export type RollupFreshness = 'live' | 'stale' | 'raw';
+
+/** Coarsest materialized grain that still fits the range. */
+export function grainForRange(range: RangeKey): RollupGrain {
+  if (range === '1M' || range === '3M' || range === 'YTD') return 'day';
+  if (range === '1Y') return 'week';
+  return 'month';
+}
 
 export const CHART_POINT_CAP = 160;
 
@@ -80,6 +90,8 @@ export type NetWorthPageModel = {
   points: ChartPoint[];
   coverageMarkers: CoverageMarker[];
   accounts: PageAccount[];
+  grain: RollupGrain;
+  rollup: RollupFreshness;
 };
 
 export function signedAmount(className: string, balance: number): number {
@@ -162,16 +174,19 @@ export function accountValueOnDay(
   return null;
 }
 
-export function chartStep(range: RangeKey): 'week' | 'day' {
-  return range === 'All' || range === '5Y' ? 'week' : 'day';
+export function chartStep(range: RangeKey): RollupGrain {
+  return grainForRange(range);
 }
 
-/** Weekly points for All / 5Y, daily for 1Y / 3M / 1M / YTD. Always includes `to`. */
+/** Grain dates for the range: day / ISO week-end / month-end. Always includes `to`. */
 export function chartDates(range: RangeKey, from: string, to: string): string[] {
   parseIsoDate(from);
   parseIsoDate(to);
   if (to < from) return [];
-  return chartStep(range) === 'week' ? eachWeek(from, to) : eachDate(from, to);
+  const grain = chartStep(range);
+  if (grain === 'month') return eachMonthEnd(from, to);
+  if (grain === 'week') return eachWeekEnd(from, to);
+  return eachDate(from, to);
 }
 
 export function strideChartDates(dates: string[], maxPoints: number): string[] {
@@ -467,6 +482,8 @@ export function buildNetWorthModel(args: {
     points,
     coverageMarkers,
     accounts,
+    grain: grainForRange(range),
+    rollup: 'raw',
   };
 }
 
@@ -480,13 +497,14 @@ export function trimModelToRange(model: NetWorthPageModel, range: RangeKey): Net
   const points = model.points.filter((point) => point.asOf >= from);
   const coverageMarkers = model.coverageMarkers.filter((marker) => marker.asOf >= from);
   if (points.length === model.points.length && coverageMarkers.length === model.coverageMarkers.length) {
-    return { ...model, range };
+    return { ...model, range, grain: grainForRange(range) };
   }
   const first = points[0];
   const last = points[points.length - 1];
   return {
     ...model,
     range,
+    grain: grainForRange(range),
     points,
     coverageMarkers,
     change: first && last ? roundMoney(last.total - first.total) : 0,

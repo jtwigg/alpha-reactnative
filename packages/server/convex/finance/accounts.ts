@@ -24,12 +24,15 @@ import { snapshotLookup } from './queries';
 import {
   RANGE_KEYS,
   chartDates,
+  grainForRange,
   loadAccountEnds,
   loadChartSnapshots,
   rangeWindow,
   strideChartDates,
   type RangeKey,
 } from './series';
+import { grainDates, valuesFromAccountRollups } from './rollups';
+import { loadRollupRange, loadRollupStateView } from './rollupJobs';
 import {
   CONVEX_QUERY_READ_BUDGET,
   chartPointValidator,
@@ -149,7 +152,49 @@ export const sparklines = query({
     const ends = await loadAccountEnds(lookup, accountIds);
     const asOf = ends.maxAsOf ?? todayInTimeZone();
     const window = rangeWindow(range, asOf, ends.firstAsOf);
-    const dates = strideChartDates(chartDates(range, window.from, window.to), SPARKLINE_POINTS);
+    const grain = grainForRange(range);
+    const dates = strideChartDates(grainDates(grain, window.from, window.to), SPARKLINE_POINTS);
+    const state = await loadRollupStateView(ctx);
+    const rollupReady = state?.status === 'ready' || state?.rebuiltThrough != null;
+    if (rollupReady) {
+      const snapshots: Array<{
+        accountId: string;
+        asOf: string;
+        balance: number;
+        source: 'observed';
+      }> = [];
+      let covered = 0;
+      for (const account of accounts) {
+        const rows = await loadRollupRange(
+          ctx,
+          grain,
+          'account',
+          account.sourceId,
+          window.from,
+          window.to,
+          800,
+        );
+        if (rows.length > 0) covered += 1;
+        const values = valuesFromAccountRollups(dates, rows);
+        dates.forEach((day, index) => {
+          const value = values[index];
+          if (value == null) return;
+          snapshots.push({ accountId: account.sourceId, asOf: day, balance: value, source: 'observed' });
+        });
+      }
+      if (covered > 0) {
+        const computed = sparklineRows({ accounts, snapshots, dates });
+        const weighted = addContributions(accounts, computed, groupSparklines(accounts, computed));
+        return {
+          range,
+          asOf,
+          dates,
+          rows: weighted.rows,
+          groups: weighted.groups,
+          documentsRead: accounts.length + covered,
+        };
+      }
+    }
     const chart = await loadChartSnapshots(
       lookup,
       accountIds,
@@ -219,6 +264,40 @@ export const stack = query({
     const ends = await loadAccountEnds(lookup, accountIds);
     const asOf = ends.maxAsOf ?? todayInTimeZone();
     const grid = stackGrid({ firstAsOf: ends.firstAsOf, asOf, from: args.from, to: args.to });
+    const grain = grid.step === 'day' ? 'day' : 'week';
+    const state = await loadRollupStateView(ctx);
+    if (state?.status === 'ready' || state?.rebuiltThrough != null) {
+      const stackAccounts = [];
+      let covered = 0;
+      for (const account of accounts) {
+        const rows = await loadRollupRange(
+          ctx,
+          grain,
+          'account',
+          account.sourceId,
+          grid.from,
+          grid.to,
+          800,
+        );
+        if (rows.length > 0) covered += 1;
+        stackAccounts.push({
+          sourceId: account.sourceId,
+          name: account.name,
+          class: account.class,
+          group: groupKeyForClass(account.class),
+          values: valuesFromAccountRollups(grid.dates, rows),
+        });
+      }
+      if (covered > 0) {
+        return {
+          asOf,
+          firstAsOf: ends.firstAsOf,
+          ...grid,
+          accounts: stackAccounts,
+          documentsRead: accounts.length + covered,
+        };
+      }
+    }
     const chart = await loadChartSnapshots(
       lookup,
       accountIds,
@@ -297,15 +376,49 @@ export const detail = query({
     const ends = await loadAccountEnds(lookup, [account.sourceId]);
     const asOf = ends.maxAsOf ?? todayInTimeZone();
     const window = rangeWindow(range, asOf, ends.firstAsOf);
+    const grain = grainForRange(range);
     const dates = chartDates(range, window.from, window.to);
-    const chart = await loadChartSnapshots(
-      lookup,
-      [account.sourceId],
-      dates,
-      CONVEX_QUERY_READ_BUDGET,
-      ends,
-    );
-    const history = accountHistory({ account, snapshots: chart.snapshots, range, asOf });
+    const state = await loadRollupStateView(ctx);
+    let snapshots = ends.firstByAccount.get(account.sourceId)
+      ? [
+          ...(ends.firstByAccount.get(account.sourceId)
+            ? [ends.firstByAccount.get(account.sourceId)!]
+            : []),
+          ...(ends.lastByAccount.get(account.sourceId)
+            ? [ends.lastByAccount.get(account.sourceId)!]
+            : []),
+        ]
+      : [];
+    if (state?.status === 'ready' || state?.rebuiltThrough != null) {
+      const rows = await loadRollupRange(
+        ctx,
+        grain,
+        'account',
+        account.sourceId,
+        window.from,
+        window.to,
+        2000,
+      );
+      if (rows.length > 0) {
+        snapshots = rows.map((row) => ({
+          accountId: account.sourceId,
+          asOf: row.asOf,
+          balance: row.value,
+          source: row.interpolated ? ('interpolated' as const) : ('observed' as const),
+        }));
+      }
+    }
+    if (snapshots.length <= 2) {
+      const chart = await loadChartSnapshots(
+        lookup,
+        [account.sourceId],
+        dates,
+        CONVEX_QUERY_READ_BUDGET,
+        ends,
+      );
+      snapshots = chart.snapshots;
+    }
+    const history = accountHistory({ account, snapshots, range, asOf });
     const latest = ends.lastByAccount.get(account.sourceId) ?? null;
 
     return {
