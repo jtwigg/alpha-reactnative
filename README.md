@@ -443,9 +443,9 @@ The body is one calendar day (`personal` + `crankcase`). Re-sends overwrite that
 
 Feedback is an allowlisted Convex action that POSTs to `FEEDBACK_WEBHOOK_URL` with `Authorization: Bearer $FEEDBACK_WEBHOOK_KEY` and `source: "email-briefing-deck"` — the same payload the old `/api/feedback` forwarded. Those two env vars stay on Convex; they are never `EXPO_PUBLIC_*`. Sentry redacts briefing item text. There is no public query on `briefing_audit_log`.
 
-### Home quick-ask (Assistant)
+### Home chat (Assistant)
 
-Home has a one-exchange composer (last user message + latest reply, pending until Assistant posts back). The Chat tab is gone. Sending stores `chat_asks` (one row per user) and POSTs to the same webhook as briefing feedback:
+Home is the chat: thread + docked composer, latest briefing snapshot (Remember / Stop / Comment still work), then the version label. The Chat tab is gone. Sending stores `chat_messages` (John-only, allowlisted) and POSTs to the same webhook as briefing feedback:
 
 ```
 POST $FEEDBACK_WEBHOOK_URL
@@ -467,4 +467,4 @@ Authorization: Bearer $BRIEFINGS_INGEST_SECRET
 { "messageId": "ask_<id>", "text": "<reply>" }
 ```
 
-`threadId` can replace `messageId` and updates the latest home ask. **Open in Grok Bot** uses `Linking.openURL('grokbot://app/v1/agent?id=fcff0fa9-a9cd-444b-8c28-6a5904690983')` with try/catch — no `LSApplicationQueriesSchemes` entry (OTA-safe). `canOpenURL` would need a native build.
+`threadId` can replace `messageId` and replies to the latest pending home message. The thread shows **Thinking…** until that reply lands. **Open in Grok Bot** uses `Linking.openURL('grokbot://app/v1/agent?id=fcff0fa9-a9cd-444b-8c28-6a5904690983')` with try/catch — no `LSApplicationQueriesSchemes` entry (OTA-safe). `canOpenURL` would need a native build. Never log message `text` to Sentry.

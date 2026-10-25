@@ -64,6 +64,10 @@ describe('sentry never logs briefing content', () => {
     expect(scrubbed.threadUrl).toBe('[redacted]');
     expect(scrubbed.title).toBe('[redacted]');
     expect(scrubbed.date).toBe('2026-01-15');
+    expect(scrubSensitive({ text: 'secret question', reply: 'secret answer' })).toMatchObject({
+      text: '[redacted]',
+      reply: '[redacted]',
+    });
   });
 
   it('redacts TWR amounts and never treats finance routes as safe', () => {
@@ -83,6 +87,8 @@ describe('sentry never logs briefing content', () => {
   it('treats briefing routes as a sensitive surface', () => {
     expect(isSensitiveSurface('/briefings')).toBe(true);
     expect(isSensitiveSurface('email-briefing-deck')).toBe(true);
+    expect(isSensitiveSurface('/chat/reply')).toBe(true);
+    expect(isSensitiveSurface('chat_messages')).toBe(true);
     expect(isSensitiveSurface('/sign-in')).toBe(false);
   });
 });
