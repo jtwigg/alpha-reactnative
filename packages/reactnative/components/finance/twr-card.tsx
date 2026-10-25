@@ -1,33 +1,10 @@
 import { useQuery } from 'convex/react';
-import { useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { TwrChart, TwrHeader, type TwrChartHeader, type TwrChartPoint } from '@/components/finance/twr-chart';
-import {
-  Badge,
-  Card,
-  FText,
-  SectionHeader,
-  TogglePill,
-  TABULAR,
-  useFinancePalette,
-} from '@/components/finance/ui';
+import { Badge, Card, FText, SectionHeader, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { formatCoverageDate, formatUsdSigned } from '@/lib/finance-coverage';
-import { TWR_WINDOW_LABELS } from '../../../server/convex/finance/twrModel';
-import type { RangeKey } from '../../../server/convex/finance/series';
-
-type TwrRow = {
-  window: string;
-  asOf: string;
-  startDate: string;
-  cumulative: number;
-  annualized: number | null;
-  reliable: boolean;
-  flowsFullyKnown: boolean;
-  note: string | null;
-};
 
 type FlowRow = {
   flowId: string;
@@ -48,55 +25,36 @@ const KIND_LABEL: Record<FlowRow['kind'], string> = {
   external: 'External',
 };
 
+/** Flows list for an investment account. The TWR path lives on the balance chart. */
 export function TwrCard({
-  scope,
   live,
   demo,
-  title = 'Time-weighted return',
-  allowAllToggle = false,
   showFlowsFor,
   refreshNonce = 0,
-  range,
 }: {
-  scope: string;
   live: boolean;
-  demo?: { windows: TwrRow[]; flows?: FlowRow[]; series?: TwrChartPoint[]; twr?: TwrChartHeader | null; sp500Twr?: TwrChartHeader | null };
-  title?: string;
-  allowAllToggle?: boolean;
+  demo?: { flows?: FlowRow[] };
   showFlowsFor?: string;
   refreshNonce?: number;
-  range: RangeKey;
 }) {
   const palette = useFinancePalette();
   const router = useRouter();
-  const [allAccounts, setAllAccounts] = useState(false);
-  const activeScope = allowAllToggle && allAccounts ? 'total' : scope;
-
-  const liveTwr = useQuery(api.finance.queries.twr, live ? { scope: activeScope, refreshNonce } : 'skip');
-  const liveSeries = useQuery(
-    api.finance.queries.series,
-    live ? { scope: activeScope, range, refreshNonce } : 'skip',
+  const liveTwr = useQuery(
+    api.finance.queries.twr,
+    live && showFlowsFor ? { scope: `account:${showFlowsFor}`, refreshNonce } : 'skip',
   );
   const liveFlows = useQuery(
     api.finance.queries.flows,
     live && showFlowsFor ? { accountId: showFlowsFor, refreshNonce } : 'skip',
   );
-
-  const windows = useMemo(
-    () => (live ? (liveTwr?.windows ?? []) : (demo?.windows ?? [])),
-    [demo?.windows, live, liveTwr?.windows],
-  );
-  const points = live ? (liveSeries?.points ?? []) : (demo?.series ?? []);
-  const header = live ? (liveSeries?.twr ?? null) : (demo?.twr ?? null);
-  const sp500Header = live ? (liveSeries?.sp500Twr ?? null) : (demo?.sp500Twr ?? null);
   const flows = live ? (liveFlows ?? []) : (demo?.flows ?? []);
-  const incomplete = header
-    ? windows.some((row) => row.window === header.window && (!row.reliable || !row.flowsFullyKnown))
-    : false;
-  const note = windows.find((row) => row.window === header?.window)?.note ?? null;
+  const windows = live ? (liveTwr?.windows ?? []) : [];
+  const incomplete = windows.some((row) => !row.reliable || !row.flowsFullyKnown);
+  const note = windows.find((row) => row.note)?.note ?? null;
 
   if (!live && !demo) return null;
-  if (live && (liveTwr === undefined || liveSeries === undefined)) return null;
+  if (live && (liveTwr === undefined || liveFlows === undefined)) return null;
+  if (flows.length === 0 && !incomplete) return null;
 
   const openNote = () => {
     if (!note) return;
@@ -116,35 +74,9 @@ export function TwrCard({
     router.push(`/finances/account/${encodeURIComponent(target)}`);
   };
 
-  const subtitle = header?.startDate && header.asOf
-    ? `${header.window ? `${TWR_WINDOW_LABELS[header.window as keyof typeof TWR_WINDOW_LABELS] ?? header.window} · ` : ''}${formatCoverageDate(header.startDate)} – ${formatCoverageDate(header.asOf)}`
-    : points.length === 0
-      ? 'Finance writes the daily path; the app only displays it.'
-      : undefined;
-
   return (
     <Card>
-      <SectionHeader title={title} subtitle={subtitle} />
-      {allowAllToggle ? (
-        <View style={styles.toggle}>
-          <TogglePill
-            label="All accounts"
-            value={allAccounts}
-            onChange={setAllAccounts}
-            color={palette.accent}
-          />
-        </View>
-      ) : null}
-      {points.length >= 2 ? (
-        <>
-          <TwrHeader twr={header} sp500Twr={sp500Header} />
-          <TwrChart points={points} />
-        </>
-      ) : (
-        <FText variant="callout" tone="muted" style={styles.empty}>
-          No return path for this range yet.
-        </FText>
-      )}
+      <SectionHeader title="Flows" subtitle="Cash that affects this account’s time-weighted return." />
       {incomplete ? (
         <Pressable onPress={openNote} disabled={!note} accessibilityRole="button">
           <Badge label="Estimated / incomplete flows" tone="accent" />
@@ -155,46 +87,36 @@ export function TwrCard({
           ) : null}
         </Pressable>
       ) : null}
-      {showFlowsFor && flows.length > 0 ? (
-        <View style={styles.flows}>
-          <FText variant="eyebrow" tone="muted">
-            Flows
+      {flows.map((flow) => (
+        <Pressable
+          key={flow.flowId}
+          onPress={() => openFlow(flow)}
+          style={[styles.flow, { borderColor: palette.hairline }]}
+          accessibilityRole="button"
+          accessibilityLabel={`${KIND_LABEL[flow.kind]} ${formatUsdSigned(flow.amount)}`}
+        >
+          <View style={styles.flowTop}>
+            <FText variant="callout" style={TABULAR} tone={flow.amount >= 0 ? 'positive' : 'negative'}>
+              {formatUsdSigned(flow.amount)}
+            </FText>
+            <FText variant="caption" tone="muted">
+              {formatCoverageDate(flow.date)}
+            </FText>
+          </View>
+          <FText variant="caption" tone="subtle">
+            {KIND_LABEL[flow.kind]}
+            {flow.kind === 'internal_transfer' ? " · doesn't change net worth" : ''}
+            {flow.counterpart?.type === 'transaction' ? ` · ${flow.counterpart.name}` : ''}
+            {flow.counterpart?.type === 'account' ? ` · ${flow.counterpart.name}` : ''}
           </FText>
-          {flows.map((flow) => (
-            <Pressable
-              key={flow.flowId}
-              onPress={() => openFlow(flow)}
-              style={[styles.flow, { borderColor: palette.hairline }]}
-              accessibilityRole="button"
-              accessibilityLabel={`${KIND_LABEL[flow.kind]} ${formatUsdSigned(flow.amount)}`}
-            >
-              <View style={styles.flowTop}>
-                <FText variant="callout" style={TABULAR} tone={flow.amount >= 0 ? 'positive' : 'negative'}>
-                  {formatUsdSigned(flow.amount)}
-                </FText>
-                <FText variant="caption" tone="muted">
-                  {formatCoverageDate(flow.date)}
-                </FText>
-              </View>
-              <FText variant="caption" tone="subtle">
-                {KIND_LABEL[flow.kind]}
-                {flow.kind === 'internal_transfer' ? " · doesn't change net worth" : ''}
-                {flow.counterpart?.type === 'transaction' ? ` · ${flow.counterpart.name}` : ''}
-                {flow.counterpart?.type === 'account' ? ` · ${flow.counterpart.name}` : ''}
-              </FText>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+        </Pressable>
+      ))}
     </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  toggle: { marginBottom: 10, alignItems: 'flex-start' },
-  empty: { paddingVertical: 20, textAlign: 'center' },
   noteHint: { marginTop: 6 },
-  flows: { marginTop: 14, gap: 8 },
   flow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 10, gap: 2 },
   flowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
 });

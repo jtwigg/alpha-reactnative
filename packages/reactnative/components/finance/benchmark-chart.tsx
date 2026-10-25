@@ -25,6 +25,7 @@ export function ChartBlock({
   invert,
   spanFrom,
   spanTo,
+  flowAdjusted,
 }: {
   points: ChartPoint[];
   markers: CoverageMarker[];
@@ -38,6 +39,8 @@ export function ChartBlock({
   /** Keep one market subscription across range switches. */
   spanFrom?: string;
   spanTo?: string;
+  /** Flow-adjusted S&P path; used instead of the rebased index overlay. */
+  flowAdjusted?: BenchmarkLine;
 }) {
   const chart = (benchmark?: BenchmarkLine) => (
     <NetWorthChart
@@ -55,6 +58,7 @@ export function ChartBlock({
     />
   );
   if (!showBenchmark) return chart();
+  if (flowAdjusted) return chart(flowAdjusted);
   return (
     <SoftBoundary fallback={chart()}>
       <LiveBenchmarkChart points={points} spanFrom={spanFrom} spanTo={spanTo}>

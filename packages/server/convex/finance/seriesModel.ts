@@ -192,6 +192,42 @@ export function headerFromComputed(
   };
 }
 
+/** Last-at-or-before carry of a dated field onto a chart date grid. */
+export function alignFieldToDates(
+  dates: string[],
+  points: Array<{ asOf: string; value: number }>,
+): Array<number | null> {
+  if (dates.length === 0 || points.length === 0) return dates.map(() => null);
+  const ordered = [...points].sort((a, b) => a.asOf.localeCompare(b.asOf));
+  let index = 0;
+  let last: number | null = null;
+  return dates.map((date) => {
+    while (index < ordered.length && ordered[index].asOf <= date) {
+      last = ordered[index].value;
+      index += 1;
+    }
+    return last;
+  });
+}
+
+/**
+ * Flow-adjusted S&P dollar path, rebased onto `startValue` so it can sit on
+ * a plain balance chart as a like-for-like overlay.
+ */
+export function flowAdjustedOverlay(
+  dates: string[],
+  startValue: number,
+  points: Array<{ asOf: string; sp500Equiv: number }>,
+): Array<number | null> {
+  const raw = alignFieldToDates(
+    dates,
+    points.map((point) => ({ asOf: point.asOf, value: point.sp500Equiv })),
+  );
+  const first = raw.find((value) => value != null);
+  if (first == null || first === 0 || !Number.isFinite(startValue)) return raw;
+  return raw.map((value) => (value == null ? null : (startValue * value) / first));
+}
+
 export function seriesPointFromDoc(row: {
   date?: string;
   asOf?: string;

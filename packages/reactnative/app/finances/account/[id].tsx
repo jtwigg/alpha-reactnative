@@ -19,7 +19,9 @@ import {
   type TransactionsStatus,
 } from '@/components/finance/account-sections';
 import { ChartBlock } from '@/components/finance/benchmark-chart';
+import { ChartToggles } from '@/components/finance/chart-toggles';
 import { TwrCard } from '@/components/finance/twr-card';
+import { TwrChart, TwrHeader } from '@/components/finance/twr-chart';
 import { HeroValue } from '@/components/finance/hero-value';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
@@ -30,7 +32,6 @@ import {
   FText,
   MAX_CONTENT_WIDTH,
   RefreshButton,
-  TogglePill,
   StateMessage,
   useFinancePalette,
 } from '@/components/finance/ui';
@@ -40,10 +41,12 @@ import { useChartColors } from '@/lib/finance-colors';
 import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
+import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountDetail, demoFlows, demoHoldings, demoTransactions, demoTwr } from '@/lib/finance-fixtures';
 import { BENCHMARKS } from '../../../../server/convex/finance/benchmarks';
 import { groupKeyForClass, trimHistoryToRange } from '../../../../server/convex/finance/accountModel';
 import { accountScope } from '../../../../server/convex/finance/twrModel';
+import { flowAdjustedOverlay } from '../../../../server/convex/finance/seriesModel';
 import { signedAmount, type RangeKey } from '../../../../server/convex/finance/series';
 
 const PAGE_SIZE = 25;
@@ -100,7 +103,8 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const [range, setRange] = useState<RangeKey>('1Y');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
-  const [showBenchmark, setShowBenchmark] = useState(false);
+  const { timeWeighted, setTimeWeighted, showSp500, setShowSp500 } = useChartMode();
+  const scope = accountScope(sourceId);
 
   const liveDetail = useQuery(
     api.finance.accounts.detail,
@@ -110,6 +114,8 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
     api.finance.accounts.detail,
     live && isDailyRange(range) ? { sourceId, range, refreshNonce } : 'skip',
   );
+  const liveSeries = useQuery(api.finance.queries.series, live ? { scope, range, refreshNonce } : 'skip');
+  const demoSeriesModel = useMemo(() => (live ? undefined : demoTwr(scope, range)), [live, range, scope]);
   const [held, setHeld] = useState(liveDetail);
   useEffect(() => {
     if (liveDetail !== undefined) setHeld(liveDetail);
@@ -157,9 +163,14 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
     );
   }
 
-  const color = colors.groups[groupKeyForClass(detail.class)];
+  const group = groupKeyForClass(detail.class);
+  const color = colors.groups[group];
   const balance = detail.latestSnapshot?.balance ?? detail.currentBalance;
   const shown = signedAmount(detail.class, balance);
+  const seriesPoints = live ? (liveSeries?.points ?? []) : (demoSeriesModel?.series ?? []);
+  const hasSeries = seriesPoints.length >= 2;
+  const twrOn = timeWeighted;
+  const sp500On = showSp500 && group !== 'liability';
 
   return (
     <ScrollLockProvider>
@@ -191,54 +202,89 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
           </View>
 
           <Card style={styles.historyCard}>
-            <HeroValue
-              label={shown < 0 ? 'Balance owed' : 'Balance'}
-              points={detail.history.points}
-              scrubIndex={scrubIndex}
-              fallback={balance}
-              suffix={RANGE_SUFFIX[range]}
-              invert={shown < 0}
-            />
-            <ChartBlock
-              points={detail.history.points}
-              markers={[]}
-              scrubIndex={scrubIndex}
-              onScrub={setScrubIndex}
-              showBenchmark={showBenchmark}
-              seriesLabel="Balance"
-              color={color}
-              height={width >= 720 ? 260 : 210}
-              invert={shown < 0}
-              spanFrom={live ? (liveDetail ?? held)?.history.points[0]?.asOf : detail.history.points[0]?.asOf}
-              spanTo={live ? (liveDetail ?? held)?.history.asOf : detail.history.asOf}
-            />
+            {twrOn ? (
+              <>
+                <HeroValue
+                  label="Value"
+                  points={seriesPoints.map((point) => ({ asOf: point.asOf, total: point.value }))}
+                  scrubIndex={scrubIndex}
+                  fallback={seriesPoints.at(-1)?.value ?? balance}
+                  suffix={RANGE_SUFFIX[range]}
+                />
+                <TwrHeader
+                  twr={live ? (liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
+                  sp500Twr={live ? (liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)}
+                  showSp500={sp500On}
+                />
+                {live && liveSeries === undefined ? (
+                  <ActivityIndicator />
+                ) : (
+                  <TwrChart
+                    points={seriesPoints}
+                    height={width >= 720 ? 260 : 210}
+                    showSp500={sp500On}
+                    color={color}
+                    scrubIndex={scrubIndex}
+                    onScrub={setScrubIndex}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <HeroValue
+                  label={shown < 0 ? 'Balance owed' : 'Balance'}
+                  points={detail.history.points}
+                  scrubIndex={scrubIndex}
+                  fallback={balance}
+                  suffix={RANGE_SUFFIX[range]}
+                  invert={shown < 0}
+                />
+                <ChartBlock
+                  points={detail.history.points}
+                  markers={[]}
+                  scrubIndex={scrubIndex}
+                  onScrub={setScrubIndex}
+                  showBenchmark={sp500On}
+                  seriesLabel="Balance"
+                  color={color}
+                  height={width >= 720 ? 260 : 210}
+                  invert={shown < 0}
+                  spanFrom={live ? (liveDetail ?? held)?.history.points[0]?.asOf : detail.history.points[0]?.asOf}
+                  spanTo={live ? (liveDetail ?? held)?.history.asOf : detail.history.asOf}
+                  flowAdjusted={
+                    hasSeries
+                      ? {
+                          label: BENCHMARKS.SPX.label,
+                          color: colors.benchmark,
+                          values: flowAdjustedOverlay(
+                            detail.history.points.map((point) => point.asOf),
+                            detail.history.points[0]?.total ?? 0,
+                            seriesPoints,
+                          ),
+                        }
+                      : undefined
+                  }
+                />
+              </>
+            )}
             <View style={styles.toolbar}>
               <RangePills value={range} onChange={setRange} stretch />
-              <TogglePill
-                label={BENCHMARKS.SPX.label}
-                value={showBenchmark}
-                onChange={setShowBenchmark}
-                color={colors.benchmark}
+              <ChartToggles
+                timeWeighted={timeWeighted}
+                onTimeWeighted={setTimeWeighted}
+                showSp500={showSp500}
+                onShowSp500={setShowSp500}
+                showSp500Toggle={group !== 'liability'}
               />
             </View>
           </Card>
 
-          {groupKeyForClass(detail.class) === 'investments' ? (
+          {group === 'investments' ? (
             <TwrCard
-              scope={accountScope(sourceId)}
               live={live}
-              demo={
-                live
-                  ? undefined
-                  : {
-                      ...demoTwr(accountScope(sourceId), range),
-                      flows: demoFlows(sourceId),
-                    }
-              }
-              title="Time-weighted return"
+              demo={live ? undefined : { flows: demoFlows(sourceId) }}
               showFlowsFor={sourceId}
               refreshNonce={refreshNonce}
-              range={range}
             />
           ) : null}
 

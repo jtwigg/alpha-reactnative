@@ -62,3 +62,10 @@ export function usePersistedChoice<T extends string>(
   );
   return [value, update];
 }
+
+/** Boolean UI flag stored as `on` / `off`. */
+export function usePersistedFlag(key: string, fallback: boolean): [boolean, (value: boolean) => void] {
+  const [choice, setChoice] = usePersistedChoice(key, ['on', 'off'] as const, fallback ? 'on' : 'off');
+  const update = useCallback((next: boolean) => setChoice(next ? 'on' : 'off'), [setChoice]);
+  return [choice === 'on', update];
+}

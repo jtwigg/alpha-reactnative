@@ -5,14 +5,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountGroups, CHANGE_MODES, type AccountTrends, type ChangeMode } from '@/components/finance/account-groups';
 import { ChartBlock } from '@/components/finance/benchmark-chart';
+import { ChartToggles } from '@/components/finance/chart-toggles';
 import { ClassChart } from '@/components/finance/class-chart';
 import { CompositionCard } from '@/components/finance/composition-card';
-import { TwrCard } from '@/components/finance/twr-card';
 import { CoverageLegend } from '@/components/finance/coverage-legend';
 import { HeroValue, changeTone } from '@/components/finance/hero-value';
 import { CoverageMarkerNotes } from '@/components/finance/net-worth-chart';
 import { RangePills } from '@/components/finance/range-pills';
 import { useScrollLockRoot } from '@/components/finance/scroll-lock';
+import { TwrChart, TwrHeader } from '@/components/finance/twr-chart';
 import {
   Card,
   FText,
@@ -30,6 +31,7 @@ import { isClerkConfigured } from '@/lib/convex';
 import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
+import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountList, demoAccountSparklines, demoNetWorthPage, demoTwr } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
 import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
@@ -42,6 +44,7 @@ import {
   trimSparklinesToRange,
   type AccountGroupKey,
 } from '../../../server/convex/finance/accountModel';
+import { flowAdjustedOverlay } from '../../../server/convex/finance/seriesModel';
 import { modelsForRanges, type RangeKey } from '../../../server/convex/finance/series';
 
 type ChartGroup = 'all' | AccountGroupKey;
@@ -62,9 +65,9 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const [range, setRange] = useState<RangeKey>('All');
   const [rangeGen, setRangeGen] = useState(0);
   const [changeMode, setChangeMode] = usePersistedChoice<ChangeMode>('finance.changeMode', CHANGE_MODES, 'own');
+  const { timeWeighted, setTimeWeighted, showSp500, setShowSp500, twrAll, setTwrAll } = useChartMode();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
-  const [showBenchmark, setShowBenchmark] = useState(false);
   const [chartGroup, setChartGroup] = useState<ChartGroup>('all');
   const [groupScrub, setGroupScrub] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -84,6 +87,15 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     allowed && isDailyRange(range) ? { range, refreshNonce } : 'skip',
   );
   const [heldSparks, setHeldSparks] = useState(liveSparks);
+  const twrScope = twrAll ? 'total' : 'reliable_subset';
+  const liveSeries = useQuery(
+    api.finance.queries.series,
+    allowed ? { scope: twrScope, range, refreshNonce } : 'skip',
+  );
+  const demoSeriesModel = useMemo(
+    () => (demo ? demoTwr(twrScope, range) : undefined),
+    [demo, range, twrScope],
+  );
 
   useEffect(() => {
     if (live) setHeld(live);
@@ -199,6 +211,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   }
 
   const usingDemo = demo && !hasLive;
+  const seriesPoints = hasLive ? (liveSeries?.points ?? []) : (demoSeriesModel?.series ?? []);
+  const hasSeries = seriesPoints.length >= 2;
+  const twrOn = timeWeighted && activeGroup === 'all';
+  const sp500On = showSp500 && activeGroup !== 'liability';
   const heroScrub = activeGroup === 'all' ? scrubIndex : groupScrub;
   const rangeChange = (chartPoints.at(-1)?.total ?? 0) - (chartPoints[0]?.total ?? 0);
   const lineColor =
@@ -240,49 +256,99 @@ function NetWorthPage({ demo }: { demo: boolean }) {
 
               <View onLayout={(event) => (chartY.current = event.nativeEvent.layout.y)}>
                 <Card style={styles.heroCard}>
-                  <HeroValue
-                    label={activeGroup === 'all' ? undefined : heroLabel(activeGroup)}
-                    points={chartPoints}
-                    scrubIndex={heroScrub}
-                    fallback={data.headline}
-                    suffix={RANGE_SUFFIX[range]}
-                    invert={activeGroup === 'liability'}
-                  />
-                  <ChartBlock
-                    points={chartPoints}
-                    markers={chartMarkers}
-                    scrubIndex={heroScrub}
-                    onScrub={activeGroup === 'all' ? setScrubIndex : setGroupScrub}
-                    showBenchmark={Boolean(allowed && showBenchmark && activeGroup !== 'liability')}
-                    seriesLabel={heroLabel(activeGroup)}
-                    color={lineColor}
-                    height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
-                    invert={activeGroup === 'liability'}
-                    spanFrom={full?.points[0]?.asOf}
-                    spanTo={full?.asOf}
-                  />
+                  {twrOn ? (
+                    <>
+                      <HeroValue
+                        label="Value"
+                        points={seriesPoints.map((point) => ({ asOf: point.asOf, total: point.value }))}
+                        scrubIndex={heroScrub}
+                        fallback={seriesPoints.at(-1)?.value ?? data.headline}
+                        suffix={RANGE_SUFFIX[range]}
+                      />
+                      <TwrHeader
+                        twr={hasLive ? (liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
+                        sp500Twr={hasLive ? (liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)}
+                        showSp500={sp500On}
+                      />
+                      {hasLive && liveSeries === undefined ? (
+                        <ActivityIndicator />
+                      ) : (
+                        <TwrChart
+                          points={seriesPoints}
+                          height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
+                          showSp500={sp500On}
+                          color={lineColor}
+                          scrubIndex={heroScrub}
+                          onScrub={setScrubIndex}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <HeroValue
+                        label={activeGroup === 'all' ? undefined : heroLabel(activeGroup)}
+                        points={chartPoints}
+                        scrubIndex={heroScrub}
+                        fallback={data.headline}
+                        suffix={RANGE_SUFFIX[range]}
+                        invert={activeGroup === 'liability'}
+                      />
+                      <ChartBlock
+                        points={chartPoints}
+                        markers={chartMarkers}
+                        scrubIndex={heroScrub}
+                        onScrub={activeGroup === 'all' ? setScrubIndex : setGroupScrub}
+                        showBenchmark={Boolean(sp500On && (hasLive || usingDemo))}
+                        seriesLabel={heroLabel(activeGroup)}
+                        color={lineColor}
+                        height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
+                        invert={activeGroup === 'liability'}
+                        spanFrom={full?.points[0]?.asOf}
+                        spanTo={full?.asOf}
+                        flowAdjusted={
+                          hasSeries && activeGroup === 'all'
+                            ? {
+                                label: BENCHMARKS.SPX.label,
+                                color: colors.benchmark,
+                                values: flowAdjustedOverlay(
+                                  chartPoints.map((point) => point.asOf),
+                                  chartPoints[0]?.total ?? 0,
+                                  seriesPoints,
+                                ),
+                              }
+                            : undefined
+                        }
+                      />
+                    </>
+                  )}
                   <RangePills value={range} onChange={pickRange} stretch />
-                  {groupOptions.length > 2 || (allowed && activeGroup !== 'liability') ? (
-                    <View style={styles.toolbar}>
-                      {groupOptions.length > 2 ? (
-                        <Segmented
-                          options={groupOptions}
-                          value={activeGroup}
-                          onChange={setChartGroup}
-                          labels={GROUP_PICKER_LABELS}
-                          accessibilityLabel="Chart group"
-                        />
-                      ) : null}
-                      {allowed && activeGroup !== 'liability' ? (
-                        <TogglePill
-                          label={BENCHMARKS.SPX.label}
-                          value={showBenchmark}
-                          onChange={setShowBenchmark}
-                          color={colors.benchmark}
-                        />
-                      ) : null}
-                    </View>
-                  ) : null}
+                  <View style={styles.toolbar}>
+                    {groupOptions.length > 2 ? (
+                      <Segmented
+                        options={groupOptions}
+                        value={activeGroup}
+                        onChange={setChartGroup}
+                        labels={GROUP_PICKER_LABELS}
+                        accessibilityLabel="Chart group"
+                      />
+                    ) : null}
+                    <ChartToggles
+                      timeWeighted={timeWeighted}
+                      onTimeWeighted={setTimeWeighted}
+                      showSp500={showSp500}
+                      onShowSp500={setShowSp500}
+                      showTimeWeighted={activeGroup === 'all'}
+                      showSp500Toggle={activeGroup !== 'liability'}
+                    />
+                    {twrOn ? (
+                      <TogglePill
+                        label="All accounts"
+                        value={twrAll}
+                        onChange={setTwrAll}
+                        color={palette.accent}
+                      />
+                    ) : null}
+                  </View>
                   <CoverageMarkerNotes markers={chartMarkers} />
                   <View style={[styles.stats, { borderTopColor: palette.hairline }]}>
                     <Stat label="Assets" value={formatUsd(data.assets)} />
@@ -291,16 +357,6 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                   </View>
                 </Card>
               </View>
-
-              <TwrCard
-                scope="reliable_subset"
-                live={hasLive}
-                demo={usingDemo ? demoTwr('reliable_subset', range) : undefined}
-                allowAllToggle
-                title="Portfolio return"
-                refreshNonce={refreshNonce}
-                range={range}
-              />
 
               <CompositionCard
                 live={hasLive}
