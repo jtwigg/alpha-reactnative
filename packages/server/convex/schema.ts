@@ -226,7 +226,7 @@ export default defineSchema({
     .index('by_grain_scope_asOf', ['grain', 'scopeKind', 'scopeId', 'asOf'])
     .index('by_grain_kind_asOf', ['grain', 'scopeKind', 'asOf']),
 
-  /** Watermark for finance_rollups. One row keyed `global`. */
+  /** Watermark for finance_rollups. One row keyed `global`. Rebuild job only. */
   finance_rollup_state: defineTable({
     key: v.string(),
     dirtyFrom: v.optional(v.string()),
@@ -236,6 +236,16 @@ export default defineSchema({
     cursor: v.optional(v.string()),
     updatedAt: v.number(),
   }).index('by_key', ['key']),
+
+  /**
+   * Insert-only dirty queue for rollups. Ingest never reads or patches this
+   * (or finance_rollup_state); rebuildStep drains it.
+   */
+  finance_rollup_dirty: defineTable({
+    scopeKey: v.string(),
+    from: v.string(),
+    createdAt: v.number(),
+  }).index('by_scopeKey', ['scopeKey']),
 
   /** Precomputed time-weighted returns. Key is scope+window+asOf. Finance writes only. */
   returns: defineTable({

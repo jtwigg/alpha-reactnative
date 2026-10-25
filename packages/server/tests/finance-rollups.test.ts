@@ -20,8 +20,12 @@ import {
   readerMode,
   rollupCoarse,
   rollupCoversRange,
+  shouldPatchRebuildState,
+  encodeRebuildCursor,
   valuesFromAccountRollups,
 } from '../convex/finance/rollups';
+import { markRollupsDirty, rebuildStep } from '../convex/finance/rollupJobs';
+import { upsertSeries, upsertSnapshots } from '../convex/finance/ingest';
 import {
   buildNetWorthModel,
   chartDates,
@@ -369,5 +373,294 @@ describe('before/after page payload', () => {
       { asOf: '2024-01-31', value: 30 },
     ]);
     expect(values).toEqual([10, 10, 30]);
+  });
+});
+
+describe('shouldPatchRebuildState', () => {
+  const base = {
+    prevDay: '2024-01-01',
+    nextDay: '2024-01-03',
+    prevStatus: 'rebuilding' as const,
+    nextStatus: 'rebuilding' as const,
+    prevWipe: false,
+    nextWipe: false,
+    drained: false,
+    done: false,
+  };
+
+  it('patches on done, drain, status, or wipe — not on a short cursor hop', () => {
+    expect(shouldPatchRebuildState({ ...base, done: true })).toBe(true);
+    expect(shouldPatchRebuildState({ ...base, drained: true })).toBe(true);
+    expect(shouldPatchRebuildState({ ...base, nextStatus: 'ready' })).toBe(true);
+    expect(shouldPatchRebuildState({ ...base, nextWipe: true })).toBe(true);
+    expect(shouldPatchRebuildState(base)).toBe(false);
+    expect(shouldPatchRebuildState({ ...base, nextDay: '2024-01-08' })).toBe(true);
+  });
+});
+
+type Row = Record<string, unknown> & { _id: string; _creationTime: number };
+
+const MUTATION_INDEXES: Record<string, Record<string, string[]>> = {
+  accounts: { by_sourceId: ['sourceId'], by_class: ['class'] },
+  balance_snapshots: { by_account_asOf: ['accountId', 'asOf'], by_asOf: ['asOf'] },
+  series: { by_scope_date: ['scope', 'date'], by_date: ['date'] },
+  series_replace_batches: { by_batchId: ['batchId'] },
+  finance_rollups: {
+    by_grain_scope_asOf: ['grain', 'scopeKind', 'scopeId', 'asOf'],
+    by_grain_kind_asOf: ['grain', 'scopeKind', 'asOf'],
+  },
+  finance_rollup_state: { by_key: ['key'] },
+  finance_rollup_dirty: { by_scopeKey: ['scopeKey'] },
+  market_index_bars: { by_symbol_asOf: ['symbol', 'asOf'] },
+};
+
+function occConflicts(
+  left: { reads: Record<string, string[]>; writes: Record<string, string[]> },
+  right: { reads: Record<string, string[]>; writes: Record<string, string[]> },
+  table: string,
+): string[] {
+  const leftRead = new Set(left.reads[table] ?? []);
+  const leftWrite = new Set(left.writes[table] ?? []);
+  const rightRead = new Set(right.reads[table] ?? []);
+  const rightWrite = new Set(right.writes[table] ?? []);
+  const out = new Set<string>();
+  for (const id of leftWrite) {
+    if (rightWrite.has(id) || rightRead.has(id)) out.add(id);
+  }
+  for (const id of rightWrite) {
+    if (leftRead.has(id)) out.add(id);
+  }
+  return [...out];
+}
+
+function mutationCtx(tables: Record<string, Row[]>) {
+  let seq = 0;
+  const access = {
+    reads: {} as Record<string, string[]>,
+    writes: {} as Record<string, string[]>,
+  };
+  const touch = (kind: 'reads' | 'writes', table: string, id: string) => {
+    (access[kind][table] ??= []).push(id);
+  };
+  const scheduled: unknown[] = [];
+  const tableOf = (id: string): [string, Row] | null => {
+    for (const [table, rows] of Object.entries(tables)) {
+      const row = rows.find((item) => item._id === id);
+      if (row) return [table, row];
+    }
+    return null;
+  };
+  const db = {
+    query(table: string) {
+      let rows = [...(tables[table] ?? [])];
+      let fields: string[] = [];
+      let indexed = false;
+      let desc = false;
+      const builder = {
+        withIndex(name: string, range?: (q: unknown) => unknown) {
+          fields = MUTATION_INDEXES[table]?.[name] ?? [];
+          if (!fields.length) throw new Error(`unknown index ${table}.${name}`);
+          indexed = true;
+          const conds: Array<(row: Row) => boolean> = [];
+          const q = {
+            eq: (f: string, v: unknown) => (conds.push((r) => r[f] === v), q),
+            gt: (f: string, v: string) => (conds.push((r) => (r[f] as string) > v), q),
+            gte: (f: string, v: string) => (conds.push((r) => (r[f] as string) >= v), q),
+            lt: (f: string, v: string) => (conds.push((r) => (r[f] as string) < v), q),
+            lte: (f: string, v: string) => (conds.push((r) => (r[f] as string) <= v), q),
+          };
+          range?.(q);
+          rows = rows.filter((row) => conds.every((cond) => cond(row)));
+          return builder;
+        },
+        order(direction: 'asc' | 'desc') {
+          desc = direction === 'desc';
+          return builder;
+        },
+        sorted() {
+          const keyed = [...rows].sort((a, b) => {
+            for (const f of fields) {
+              const cmp = String(a[f] ?? '').localeCompare(String(b[f] ?? ''));
+              if (cmp !== 0) return cmp;
+            }
+            return a._creationTime - b._creationTime;
+          });
+          return desc ? keyed.reverse() : keyed;
+        },
+        async take(n: number) {
+          const out = builder.sorted().slice(0, n);
+          for (const row of out) touch('reads', table, row._id);
+          return out;
+        },
+        async unique() {
+          const out = builder.sorted();
+          if (out.length > 1) throw new Error('not unique');
+          if (out[0]) touch('reads', table, out[0]._id);
+          return out[0] ?? null;
+        },
+      };
+      return builder;
+    },
+    async get(id: string) {
+      const hit = tableOf(id);
+      if (!hit) return null;
+      touch('reads', hit[0], id);
+      return hit[1];
+    },
+    async insert(table: string, doc: Record<string, unknown>) {
+      const id = `id_${table}_${seq++}`;
+      const row = { ...doc, _id: id, _creationTime: seq } as Row;
+      (tables[table] ??= []).push(row);
+      touch('writes', table, id);
+      return id;
+    },
+    async patch(id: string, fields: Record<string, unknown>) {
+      const hit = tableOf(id);
+      if (!hit) throw new Error(`patch missing ${id}`);
+      touch('writes', hit[0], id);
+      for (const [key, value] of Object.entries(fields)) {
+        if (value === undefined) delete hit[1][key];
+        else hit[1][key] = value;
+      }
+    },
+    async replace(id: string, doc: Record<string, unknown>) {
+      const hit = tableOf(id);
+      if (!hit) throw new Error(`replace missing ${id}`);
+      touch('writes', hit[0], id);
+      const next = { ...doc, _id: id, _creationTime: hit[1]._creationTime } as Row;
+      const list = tables[hit[0]];
+      list[list.indexOf(hit[1])] = next;
+    },
+    async delete(id: string) {
+      const hit = tableOf(id);
+      if (!hit) return;
+      touch('writes', hit[0], id);
+      tables[hit[0]] = tables[hit[0]].filter((row) => row._id !== id);
+    },
+  };
+  return {
+    ctx: {
+      db,
+      scheduler: {
+        runAfter: async (_ms: number, _ref: unknown, args: unknown) => {
+          scheduled.push(args);
+        },
+      },
+    },
+    tables,
+    access,
+    scheduled,
+  };
+}
+
+const run = (fn: unknown, ctx: unknown, args: unknown) =>
+  (fn as { _handler: (ctx: unknown, args: unknown) => Promise<unknown> })._handler(ctx, args);
+
+function seedRebuildTables(): Record<string, Row[]> {
+  const cursor = encodeRebuildCursor({
+    from: '2020-01-01',
+    to: '2026-10-23',
+    day: '2024-06-01',
+    wipe: false,
+  });
+  return {
+    finance_rollup_state: [
+      {
+        _id: 'state_global',
+        _creationTime: 1,
+        key: 'global',
+        version: 4,
+        status: 'rebuilding',
+        cursor,
+        rebuiltThrough: '2024-05-31',
+        updatedAt: 1,
+      },
+    ],
+    finance_rollup_dirty: [],
+    finance_rollups: [],
+    series: [],
+    series_replace_batches: [],
+    accounts: [],
+    balance_snapshots: [],
+    market_index_bars: [],
+  };
+}
+
+function seriesItem(date: string, scope = 'total') {
+  return {
+    scope,
+    date,
+    value: 1,
+    netInvested: 1,
+    sp500Equiv: 1,
+    valueInterpolated: false,
+    estimated: false,
+    method: 'finance.bench.v1' as const,
+  };
+}
+
+describe('ingest vs rebuild OCC', () => {
+  it('keeps a 500-row upsert_series off finance_rollup_state while rebuildStep patches it', async () => {
+    const items = Array.from({ length: 500 }, (_, i) => seriesItem(addDays('2024-01-01', i)));
+    const ingest = mutationCtx(seedRebuildTables());
+    const rebuild = mutationCtx(seedRebuildTables());
+
+    const [upserted, stepped] = await Promise.all([
+      run(upsertSeries, ingest.ctx, { items }),
+      run(rebuildStep, rebuild.ctx, {
+        stepId: 4,
+        cursor: encodeRebuildCursor({
+          from: '2020-01-01',
+          to: '2026-10-23',
+          day: '2024-06-01',
+          wipe: false,
+        }),
+      }),
+    ]);
+
+    expect(upserted).toMatchObject({ inserted: 500 });
+    expect(ingest.access.reads.finance_rollup_state ?? []).toEqual([]);
+    expect(ingest.access.writes.finance_rollup_state ?? []).toEqual([]);
+    expect(ingest.tables.finance_rollup_dirty).toHaveLength(1);
+    expect(ingest.tables.finance_rollup_dirty[0]).toMatchObject({
+      scopeKey: 'series:total',
+      from: '2024-01-01',
+    });
+    expect(ingest.scheduled).toHaveLength(1);
+    expect(rebuild.access.reads.finance_rollup_state).toContain('state_global');
+    expect(stepped).toMatchObject({ status: 'rebuilding', done: false });
+    expect(occConflicts(ingest.access, rebuild.access, 'finance_rollup_state')).toEqual([]);
+  });
+
+  it('does not read finance_rollup_state from snapshot ingest either', async () => {
+    const ingest = mutationCtx(seedRebuildTables());
+    await run(upsertSnapshots, ingest.ctx, {
+      items: [
+        {
+          accountId: 'acc_1',
+          asOf: '2024-06-01',
+          balance: 100,
+          source: 'observed',
+        },
+      ],
+    });
+    expect(ingest.access.reads.finance_rollup_state ?? []).toEqual([]);
+    expect(ingest.access.writes.finance_rollup_state ?? []).toEqual([]);
+    expect(ingest.tables.finance_rollup_dirty[0]).toMatchObject({
+      scopeKey: 'acc_1',
+      from: '2024-06-01',
+    });
+  });
+
+  it('inserts dirty rows without touching global state', async () => {
+    const ctx = mutationCtx(seedRebuildTables());
+    await markRollupsDirty(ctx.ctx as never, [
+      { accountId: 'series:total', from: '2024-01-01' },
+      { accountId: 'series:total', from: '2025-01-01' },
+    ]);
+    expect(ctx.access.reads.finance_rollup_state ?? []).toEqual([]);
+    expect(ctx.access.writes.finance_rollup_state ?? []).toEqual([]);
+    expect(ctx.tables.finance_rollup_dirty).toHaveLength(1);
+    expect(ctx.tables.finance_rollup_dirty[0].from).toBe('2024-01-01');
   });
 });

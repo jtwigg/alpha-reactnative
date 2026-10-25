@@ -209,6 +209,9 @@ describe('MCP handler', () => {
       expect(raw).toContain('finance.bench.v1');
       expect(raw).toContain('replaceScope');
       expect(raw).toContain('replaceBatchId');
+      expect(raw).toContain('replaceScope=true on the first batch');
+      expect(raw).toContain('wipe runs once');
+      expect(raw).toContain('omit replaceScope');
 
       const called = await handler(
         new Request('http://localhost/api/mcp', {

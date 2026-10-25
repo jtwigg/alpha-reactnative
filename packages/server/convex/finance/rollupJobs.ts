@@ -20,10 +20,13 @@ import {
   encodeRebuildCursor,
   earliestDirty,
   mergeDirtyFrom,
+  mergeDiries,
   pickSampleDates,
   planRebuildSpan,
   rollupCoarse,
   rollupUnchanged,
+  shouldPatchRebuildState,
+  ROLLUP_DIRTY_DRAIN,
   type ComputedDay,
   type DirtyTouch,
   type RebuildCursor,
@@ -76,32 +79,42 @@ export function stateView(row: Doc<'finance_rollup_state'> | null): RollupStateV
   };
 }
 
-export async function touchRollups(ctx: MutationCtx, dirties: DirtyTouch[]): Promise<void> {
-  const incoming = dirties.filter((row) => row.accountId && row.from);
+/**
+ * Ingest hot path: insert-only dirty rows + schedule a rebuild.
+ * Never reads or writes `finance_rollup_state` (avoids OCC with rebuildStep).
+ */
+export async function markRollupsDirty(ctx: MutationCtx, dirties: DirtyTouch[]): Promise<void> {
+  const incoming = mergeDiries([], dirties.filter((row) => row.accountId && row.from));
   if (incoming.length === 0) return;
-  for (const row of incoming) parseIsoDate(row.from);
-  const earliest = earliestDirty(incoming);
-  if (!earliest) return;
-
-  const state = await getOrCreateState(ctx);
-  const dirtyFrom = mergeDirtyFrom(state.dirtyFrom, earliest);
-  const cursor = decodeRebuildCursor(state.cursor);
-  const rewind =
-    cursor && !cursor.wipe && dirtyFrom < cursor.day
-      ? encodeRebuildCursor({ ...cursor, from: dirtyFrom, day: dirtyFrom })
-      : state.cursor;
-
-  await ctx.db.patch(state._id, {
-    dirtyFrom,
-    status: state.status === 'rebuilding' ? 'rebuilding' : 'pending',
-    version: state.version + 1,
-    cursor: rewind,
-    updatedAt: Date.now(),
-  });
-
-  if (state.status !== 'rebuilding') {
-    await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {});
+  const now = Date.now();
+  for (const row of incoming) {
+    parseIsoDate(row.from);
+    await ctx.db.insert('finance_rollup_dirty', {
+      scopeKey: row.accountId,
+      from: row.from,
+      createdAt: now,
+    });
   }
+  await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {});
+}
+
+/** @deprecated Use markRollupsDirty — ingest must not touch finance_rollup_state. */
+export const touchRollups = markRollupsDirty;
+
+async function peekDirty(
+  ctx: MutationCtx,
+  limit = ROLLUP_DIRTY_DRAIN,
+): Promise<{ touches: DirtyTouch[]; ids: Array<Doc<'finance_rollup_dirty'>['_id']>; earliest: string | null }> {
+  const rows = await ctx.db.query('finance_rollup_dirty').take(limit);
+  const touches = mergeDiries(
+    [],
+    rows.map((row) => ({ accountId: row.scopeKey, from: row.from })),
+  );
+  return { touches, ids: rows.map((row) => row._id), earliest: earliestDirty(touches) };
+}
+
+async function deleteDirty(ctx: MutationCtx, ids: Array<Doc<'finance_rollup_dirty'>['_id']>): Promise<void> {
+  for (const id of ids) await ctx.db.delete(id);
 }
 
 export async function loadRollupRange(
@@ -575,11 +588,36 @@ async function rebuildSpan(
  * day/week/month layers for a short date span and reschedules itself.
  */
 export const rebuildStep = internalMutation({
-  args: {},
+  args: {
+    stepId: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
   returns: rebuildStepResultValidator,
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const state = await getOrCreateState(ctx);
-    if (state.status === 'ready' && !state.dirtyFrom) {
+    if (args.stepId == null && state.status === 'rebuilding' && state.cursor) {
+      return {
+        done: false,
+        status: 'rebuilding' as const,
+        wrote: 0,
+        from: null,
+        to: null,
+        rebuiltThrough: state.rebuiltThrough ?? null,
+      };
+    }
+    if (args.stepId != null && args.stepId !== state.version) {
+      return {
+        done: false,
+        status: state.status,
+        wrote: 0,
+        from: null,
+        to: null,
+        rebuiltThrough: state.rebuiltThrough ?? null,
+      };
+    }
+
+    const pending = await peekDirty(ctx);
+    if (state.status === 'ready' && !state.dirtyFrom && !state.cursor && pending.ids.length === 0) {
       return {
         done: true,
         status: 'ready' as const,
@@ -590,24 +628,55 @@ export const rebuildStep = internalMutation({
       };
     }
 
-    let cursor = decodeRebuildCursor(state.cursor);
+    const dirtyFrom = pending.earliest ? mergeDirtyFrom(state.dirtyFrom, pending.earliest) : (state.dirtyFrom ?? null);
+    let cursor = decodeRebuildCursor(args.cursor) ?? decodeRebuildCursor(state.cursor);
     if (!cursor) {
-      const from = state.dirtyFrom ?? (await earliestSnapshotDate(ctx)) ?? todayInTimeZone();
+      const from = dirtyFrom ?? (await earliestSnapshotDate(ctx)) ?? todayInTimeZone();
       const to = (await latestSnapshotDate(ctx)) ?? todayInTimeZone();
-      cursor = { from, to: to < from ? from : to, day: from, wipe: state.status === 'pending' && !state.rebuiltThrough };
+      cursor = {
+        from,
+        to: to < from ? from : to,
+        day: from,
+        wipe: state.status === 'pending' && !state.rebuiltThrough,
+      };
+    } else if (dirtyFrom && dirtyFrom < cursor.day && !cursor.wipe) {
+      cursor = { ...cursor, from: dirtyFrom, day: dirtyFrom };
     }
+    if (pending.ids.length > 0) await deleteDirty(ctx, pending.ids);
+
+    const runId = args.stepId ?? state.version + 1;
+    const schedule = (next: RebuildCursor) =>
+      ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {
+        stepId: runId,
+        cursor: encodeRebuildCursor(next),
+      });
+    const patchState = async (next: {
+      status: Doc<'finance_rollup_state'>['status'];
+      cursor?: string;
+      rebuiltThrough?: string;
+      dirtyFrom?: string;
+    }) => {
+      await ctx.db.patch(state._id, {
+        status: next.status,
+        version: runId,
+        cursor: next.cursor,
+        rebuiltThrough: next.rebuiltThrough ?? state.rebuiltThrough,
+        dirtyFrom: next.dirtyFrom,
+        updatedAt: Date.now(),
+      });
+    };
 
     if (cursor.wipe) {
       const rows = await ctx.db.query('finance_rollups').take(ROLLUP_DELETE_BATCH);
       for (const row of rows) await ctx.db.delete(row._id);
       const more = rows.length >= ROLLUP_DELETE_BATCH;
       const next: RebuildCursor = more ? cursor : { ...cursor, wipe: false, day: cursor.from };
-      await ctx.db.patch(state._id, {
+      await patchState({
         status: 'rebuilding',
         cursor: encodeRebuildCursor(next),
-        updatedAt: Date.now(),
+        dirtyFrom: dirtyFrom ?? undefined,
       });
-      await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {});
+      await schedule(next);
       return {
         done: false,
         status: 'rebuilding' as const,
@@ -628,13 +697,26 @@ export const rebuildStep = internalMutation({
     const wrote = span.start <= span.end ? await rebuildSpan(ctx, span.start, span.end, state.version) : 0;
 
     if (span.next) {
-      await ctx.db.patch(state._id, {
-        status: 'rebuilding',
-        rebuiltThrough: span.end,
-        cursor: encodeRebuildCursor({ ...cursor, day: span.next, wipe: false }),
-        updatedAt: Date.now(),
+      const next: RebuildCursor = { ...cursor, day: span.next, wipe: false };
+      const persist = shouldPatchRebuildState({
+        prevDay: decodeRebuildCursor(state.cursor)?.day ?? cursor.day,
+        nextDay: next.day,
+        prevStatus: state.status,
+        nextStatus: 'rebuilding',
+        prevWipe: decodeRebuildCursor(state.cursor)?.wipe ?? false,
+        nextWipe: false,
+        drained: pending.ids.length > 0,
+        done: false,
       });
-      await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {});
+      if (persist) {
+        await patchState({
+          status: 'rebuilding',
+          cursor: encodeRebuildCursor(next),
+          rebuiltThrough: span.end,
+          dirtyFrom: dirtyFrom ?? undefined,
+        });
+      }
+      await schedule(next);
       return {
         done: false,
         status: 'rebuilding' as const,
@@ -645,22 +727,22 @@ export const rebuildStep = internalMutation({
       };
     }
 
-    const latest = await loadState(ctx);
-    const stillDirty = latest?.dirtyFrom && latest.dirtyFrom < cursor.from;
-    if (stillDirty && latest) {
+    const leftover = await peekDirty(ctx);
+    if (leftover.earliest) {
       const restart: RebuildCursor = {
-        from: latest.dirtyFrom as string,
-        to: cursor.to,
-        day: latest.dirtyFrom as string,
+        from: leftover.earliest,
+        to: leftover.earliest > cursor.to ? leftover.earliest : cursor.to,
+        day: leftover.earliest,
         wipe: false,
       };
-      await ctx.db.patch(state._id, {
+      await deleteDirty(ctx, leftover.ids);
+      await patchState({
         status: 'rebuilding',
         cursor: encodeRebuildCursor(restart),
         rebuiltThrough: span.end,
-        updatedAt: Date.now(),
+        dirtyFrom: leftover.earliest,
       });
-      await ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {});
+      await schedule(restart);
       return {
         done: false,
         status: 'rebuilding' as const,
@@ -676,6 +758,7 @@ export const rebuildStep = internalMutation({
       dirtyFrom: undefined,
       rebuiltThrough: cursor.to,
       cursor: undefined,
+      version: runId,
       updatedAt: Date.now(),
     });
     return {

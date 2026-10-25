@@ -378,7 +378,7 @@ export function registerFinanceTools(
     {
       title: 'Upsert TWR series',
       description:
-        "Insert or overwrite the daily TWR path (value, net invested, flow-adjusted S&P 500). Batch cap 500. Key is scope+date. Last item in the batch wins on a repeated key. scope is 'account:<id>', 'total', or 'reliable_subset'. method must be finance.bench.v1. estimated is true for the window before flow data. valueInterpolated marks gap-filled value days. For a full rewrite (e.g. ~1,850 days), set replaceScope=true on the first batch only, or pass one replaceBatchId on every batch of that rewrite so the wipe runs once. Later batches upsert. Returns per-row inserted/updated/unchanged plus optional replaced.",
+        "Upsert daily TWR series (value, netInvested, sp500Equiv). Batch cap 500. Key is scope+date; last item in the batch wins. scope is 'account:<id>', 'total', or 'reliable_subset'. method must be finance.bench.v1. estimated marks the window before flow data; valueInterpolated marks gap-filled value days. replaceScope + replaceBatchId (full rewrite): a ~1,850-day scope needs four ≤500 batches. Set replaceScope=true on the first batch to delete every stored row for the scopes in that batch, then write the items. Later batches omit replaceScope and only upsert. Or pass the same replaceBatchId on every batch of that rewrite — the wipe runs once on the first call that has replaceScope=true and that id; later batches that repeat the id skip the wipe. Returns per-row inserted/updated/unchanged plus optional replaced.",
       inputSchema: upsertSeriesSchema,
     },
     call('upsert_series'),

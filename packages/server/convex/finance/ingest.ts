@@ -41,7 +41,7 @@ import {
   selectBatchWinner,
   snapshotRank,
 } from './lib';
-import { touchRollups } from './rollupJobs';
+import { markRollupsDirty } from './rollupJobs';
 import {
   BATCH_CAP,
   DELETE_ROW_BATCH,
@@ -277,7 +277,7 @@ export const upsertAccounts = internalMutation({
         if (from) accountDiries.push({ accountId: item.sourceId, from });
       }
     }
-    await touchRollups(ctx, accountDiries);
+    await markRollupsDirty(ctx, accountDiries);
     return counts;
   },
 });
@@ -343,7 +343,7 @@ export const upsertSnapshots = internalMutation({
       }
       snapshotDiries.push({ accountId: item.accountId, from: item.asOf });
     }
-    await touchRollups(ctx, snapshotDiries);
+    await markRollupsDirty(ctx, snapshotDiries);
     return counts;
   },
 });
@@ -461,7 +461,7 @@ export const upsertTransactions = internalMutation({
     for (const row of replacements) {
       txnDiries.push({ accountId: row.accountId, from: items.find((item) => item.sourceId === row.postedId)?.date ?? items[0]?.date });
     }
-    await touchRollups(
+    await markRollupsDirty(
       ctx,
       txnDiries.filter((row) => row.from),
     );
@@ -513,7 +513,7 @@ export const deleteTransactions = internalMutation({
       count: deletedRows.length,
       details: { deleted: deletedRows, notFound },
     });
-    await touchRollups(
+    await markRollupsDirty(
       ctx,
       deletedRows.map((row) => ({ accountId: row.accountId, from: row.date })),
     );
@@ -570,7 +570,7 @@ export const upsertHoldings = internalMutation({
       }
       holdingDiries.push({ accountId: item.accountId, from: item.asOf });
     }
-    await touchRollups(ctx, holdingDiries);
+    await markRollupsDirty(ctx, holdingDiries);
     return counts;
   },
 });
@@ -747,7 +747,7 @@ export const upsertSeries = internalMutation({
         });
       }
       if (replaced > 0) {
-        await touchRollups(
+        await markRollupsDirty(
           ctx,
           scopes.map((scope) => ({ accountId: `series:${scope}`, from: earliest ?? '1970-01-01' })),
         );
@@ -781,7 +781,7 @@ export const upsertSeries = internalMutation({
       else await ctx.db.insert('series', doc);
       seriesDiries.push({ accountId: `series:${item.scope}`, from: item.date });
     }
-    await touchRollups(ctx, seriesDiries);
+    await markRollupsDirty(ctx, seriesDiries);
     return replaced > 0 ? { ...counts, replaced } : counts;
   },
 });
@@ -823,7 +823,7 @@ export const deleteSeries = internalMutation({
           deleted: page.map((row) => row.date),
         },
       });
-      await touchRollups(ctx, [{ accountId: `series:${args.scope}`, from: first ?? '1970-01-01' }]);
+      await markRollupsDirty(ctx, [{ accountId: `series:${args.scope}`, from: first ?? '1970-01-01' }]);
     }
     return {
       scope: args.scope,
@@ -968,7 +968,7 @@ export const fillGaps = internalMutation({
       counts.continueFrom = windowContinue;
     }
     if (counts.inserted + counts.updated + counts.deleted > 0) {
-      await touchRollups(ctx, [{ accountId, from }]);
+      await markRollupsDirty(ctx, [{ accountId, from }]);
     }
     return counts;
   },
@@ -1162,7 +1162,7 @@ export const deleteAccounts = internalMutation({
       }
     }
 
-    await touchRollups(ctx, deleteDiries);
+    await markRollupsDirty(ctx, deleteDiries);
 
     const counts = addDeleteCounts(args.counts ?? emptyDeleteCounts(), session);
     const shouldContinue = remainingIds.length > 0;
