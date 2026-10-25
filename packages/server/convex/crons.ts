@@ -11,7 +11,7 @@ crons.daily(
 
 crons.interval(
   'drain finance rollup rebuild',
-  { minutes: 15 },
+  { hours: 1 },
   internal.finance.rollupJobs.rebuildStep,
 );
 

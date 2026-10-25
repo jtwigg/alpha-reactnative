@@ -263,7 +263,7 @@ export default defineSchema({
     dirtyFrom: v.optional(v.string()),
     rebuiltThrough: v.optional(v.string()),
     version: v.number(),
-    status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding')),
+    status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding'), v.literal('error')),
     cursor: v.optional(v.string()),
     updatedAt: v.number(),
   }).index('by_key', ['key']),

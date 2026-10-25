@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   classifyServeCheck,
@@ -16,7 +19,7 @@ import {
   sameNumbers,
 } from '../convex/finance/serve';
 import { RANGE_KEYS, type ChartPoint } from '../convex/finance/series';
-import { pageFromPack, seriesFromPack } from '../../../packages/reactnative/lib/finance-packs';
+import { pageFromPack, seriesFromPack, sparksFromPack } from '../../../packages/reactnative/lib/finance-packs';
 
 const AS_OF = '2026-10-24';
 const FIRST = '2014-03-07';
@@ -62,6 +65,41 @@ describe('serve consumers tolerate missing/partial packs', () => {
     expect(pageFromPack(pack, 'All')?.points).toHaveLength(1);
     expect(pageFromPack({ ...pack, ranges: { '1M': { headline: 1 } as never } }, '1M')).toBeNull();
     expect(pageFromPack(null, 'All')).toBeNull();
+    expect(
+      sparksFromPack(
+        {
+          ...pack,
+          sparks: {
+            '3M': {
+              dates: ['2026-10-01'],
+              rows: [
+                {
+                  sourceId: 'acc_1',
+                  values: [1],
+                  change: 0,
+                  changePct: 0,
+                  tone: 'flat',
+                  weighted: { change: 0, pct: 0, tone: 'flat' },
+                },
+              ],
+              groups: [],
+            },
+          },
+        },
+        '3M',
+      )?.rows[0].sourceId,
+    ).toBe('acc_1');
+    expect(sparksFromPack(pack, '3M')).toBeNull();
+  });
+
+  it('Finances screen reads sparklines from pagePack instead of one query per range', () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../reactnative/app/(tabs)/finances.tsx'),
+      'utf8',
+    );
+    expect(src).toContain('sparksFromPack');
+    expect(src).toContain('pagePack');
+    expect(src.match(/api\.finance\.accounts\.sparklines/g)?.length).toBe(1);
   });
 
   it('strips extra snapshot fields so Convex object validators accept serve accounts', () => {

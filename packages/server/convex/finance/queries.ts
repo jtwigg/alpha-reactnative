@@ -24,7 +24,7 @@ import {
 } from './rollups';
 import { loadRollupRange, loadRollupStateView } from './rollupJobs';
 import { expandPagePayload, expandSeriesPayload, loadServePayload } from './serveJobs';
-import { SERVE_PAGE_SCOPE, type ServePageRange, type ServeSeriesRange } from './serve';
+import { SERVE_PAGE_SCOPE, SERVE_SPARK_SCOPE, type ServePageRange, type ServeSeriesRange } from './serve';
 import {
   CONVEX_QUERY_READ_BUDGET,
   accountDocValidator,
@@ -574,6 +574,40 @@ export const flows = query({
   },
 });
 
+const sparkToneValidator = v.union(v.literal('good'), v.literal('bad'), v.literal('flat'));
+const sparkContributionValidator = v.object({
+  change: v.number(),
+  pct: v.union(v.number(), v.null()),
+  tone: sparkToneValidator,
+});
+const pagePackSparkRowValidator = v.object({
+  sourceId: v.string(),
+  values: v.array(v.union(v.number(), v.null())),
+  change: v.number(),
+  changePct: v.union(v.number(), v.null()),
+  tone: sparkToneValidator,
+  weighted: sparkContributionValidator,
+});
+const pagePackSparkGroupValidator = v.object({
+  key: v.union(
+    v.literal('cash'),
+    v.literal('investments'),
+    v.literal('real_estate'),
+    v.literal('liability'),
+    v.literal('other'),
+  ),
+  values: v.array(v.union(v.number(), v.null())),
+  change: v.number(),
+  changePct: v.union(v.number(), v.null()),
+  tone: sparkToneValidator,
+  weighted: sparkContributionValidator,
+});
+const pagePackSparkValidator = v.object({
+  dates: v.array(v.string()),
+  rows: v.array(pagePackSparkRowValidator),
+  groups: v.array(pagePackSparkGroupValidator),
+});
+
 const pagePackRangeValidator = v.object({
   headline: v.number(),
   change: v.number(),
@@ -606,12 +640,14 @@ export const pagePack = query({
       version: v.number(),
       accounts: v.array(pageAccountValidator),
       ranges: v.record(v.string(), pagePackRangeValidator),
+      sparks: v.record(v.string(), pagePackSparkValidator),
     }),
     v.null(),
   ),
   handler: async (ctx) => {
     await requireAllowedIdentity(ctx);
     const ranges: Record<string, unknown> = {};
+    const sparks: Record<string, unknown> = {};
     let asOf: string | null = null;
     let version = 0;
     let accounts: unknown = null;
@@ -642,8 +678,25 @@ export const pagePack = query({
         continue;
       }
     }
+    for (const range of RANGE_KEYS) {
+      try {
+        const served = await loadServePayload<{
+          dates: string[];
+          rows: unknown[];
+          groups?: unknown[];
+        }>(ctx, 'sparklines', SERVE_SPARK_SCOPE, range);
+        if (!served || !Array.isArray(served.payload.dates) || !Array.isArray(served.payload.rows)) continue;
+        sparks[range] = {
+          dates: served.payload.dates,
+          rows: served.payload.rows,
+          groups: served.payload.groups ?? [],
+        };
+      } catch {
+        continue;
+      }
+    }
     if (!asOf || Object.keys(ranges).length === 0) return null;
-    return { asOf, version, accounts: accounts ?? [], ranges } as never;
+    return { asOf, version, accounts: accounts ?? [], ranges, sparks } as never;
   },
 });
 

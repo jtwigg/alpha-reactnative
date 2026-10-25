@@ -27,11 +27,36 @@ export type PagePackRange = {
   coverage: { asOf: string[]; label: string[]; className: string[] };
 };
 
+export type PagePackSparkRow = {
+  sourceId: string;
+  values: Array<number | null>;
+  change: number;
+  changePct: number | null;
+  tone: 'good' | 'bad' | 'flat';
+  weighted: { change: number; pct: number | null; tone: 'good' | 'bad' | 'flat' };
+};
+
+export type PagePackSparkGroup = {
+  key: 'cash' | 'investments' | 'real_estate' | 'liability' | 'other';
+  values: Array<number | null>;
+  change: number;
+  changePct: number | null;
+  tone: 'good' | 'bad' | 'flat';
+  weighted: { change: number; pct: number | null; tone: 'good' | 'bad' | 'flat' };
+};
+
+export type PagePackSpark = {
+  dates: string[];
+  rows: PagePackSparkRow[];
+  groups: PagePackSparkGroup[];
+};
+
 export type PagePack = {
   asOf: string;
   version: number;
   accounts: unknown[];
   ranges: Record<string, PagePackRange>;
+  sparks?: Record<string, PagePackSpark>;
 };
 
 export type SeriesPackRange = {
@@ -92,6 +117,20 @@ export function pageFromPack(pack: PagePack | null | undefined, range: RangeKey)
       accounts: Array.isArray(pack.accounts) ? pack.accounts : [],
       grain: row.grain ?? 'day',
       rollup: row.rollup ?? 'stale',
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function sparksFromPack(pack: PagePack | null | undefined, range: RangeKey): PagePackSpark | null {
+  try {
+    const row = pack?.sparks?.[range];
+    if (!row || !Array.isArray(row.dates) || !Array.isArray(row.rows)) return null;
+    return {
+      dates: row.dates,
+      rows: row.rows,
+      groups: Array.isArray(row.groups) ? row.groups : [],
     };
   } catch {
     return null;

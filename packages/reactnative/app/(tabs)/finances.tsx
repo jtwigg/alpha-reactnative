@@ -45,7 +45,7 @@ import { usePersistedChoice } from '@/lib/prefs';
 import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
 import { useCachedValue } from '@/lib/finance-cache';
-import { pageFromPack, seriesFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
+import { pageFromPack, seriesFromPack, sparksFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
 import {
@@ -103,15 +103,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
-  const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range: 'All', refreshNonce } : 'skip');
-  const spark1M = useQuery(api.finance.accounts.sparklines, pack ? { range: '1M', refreshNonce } : 'skip');
-  const spark3M = useQuery(api.finance.accounts.sparklines, pack ? { range: '3M', refreshNonce } : 'skip');
-  const sparkYtd = useQuery(api.finance.accounts.sparklines, pack ? { range: 'YTD', refreshNonce } : 'skip');
-  const spark1Y = useQuery(api.finance.accounts.sparklines, pack ? { range: '1Y', refreshNonce } : 'skip');
-  const spark5Y = useQuery(api.finance.accounts.sparklines, pack ? { range: '5Y', refreshNonce } : 'skip');
-  const fineSparks = useQuery(
+  const packedSparks = pack ? sparksFromPack(pack, range) : null;
+  const liveSparks = useQuery(
     api.finance.accounts.sparklines,
-    needFallback && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+    allowed && packedSparks == null ? { range, refreshNonce } : 'skip',
   );
   const [heldSparks, setHeldSparks] = useState(liveSparks);
   const twrScope = twrAll ? 'total' : 'reliable_subset';
@@ -177,14 +172,11 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   );
   const trends = useMemo<AccountTrends>(() => {
     const sparks = (() => {
-      const byRangeSparks = { '1M': spark1M, '3M': spark3M, YTD: sparkYtd, '1Y': spark1Y, '5Y': spark5Y, All: liveSparks };
-      const hit = byRangeSparks[range];
-      if (hit && hit.range === range) return hit;
+      if (packedSparks) return packedSparks;
       if (hasLive || !demo) {
-        if (fineSparks && fineSparks.range === range) return fineSparks;
         const source = liveSparks ?? heldSparks;
         if (!source) return undefined;
-        return trimSparklinesToRange(source, range, sparkAccounts);
+        return source.range === range ? source : trimSparklinesToRange(source, range, sparkAccounts);
       }
       return trimSparklinesToRange(demoAccountSparklines('All'), range, sparkAccounts);
     })();
@@ -194,7 +186,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
       rangeLabel: RANGE_SUFFIX[range],
       mode: changeMode,
     };
-  }, [changeMode, demo, fineSparks, hasLive, heldSparks, liveSparks, range, spark1M, spark3M, spark5Y, spark1Y, sparkYtd, sparkAccounts]);
+  }, [changeMode, demo, hasLive, heldSparks, liveSparks, packedSparks, range, sparkAccounts]);
   const pickRange = (next: RangeKey) => {
     setRange(next);
     setRangeGen((gen) => gen + 1);
