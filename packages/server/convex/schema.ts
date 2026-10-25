@@ -23,6 +23,21 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_user', ['userId']),
 
+  /** Latest Home quick-ask only. One row per user; older rows are deleted. */
+  chat_asks: defineTable({
+    userId: v.id('users'),
+    messageId: v.string(),
+    threadId: v.string(),
+    text: v.string(),
+    reply: v.optional(v.string()),
+    status: v.union(v.literal('pending'), v.literal('replied'), v.literal('error')),
+    createdAt: v.number(),
+    repliedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_messageId', ['messageId'])
+    .index('by_threadId', ['threadId']),
+
   accounts: defineTable({
     sourceId: v.string(),
     provider: v.string(),

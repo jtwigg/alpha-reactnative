@@ -74,13 +74,7 @@ function AppTabs() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: 'Chat',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.fill" color={color} />,
-        }}
-      />
+      <Tabs.Screen name="chat" options={{ href: null }} />
       <Tabs.Screen
         name="briefings"
         options={{

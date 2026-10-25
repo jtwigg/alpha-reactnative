@@ -3,6 +3,7 @@ import { httpAction } from './_generated/server';
 import { evaluateAllowlist } from './allowlist';
 import { financeServer } from './finance/gateway';
 import { briefingIngest } from './briefings/gateway';
+import { chatReply } from './chat';
 
 const http = httpRouter();
 
@@ -84,6 +85,12 @@ http.route({
   path: '/briefings/ingest',
   method: 'POST',
   handler: briefingIngest,
+});
+
+http.route({
+  path: '/chat/reply',
+  method: 'POST',
+  handler: chatReply,
 });
 
 export default http;
