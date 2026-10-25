@@ -4,8 +4,10 @@ import { v } from 'convex/values';
 import { requireAllowedIdentity } from './allowlist';
 import { bearerMatches } from './finance/secret';
 import { getCurrentUser, getCurrentUserOrThrow } from './users';
+import type { Doc } from './_generated/dataModel';
 
 export const HOME_THREAD_ID = 'home';
+const THREAD_LIMIT = 80;
 
 export type ChatWebhookPayload = {
   type: 'chat';
@@ -41,6 +43,16 @@ export function parseChatReply(body: unknown): { messageId?: string; threadId?: 
   return { messageId, threadId, text };
 }
 
+const messageDoc = v.object({
+  messageId: v.string(),
+  threadId: v.string(),
+  role: v.union(v.literal('user'), v.literal('assistant')),
+  text: v.string(),
+  status: v.union(v.literal('pending'), v.literal('complete'), v.literal('error')),
+  createdAt: v.number(),
+  parentMessageId: v.union(v.string(), v.null()),
+});
+
 const askDoc = v.object({
   messageId: v.string(),
   threadId: v.string(),
@@ -51,6 +63,34 @@ const askDoc = v.object({
   repliedAt: v.union(v.number(), v.null()),
 });
 
+function publicMessage(row: Doc<'chat_messages'>) {
+  return {
+    messageId: row.messageId,
+    threadId: row.threadId,
+    role: row.role,
+    text: row.text,
+    status: row.status,
+    createdAt: row.createdAt,
+    parentMessageId: row.parentMessageId ?? null,
+  };
+}
+
+export const thread = query({
+  args: {},
+  returns: v.array(messageDoc),
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+    if (!user) return [];
+    const rows = await ctx.db
+      .query('chat_messages')
+      .withIndex('by_user_thread', (q) => q.eq('userId', user._id).eq('threadId', HOME_THREAD_ID))
+      .order('desc')
+      .take(THREAD_LIMIT);
+    return rows.reverse().map(publicMessage);
+  },
+});
+
+/** Last user turn + its reply. Kept so older clients still work. */
 export const latest = query({
   args: {},
   returns: v.union(askDoc, v.null()),
@@ -58,20 +98,25 @@ export const latest = query({
     const user = await getCurrentUser(ctx);
     if (!user) return null;
     const rows = await ctx.db
-      .query('chat_asks')
-      .withIndex('by_user', (q) => q.eq('userId', user._id))
+      .query('chat_messages')
+      .withIndex('by_user_thread', (q) => q.eq('userId', user._id).eq('threadId', HOME_THREAD_ID))
       .order('desc')
-      .take(1);
-    const row = rows[0];
-    if (!row) return null;
+      .take(THREAD_LIMIT);
+    const userRow = rows.find((row) => row.role === 'user');
+    if (!userRow) return null;
+    const reply = rows.find(
+      (row) => row.role === 'assistant' && row.parentMessageId === userRow.messageId,
+    );
+    const status =
+      userRow.status === 'error' ? 'error' : reply ? 'replied' : userRow.status === 'pending' ? 'pending' : 'replied';
     return {
-      messageId: row.messageId,
-      threadId: row.threadId,
-      text: row.text,
-      reply: row.reply ?? null,
-      status: row.status,
-      createdAt: row.createdAt,
-      repliedAt: row.repliedAt ?? null,
+      messageId: userRow.messageId,
+      threadId: userRow.threadId,
+      text: userRow.text,
+      reply: reply?.text ?? null,
+      status,
+      createdAt: userRow.createdAt,
+      repliedAt: reply?.createdAt ?? null,
     };
   },
 });
@@ -84,17 +129,13 @@ export const startAsk = internalMutation({
     const trimmed = args.text.trim();
     if (!trimmed) throw new Error('Message text is required');
     if (trimmed.length > 4000) throw new Error('Message is too long');
-    const existing = await ctx.db
-      .query('chat_asks')
-      .withIndex('by_user', (q) => q.eq('userId', user._id))
-      .take(8);
-    for (const row of existing) await ctx.db.delete(row._id);
     const createdAt = Date.now();
     const messageId = `ask_${createdAt.toString(36)}`;
-    await ctx.db.insert('chat_asks', {
+    await ctx.db.insert('chat_messages', {
       userId: user._id,
       messageId,
       threadId: HOME_THREAD_ID,
+      role: 'user',
       text: trimmed,
       status: 'pending',
       createdAt,
@@ -113,23 +154,38 @@ export const applyReply = internalMutation({
   handler: async (ctx, args) => {
     const text = args.text.trim();
     if (!text) return { ok: false, messageId: null };
-    let row = args.messageId
+    let userRow: Doc<'chat_messages'> | null = args.messageId
       ? await ctx.db
-          .query('chat_asks')
+          .query('chat_messages')
           .withIndex('by_messageId', (q) => q.eq('messageId', args.messageId!))
           .unique()
       : null;
-    if (!row && args.threadId) {
+    if (userRow && userRow.role !== 'user') userRow = null;
+    if (!userRow && args.threadId) {
       const matches = await ctx.db
-        .query('chat_asks')
+        .query('chat_messages')
         .withIndex('by_threadId', (q) => q.eq('threadId', args.threadId!))
         .order('desc')
-        .take(1);
-      row = matches[0] ?? null;
+        .take(40);
+      userRow = matches.find((row) => row.role === 'user' && row.status === 'pending') ?? null;
+      if (!userRow) userRow = matches.find((row) => row.role === 'user') ?? null;
     }
-    if (!row) return { ok: false, messageId: null };
-    await ctx.db.patch(row._id, { reply: text, status: 'replied', repliedAt: Date.now() });
-    return { ok: true, messageId: row.messageId };
+    if (!userRow) return { ok: false, messageId: null };
+    const createdAt = Date.now();
+    await ctx.db.insert('chat_messages', {
+      userId: userRow.userId,
+      messageId: `reply_${createdAt.toString(36)}`,
+      threadId: userRow.threadId,
+      role: 'assistant',
+      text,
+      status: 'complete',
+      createdAt,
+      parentMessageId: userRow.messageId,
+    });
+    if (userRow.status !== 'complete') {
+      await ctx.db.patch(userRow._id, { status: 'complete' });
+    }
+    return { ok: true, messageId: userRow.messageId };
   },
 });
 
@@ -138,17 +194,17 @@ export const markError = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const row = await ctx.db
-      .query('chat_asks')
+      .query('chat_messages')
       .withIndex('by_messageId', (q) => q.eq('messageId', args.messageId))
       .unique();
-    if (row && row.status === 'pending') {
+    if (row && row.role === 'user' && row.status === 'pending') {
       await ctx.db.patch(row._id, { status: 'error' });
     }
     return null;
   },
 });
 
-/** Store the ask, then POST it to Assistant. No OpenAI. Never log `text`. */
+/** Store the user message, then POST it to Assistant. No OpenAI. Never log `text`. */
 export const ask = action({
   args: { text: v.string() },
   returns: v.object({

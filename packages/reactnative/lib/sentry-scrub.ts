@@ -3,10 +3,10 @@ const AMOUNT_KEY =
 
 /** Item text, senders, Gmail links, comments — never leave the device toward Sentry. */
 const BRIEFING_CONTENT_KEY =
-  /^(gist|headline|sub|sender|title|todo|comment|who|deadline|threadurl|threadid|itemid|deck|deckname|restline|weburl|mobileurl|priorities|glance|briefing)$/i;
+  /^(gist|headline|sub|sender|title|todo|comment|who|deadline|threadurl|threadid|itemid|deck|deckname|restline|weburl|mobileurl|priorities|glance|briefing|text|reply|prompt|chatmessage)$/i;
 
 const SENSITIVE_SURFACE =
-  /\/finances(?:\/|$)|finance\/|net-?worth|\/api\/mcp|\/briefings(?:\/|$)|briefing\/|email-briefing/i;
+  /\/finances(?:\/|$)|finance\/|net-?worth|\/api\/mcp|\/briefings(?:\/|$)|briefing\/|email-briefing|\/chat(?:\/|$)|chat_messages|chat_asks/i;
 
 type Plain = Record<string, unknown>;
 

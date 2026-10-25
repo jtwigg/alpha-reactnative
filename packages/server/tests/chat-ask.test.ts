@@ -9,6 +9,68 @@ const http = (fn: unknown, ctx: unknown, req: Request) =>
 
 const identity = { subject: 'user_test', email: 'user@example.com', tokenIdentifier: 'tok|user_test' };
 
+function fakeChatDb() {
+  const tables: Record<string, Record<string, unknown>[]> = {
+    users: [{ _id: 'u1', name: 'Test', tokenIdentifier: identity.tokenIdentifier }],
+    chat_messages: [],
+  };
+  const INDEXES: Record<string, string[]> = {
+    by_token: ['tokenIdentifier'],
+    by_user_thread: ['userId', 'threadId'],
+    by_messageId: ['messageId'],
+    by_threadId: ['threadId'],
+    by_parent: ['parentMessageId'],
+  };
+  let n = 0;
+  const db = {
+    query(table: string) {
+      let rows = [...(tables[table] ?? [])];
+      let fields: string[] = [];
+      return {
+        withIndex(name: string, range?: (q: unknown) => unknown) {
+          fields = INDEXES[name] ?? [];
+          const conds: Array<(row: Record<string, unknown>) => boolean> = [];
+          const q = { eq: (f: string, v: unknown) => (conds.push((r) => r[f] === v), q) };
+          range?.(q);
+          rows = rows.filter((row) => conds.every((cond) => cond(row)));
+          return this;
+        },
+        order(dir: 'asc' | 'desc') {
+          rows = [...rows].sort((a, b) => {
+            const av = Number(a.createdAt ?? 0);
+            const bv = Number(b.createdAt ?? 0);
+            return dir === 'desc' ? bv - av : av - bv;
+          });
+          return this;
+        },
+        take(limit: number) {
+          return rows.slice(0, limit);
+        },
+        async unique() {
+          return rows[0] ?? null;
+        },
+        async collect() {
+          return rows;
+        },
+      };
+    },
+    async insert(table: string, doc: Record<string, unknown>) {
+      const row = { ...doc, _id: `id_${n++}` };
+      tables[table].push(row);
+      return row._id;
+    },
+    async patch(id: string, doc: Record<string, unknown>) {
+      const table = Object.keys(tables).find((name) => tables[name].some((row) => row._id === id));
+      if (!table) throw new Error('missing');
+      tables[table] = tables[table].map((row) => (row._id === id ? { ...row, ...doc } : row));
+    },
+  };
+  return {
+    ctx: { db, auth: { getUserIdentity: async () => identity } },
+    tables,
+  };
+}
+
 describe('chat webhook + reply', () => {
   const previousEmails = process.env.ALLOWED_EMAILS;
   const previousIngest = process.env.BRIEFINGS_INGEST_SECRET;
@@ -93,6 +155,41 @@ describe('chat webhook + reply', () => {
       }),
     );
     expect(res.status).toBe(401);
+  });
+
+  it('stores a thread on chat_messages and appends the Assistant reply', async () => {
+    process.env.ALLOWED_EMAILS = 'user@example.com';
+    const { ctx, tables } = fakeChatDb();
+    const started = (await run(chat.startAsk, ctx, { text: 'ping' })) as {
+      messageId: string;
+      threadId: string;
+    };
+    expect(started.threadId).toBe('home');
+    expect(tables.chat_messages).toHaveLength(1);
+    expect(tables.chat_messages[0]).toMatchObject({
+      role: 'user',
+      status: 'pending',
+      threadId: 'home',
+    });
+    expect((tables.chat_messages[0] as { text: string }).text).toBe('ping');
+
+    const applied = await run(chat.applyReply, ctx, { messageId: started.messageId, text: 'ack' });
+    expect(applied).toEqual({ ok: true, messageId: started.messageId });
+    expect(tables.chat_messages).toHaveLength(2);
+    expect(tables.chat_messages.map((row) => row.role)).toEqual(['user', 'assistant']);
+
+    const thread = (await run(chat.thread, ctx, {})) as Array<{ role: string; text: string }>;
+    expect(thread).toHaveLength(2);
+    expect(thread[0]).toMatchObject({ role: 'user', text: 'ping' });
+    expect(thread[1]).toMatchObject({ role: 'assistant', text: 'ack' });
+
+    const latest = await run(chat.latest, ctx, {});
+    expect(latest).toMatchObject({
+      messageId: started.messageId,
+      text: 'ping',
+      reply: 'ack',
+      status: 'replied',
+    });
   });
 
   it('applies a reply with the ingest secret', async () => {

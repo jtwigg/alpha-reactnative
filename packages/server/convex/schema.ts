@@ -23,7 +23,7 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_user', ['userId']),
 
-  /** Latest Home quick-ask only. One row per user; older rows are deleted. */
+  /** Legacy one-exchange Home ask. New writes go to chat_messages. */
   chat_asks: defineTable({
     userId: v.id('users'),
     messageId: v.string(),
@@ -37,6 +37,22 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_messageId', ['messageId'])
     .index('by_threadId', ['threadId']),
+
+  /** Home Assistant thread. John-only via the app allowlist; one thread per user. */
+  chat_messages: defineTable({
+    userId: v.id('users'),
+    messageId: v.string(),
+    threadId: v.string(),
+    role: v.union(v.literal('user'), v.literal('assistant')),
+    text: v.string(),
+    status: v.union(v.literal('pending'), v.literal('complete'), v.literal('error')),
+    createdAt: v.number(),
+    parentMessageId: v.optional(v.string()),
+  })
+    .index('by_user_thread', ['userId', 'threadId'])
+    .index('by_messageId', ['messageId'])
+    .index('by_threadId', ['threadId'])
+    .index('by_parent', ['parentMessageId']),
 
   accounts: defineTable({
     sourceId: v.string(),
