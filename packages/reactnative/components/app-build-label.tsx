@@ -1,6 +1,6 @@
 import { useQuery } from 'convex/react';
 import * as Updates from 'expo-updates';
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -27,9 +27,61 @@ function readUpdateMeta(): UpdateMeta {
   }
 }
 
+class SoftQueryBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+function Stamp({
+  pill,
+  onPress,
+  busy,
+}: {
+  pill?: string | null;
+  onPress?: () => void;
+  busy?: boolean;
+}) {
+  const meta = useMemo(readUpdateMeta, []);
+  const js = jsVersionLabel();
+  const detail = formatBuildDetail(meta);
+  return (
+    <View
+      style={styles.wrap}
+      accessibilityRole="summary"
+      accessibilityLabel={`${js}. ${detail}${pill ? `. ${pill}` : ''}`}>
+      <ThemedText type="defaultSemiBold" style={styles.js}>
+        {js}
+      </ThemedText>
+      <ThemedText style={styles.detail}>{detail}</ThemedText>
+      {pill ? (
+        <Pressable
+          onPress={onPress}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={pill}
+          style={({ pressed }) => [styles.pill, pressed && styles.pillPressed, busy && styles.pillBusy]}>
+          <ThemedText style={styles.pillText}>{pill}</ThemedText>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 /** Plainly visible JS / OTA stamp, plus native-build and OTA pills. */
 export function AppBuildLabel() {
-  const meta = useMemo(readUpdateMeta, []);
+  return (
+    <SoftQueryBoundary fallback={<Stamp />}>
+      <AppBuildLabelInner />
+    </SoftQueryBoundary>
+  );
+}
+
+function AppBuildLabelInner() {
   const nativeBuild = useMemo(() => currentNativeBuildVersion(), []);
   const release = useQuery(api.app.release.latest);
   const updates = Updates.useUpdates();
@@ -47,8 +99,6 @@ export function AppBuildLabel() {
     otaPending: Boolean(Updates.isEnabled && updates.isUpdatePending),
   });
   const pill = updatePromptLabel(prompt, busy || updates.isDownloading || updates.isChecking);
-  const js = jsVersionLabel();
-  const detail = formatBuildDetail(meta);
 
   const handlePress = async () => {
     if (!prompt || busy) return;
@@ -72,27 +122,7 @@ export function AppBuildLabel() {
     }
   };
 
-  return (
-    <View
-      style={styles.wrap}
-      accessibilityRole="summary"
-      accessibilityLabel={`${js}. ${detail}${pill ? `. ${pill}` : ''}`}>
-      <ThemedText type="defaultSemiBold" style={styles.js}>
-        {js}
-      </ThemedText>
-      <ThemedText style={styles.detail}>{detail}</ThemedText>
-      {pill ? (
-        <Pressable
-          onPress={() => void handlePress()}
-          disabled={busy}
-          accessibilityRole="button"
-          accessibilityLabel={pill}
-          style={({ pressed }) => [styles.pill, pressed && styles.pillPressed, busy && styles.pillBusy]}>
-          <ThemedText style={styles.pillText}>{pill}</ThemedText>
-        </Pressable>
-      ) : null}
-    </View>
-  );
+  return <Stamp pill={pill} onPress={() => void handlePress()} busy={busy} />;
 }
 
 const styles = StyleSheet.create({

@@ -17,8 +17,8 @@ const rnRoot = join(dirname(fileURLToPath(import.meta.url)), '../../reactnative'
 describe('app version stamp', () => {
   it('keeps the binary version at 1.0.0 and bumps the JS OTA counter', () => {
     expect(APP_VERSION).toBe('1.0.0');
-    expect(JS_OTA_BUILD).toBe(13);
-    expect(jsVersionLabel()).toBe('v1.0.0 (ota 13)');
+    expect(JS_OTA_BUILD).toBe(14);
+    expect(jsVersionLabel()).toBe('v1.0.0 (ota 14)');
   });
 
   it('shortens an expo-updates UUID and formats createdAt in Pacific time', () => {
@@ -44,7 +44,7 @@ describe('app version stamp', () => {
     const config = define({ config: {} });
     expect(config.version).toBe('1.0.0');
     expect(config.runtimeVersion).toEqual({ policy: 'appVersion' });
-    expect(config.extra.jsOtaBuild).toBe(13);
+    expect(config.extra.jsOtaBuild).toBe(14);
   });
 
   it('says embedded when there is no downloaded update', () => {
