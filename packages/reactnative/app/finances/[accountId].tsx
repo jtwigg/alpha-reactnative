@@ -55,11 +55,11 @@ import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountDetail, demoFlows, demoHoldings, demoTransactions, demoTwr } from '@/lib/finance-fixtures';
-import { BENCHMARKS } from '../../../../server/convex/finance/benchmarks';
-import { groupKeyForClass, trimHistoryToRange } from '../../../../server/convex/finance/accountModel';
-import { accountScope } from '../../../../server/convex/finance/twrModel';
-import { flowAdjustedOverlay } from '../../../../server/convex/finance/seriesModel';
-import { signedAmount, type RangeKey } from '../../../../server/convex/finance/series';
+import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
+import { groupKeyForClass, trimHistoryToRange } from '../../../server/convex/finance/accountModel';
+import { accountScope } from '../../../server/convex/finance/twrModel';
+import { flowAdjustedOverlay } from '../../../server/convex/finance/seriesModel';
+import { signedAmount, type RangeKey } from '../../../server/convex/finance/series';
 
 const PAGE_SIZE = 25;
 
