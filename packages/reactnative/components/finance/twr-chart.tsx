@@ -31,26 +31,37 @@ export type TwrChartHeader = {
 export function TwrChart({
   points,
   height = 220,
+  showSp500 = true,
+  color,
+  scrubIndex,
+  onScrub,
 }: {
   points: TwrChartPoint[];
   height?: number;
+  showSp500?: boolean;
+  color?: string;
+  scrubIndex?: number | null;
+  onScrub?: (index: number | null) => void;
 }) {
   const palette = useFinancePalette();
   const colors = useChartColors();
   const highlight = useSeriesHighlight();
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [localScrub, setLocalScrub] = useState<number | null>(null);
+  const activeScrub = onScrub ? (scrubIndex ?? null) : localScrub;
+  const setScrub = onScrub ?? setLocalScrub;
+  const valueColor = color ?? palette.accent;
   const dates = useMemo(() => points.map((point) => point.asOf), [points]);
   const dimFlags = useMemo(
     () => points.map((point) => point.estimated || point.valueInterpolated),
     [points],
   );
   const hasDim = dimFlags.some(Boolean);
-  const series = useMemo<ChartSeries[]>(
-    () => [
+  const series = useMemo<ChartSeries[]>(() => {
+    const out: ChartSeries[] = [
       {
         key: 'value',
         label: 'Value',
-        color: palette.accent,
+        color: valueColor,
         values: points.map((point) => point.value),
         gaps: points.map((point) => point.valueInterpolated || point.estimated),
         strokeWidth: 2.2,
@@ -63,17 +74,19 @@ export function TwrChart({
         stepAfter: true,
         strokeWidth: 1.7,
       },
-      {
+    ];
+    if (showSp500) {
+      out.push({
         key: 'sp500',
         label: 'S&P 500',
         color: colors.benchmark,
         values: points.map((point) => point.sp500Equiv),
         dashed: true,
         strokeWidth: 1.6,
-      },
-    ],
-    [colors.benchmark, palette.accent, palette.muted, points],
-  );
+      });
+    }
+    return out;
+  }, [colors.benchmark, palette.muted, points, showSp500, valueColor]);
 
   if (points.length < 2) {
     return (
@@ -86,11 +99,11 @@ export function TwrChart({
   const first = points[0];
   const tooltipRows = (index: number): TooltipRow[] => {
     const point = points[index];
-    return [
+    const rows: TooltipRow[] = [
       {
         key: 'value',
         label: 'Value',
-        color: palette.accent,
+        color: valueColor,
         emphasis: true,
         ...moneyAndPct(point.value, first.value),
       },
@@ -100,22 +113,27 @@ export function TwrChart({
         color: palette.muted,
         ...moneyAndPct(point.netInvested, first.netInvested),
       },
-      {
+    ];
+    if (showSp500) {
+      rows.push({
         key: 'sp500',
         label: 'S&P 500',
         color: colors.benchmark,
         ...moneyAndPct(point.sp500Equiv, first.sp500Equiv),
-      },
-    ];
+      });
+    }
+    return rows;
   };
+  const invested = series.find((item) => item.key === 'invested');
+  const sp500 = series.find((item) => item.key === 'sp500');
 
   return (
     <View style={styles.wrap}>
       <LineChart
         dates={dates}
         series={series}
-        scrubIndex={scrubIndex}
-        onScrub={setScrubIndex}
+        scrubIndex={activeScrub}
+        onScrub={setScrub}
         tooltipRows={tooltipRows}
         height={height}
         highlight={highlight}
@@ -134,18 +152,26 @@ export function TwrChart({
             pair={pair}
             label="Value"
             values={series[0].values}
-            benchmark={{ label: 'S&P 500', color: colors.benchmark, values: series[2].values }}
+            benchmark={
+              showSp500 && sp500
+                ? { label: 'S&P 500', color: colors.benchmark, values: sp500.values }
+                : undefined
+            }
             breakdown={[
-              { key: 'value', label: 'Value', color: palette.accent, values: series[0].values },
-              { key: 'invested', label: 'Net invested', color: palette.muted, values: series[1].values },
-              { key: 'sp500', label: 'S&P 500', color: colors.benchmark, values: series[2].values },
+              { key: 'value', label: 'Value', color: valueColor, values: series[0].values },
+              ...(invested
+                ? [{ key: 'invested', label: 'Net invested', color: palette.muted, values: invested.values }]
+                : []),
+              ...(showSp500 && sp500
+                ? [{ key: 'sp500', label: 'S&P 500', color: colors.benchmark, values: sp500.values }]
+                : []),
             ]}
             onClose={clear}
           />
         )}
       />
       <View style={styles.legend}>
-        <LegendChip seriesKey="value" label="Value" color={palette.accent} highlight={highlight} />
+        <LegendChip seriesKey="value" label="Value" color={valueColor} highlight={highlight} />
         <LegendChip
           seriesKey="invested"
           label="Net invested"
@@ -153,13 +179,15 @@ export function TwrChart({
           swatch="step"
           highlight={highlight}
         />
-        <LegendChip
-          seriesKey="sp500"
-          label="S&P 500"
-          color={colors.benchmark}
-          swatch="dashed"
-          highlight={highlight}
-        />
+        {showSp500 ? (
+          <LegendChip
+            seriesKey="sp500"
+            label="S&P 500"
+            color={colors.benchmark}
+            swatch="dashed"
+            highlight={highlight}
+          />
+        ) : null}
         {hasDim ? <LegendItem color={palette.subtle} hatched label="Estimated / interpolated" /> : null}
       </View>
     </View>
@@ -169,11 +197,13 @@ export function TwrChart({
 export function TwrHeader({
   twr,
   sp500Twr,
+  showSp500 = true,
 }: {
   twr: TwrChartHeader | null;
   sp500Twr: TwrChartHeader | null;
+  showSp500?: boolean;
 }) {
-  if (!twr && !sp500Twr) return null;
+  if (!twr && !(showSp500 && sp500Twr)) return null;
   return (
     <View style={styles.stats}>
       <View style={styles.stat}>
@@ -184,14 +214,16 @@ export function TwrHeader({
           {twr ? formatPct(twr.cumulative) : '—'}
         </FText>
       </View>
-      <View style={styles.stat}>
-        <FText variant="caption" tone="muted">
-          S&P 500
-        </FText>
-        <FText variant="title" style={TABULAR} tone={(sp500Twr?.cumulative ?? 0) >= 0 ? 'positive' : 'negative'}>
-          {sp500Twr ? formatPct(sp500Twr.cumulative) : '—'}
-        </FText>
-      </View>
+      {showSp500 ? (
+        <View style={styles.stat}>
+          <FText variant="caption" tone="muted">
+            S&P 500
+          </FText>
+          <FText variant="title" style={TABULAR} tone={(sp500Twr?.cumulative ?? 0) >= 0 ? 'positive' : 'negative'}>
+            {sp500Twr ? formatPct(sp500Twr.cumulative) : '—'}
+          </FText>
+        </View>
+      ) : null}
     </View>
   );
 }
