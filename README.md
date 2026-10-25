@@ -356,10 +356,13 @@ John-only chart recompute (Convex CLI or Finance MCP):
 
 ```
 npx convex run finance/serveJobs:recomputeAll
+npx convex run finance/serveJobs:status
 npx convex run finance/serveJobs:recomputeScope '{"kind":"page","scopeId":"net"}'
 npx convex run finance/serveJobs:recomputeFrom '{"from":"2024-01-01"}'
 npx convex run finance/serveJobs:checkConsistency '{"sample":8}'
 ```
+
+`recomputeAll` only schedules `writeAffected` (`{scheduled:true}`). Wait until `status.serve.page` is 6 (and `series` > 0 if `seriesSource` is true) before checking. `checkConsistency` returns `diagnosis` (`ok` | `incomplete` | `mismatch` | `mixed`) plus per-pair `reason` (`serve_missing` | `live_raw` | `no_source` | `length` | `value`) and the first numeric diff. `no_source` is skipped (ok) when there are no series rows. `incomplete` means the write chain or rollup rebuild is still running — not a chart bug.
 
 MCP tools (same FINANCE_MCP_TOKEN): `recompute_charts`, `recompute_chart_scope`, `recompute_charts_from`, `check_chart_consistency`.
 

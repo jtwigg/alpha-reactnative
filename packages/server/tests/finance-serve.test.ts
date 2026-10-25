@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyServeCheck,
   currentQueryCost,
   decodePoints,
   decodeSeriesPoints,
+  diagnosisFromPairs,
+  diffNumbers,
   encodePoints,
   encodeSeriesPoints,
   payloadBytes,
@@ -119,6 +122,95 @@ describe('posh-mink-581 query cost model (27 accounts, 2014-03-07 → 2026-10-24
     expect(ytd?.before.sparkDocs).toBeGreaterThan(7000);
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({ measure: 'finance.serve.posh-mink-581', rows }, null, 2));
+  });
+});
+
+describe('checkConsistency reason/diff', () => {
+  it('reports length and first value mismatch', () => {
+    expect(diffNumbers([1, 2], [1, 2, 3]).reason).toBe('length');
+    const value = diffNumbers([1, 2, 3], [1, 2.5, 3]);
+    expect(value.reason).toBe('value');
+    expect(value.firstDiffIndex).toBe(1);
+    expect(value.storedValue).toBe(2);
+    expect(value.liveValue).toBe(2.5);
+  });
+
+  it('treats missing series with no source as ok/no_source, not a fail', () => {
+    const pair = classifyServeCheck({
+      kind: 'series',
+      scopeId: 'total',
+      range: '1M',
+      hasServe: false,
+      hasSource: false,
+      liveAvailable: false,
+    });
+    expect(pair).toMatchObject({ ok: true, reason: 'no_source' });
+  });
+
+  it('distinguishes serve_missing from live_raw and value diffs', () => {
+    expect(
+      classifyServeCheck({
+        kind: 'page',
+        scopeId: 'net',
+        range: 'YTD',
+        hasServe: false,
+        hasSource: true,
+        liveAvailable: true,
+        liveFreshness: 'stale',
+      }).reason,
+    ).toBe('serve_missing');
+    expect(
+      classifyServeCheck({
+        kind: 'page',
+        scopeId: 'net',
+        range: 'YTD',
+        hasServe: false,
+        hasSource: true,
+        liveAvailable: false,
+        liveFreshness: 'raw',
+      }).reason,
+    ).toBe('live_raw');
+    const value = classifyServeCheck({
+      kind: 'page',
+      scopeId: 'net',
+      range: '1M',
+      hasServe: true,
+      hasSource: true,
+      liveAvailable: true,
+      storedValues: [10, 20],
+      liveValues: [10, 21],
+      storedDates: ['2026-10-01', '2026-10-02'],
+      liveDates: ['2026-10-01', '2026-10-02'],
+      serveVersion: 3,
+      serveAsOf: '2026-10-24',
+    });
+    expect(value).toMatchObject({
+      ok: false,
+      reason: 'value',
+      firstDiffIndex: 1,
+      storedAt: '2026-10-02',
+      liveAt: '2026-10-02',
+      storedValue: 20,
+      liveValue: 21,
+      serveVersion: 3,
+    });
+  });
+
+  it('diagnoses incomplete recompute vs numeric mismatch', () => {
+    expect(
+      diagnosisFromPairs([
+        { ok: false, reason: 'serve_missing' },
+        { ok: false, reason: 'live_raw' },
+      ]),
+    ).toBe('incomplete');
+    expect(diagnosisFromPairs([{ ok: false, reason: 'value' }])).toBe('mismatch');
+    expect(
+      diagnosisFromPairs([
+        { ok: false, reason: 'serve_missing' },
+        { ok: false, reason: 'value' },
+      ]),
+    ).toBe('mixed');
+    expect(diagnosisFromPairs([{ ok: true, reason: 'ok' }])).toBe('ok');
   });
 });
 

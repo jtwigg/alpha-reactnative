@@ -250,12 +250,140 @@ export function serveQueryCost(query: 'page' | 'sparklines' | 'detail' | 'series
   return { documentsRead: 1, note: 'single indexed get of finance_serve' };
 }
 
-export function sameNumbers(left: number[], right: number[], eps = 0.02): boolean {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    if (Math.abs((left[i] ?? 0) - (right[i] ?? 0)) > eps) return false;
+export const SERVE_CHECK_REASONS = [
+  'ok',
+  'serve_missing',
+  'live_raw',
+  'no_source',
+  'length',
+  'value',
+] as const;
+export type ServeCheckReason = (typeof SERVE_CHECK_REASONS)[number];
+
+export type NumberDiff = {
+  same: boolean;
+  reason: 'ok' | 'length' | 'value';
+  storedLen: number;
+  liveLen: number;
+  firstDiffIndex?: number;
+  storedValue?: number;
+  liveValue?: number;
+};
+
+export function diffNumbers(left: number[], right: number[], eps = 0.02): NumberDiff {
+  if (left.length !== right.length) {
+    return { same: false, reason: 'length', storedLen: left.length, liveLen: right.length };
   }
-  return true;
+  for (let i = 0; i < left.length; i += 1) {
+    const storedValue = left[i] ?? 0;
+    const liveValue = right[i] ?? 0;
+    if (Math.abs(storedValue - liveValue) > eps) {
+      return {
+        same: false,
+        reason: 'value',
+        storedLen: left.length,
+        liveLen: right.length,
+        firstDiffIndex: i,
+        storedValue,
+        liveValue,
+      };
+    }
+  }
+  return { same: true, reason: 'ok', storedLen: left.length, liveLen: right.length };
+}
+
+export function sameNumbers(left: number[], right: number[], eps = 0.02): boolean {
+  return diffNumbers(left, right, eps).same;
+}
+
+export type ServeCheckPair = {
+  kind: string;
+  scopeId: string;
+  range: string;
+  ok: boolean;
+  reason: ServeCheckReason;
+  storedLen?: number;
+  liveLen?: number;
+  firstDiffIndex?: number;
+  storedAt?: string;
+  liveAt?: string;
+  storedValue?: number;
+  liveValue?: number;
+  serveVersion?: number;
+  serveUpdatedAt?: number;
+  serveAsOf?: string;
+  liveFreshness?: string;
+};
+
+/**
+ * Classify one stored-vs-live serve pair.
+ * serve_missing = source exists and live can be built, but no finance_serve row.
+ * live_raw = source exists but rollups/series cannot produce a comparable live path yet.
+ * no_source = nothing to write (e.g. no series rows) — not a numeric mismatch.
+ */
+export function classifyServeCheck(args: {
+  kind: string;
+  scopeId: string;
+  range: string;
+  hasServe: boolean;
+  hasSource: boolean;
+  liveAvailable: boolean;
+  liveFreshness?: string;
+  storedValues?: number[];
+  liveValues?: number[];
+  storedDates?: string[];
+  liveDates?: string[];
+  serveVersion?: number;
+  serveUpdatedAt?: number;
+  serveAsOf?: string;
+}): ServeCheckPair {
+  const base = {
+    kind: args.kind,
+    scopeId: args.scopeId,
+    range: args.range,
+    serveVersion: args.serveVersion,
+    serveUpdatedAt: args.serveUpdatedAt,
+    serveAsOf: args.serveAsOf,
+    liveFreshness: args.liveFreshness,
+  };
+  if (!args.hasServe) {
+    if (!args.hasSource) return { ...base, ok: true, reason: 'no_source' };
+    if (!args.liveAvailable) return { ...base, ok: false, reason: 'live_raw' };
+    return { ...base, ok: false, reason: 'serve_missing' };
+  }
+  if (!args.liveAvailable) {
+    if (!args.hasSource) return { ...base, ok: true, reason: 'no_source' };
+    return { ...base, ok: false, reason: 'live_raw' };
+  }
+  const stored = args.storedValues ?? [];
+  const live = args.liveValues ?? [];
+  const diff = diffNumbers(stored, live);
+  const storedAt = diff.firstDiffIndex != null ? args.storedDates?.[diff.firstDiffIndex] : undefined;
+  const liveAt = diff.firstDiffIndex != null ? args.liveDates?.[diff.firstDiffIndex] : undefined;
+  return {
+    ...base,
+    ok: diff.same,
+    reason: diff.reason,
+    storedLen: diff.storedLen,
+    liveLen: diff.liveLen,
+    firstDiffIndex: diff.firstDiffIndex,
+    storedAt,
+    liveAt,
+    storedValue: diff.storedValue,
+    liveValue: diff.liveValue,
+  };
+}
+
+export function diagnosisFromPairs(
+  pairs: Array<{ ok: boolean; reason: string }>,
+): 'ok' | 'incomplete' | 'mismatch' | 'mixed' {
+  if (pairs.every((pair) => pair.ok)) return 'ok';
+  const fails = pairs.filter((pair) => !pair.ok);
+  const incomplete = fails.every((pair) => pair.reason === 'serve_missing' || pair.reason === 'live_raw');
+  const mismatch = fails.every((pair) => pair.reason === 'length' || pair.reason === 'value');
+  if (incomplete) return 'incomplete';
+  if (mismatch) return 'mismatch';
+  return 'mixed';
 }
 
 export function rangesOverlapping(from: string, asOf: string, firstAsOf: string): RangeKey[] {
