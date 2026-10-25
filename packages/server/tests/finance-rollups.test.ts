@@ -24,8 +24,11 @@ import {
   rollupCoarse,
   rollupCoversRange,
   shouldPatchRebuildState,
+  decodeRebuildCursor,
   encodeRebuildCursor,
   valuesFromAccountRollups,
+  ROLLUP_STALE_MS,
+  ROLLUP_STEP_DAY_CAP,
 } from '../convex/finance/rollups';
 import { markRollupsDirty, rebuildStep } from '../convex/finance/rollupJobs';
 import { upsertSeries, upsertSnapshots } from '../convex/finance/ingest';
@@ -72,8 +75,9 @@ describe('dirty watermarks', () => {
 
 describe('rebuild batching', () => {
   it('stays inside the write budget and is idempotent to plan', () => {
-    expect(daysPerRebuildStep(27)).toBeGreaterThan(21);
-    expect(daysPerRebuildStep(27)).toBeLessThanOrEqual(60);
+    expect(daysPerRebuildStep(27)).toBe(20);
+    expect(daysPerRebuildStep(27)).toBeLessThanOrEqual(ROLLUP_STEP_DAY_CAP);
+    expect(ROLLUP_STEP_DAY_CAP).toBe(30);
     expect(daysPerRebuildStep(80)).toBeGreaterThanOrEqual(1);
     const first = planRebuildSpan({
       from: '2020-01-01',
@@ -82,7 +86,7 @@ describe('rebuild batching', () => {
       accountCount: 27,
     });
     expect(first.start).toBe('2020-01-01');
-    expect(first.end >= first.start).toBe(true);
+    expect(first.end).toBe('2020-01-20');
     expect(first.next).toBe(addDays(first.end, 1));
     const again = planRebuildSpan({
       from: '2020-01-01',
@@ -98,6 +102,32 @@ describe('rebuild batching', () => {
       accountCount: 27,
     });
     expect(last.next).toBeNull();
+  });
+
+  it('honors a smaller cursor span so a timed-out step can shrink', () => {
+    const planned = planRebuildSpan({
+      from: '2020-01-01',
+      to: '2020-12-31',
+      day: '2020-01-01',
+      accountCount: 27,
+      span: 8,
+    });
+    expect(planned.end).toBe('2020-01-08');
+    expect(planned.next).toBe('2020-01-09');
+    const encoded = encodeRebuildCursor({
+      from: '2020-01-01',
+      to: '2020-12-31',
+      day: '2023-06-01',
+      wipe: false,
+      span: 15,
+    });
+    expect(decodeRebuildCursor(encoded)?.span).toBe(15);
+    expect(decodeRebuildCursor('{"from":"2020-01-01","to":"2020-12-31","day":"2023-06-01","wipe":false}')).toEqual({
+      from: '2020-01-01',
+      to: '2020-12-31',
+      day: '2023-06-01',
+      wipe: false,
+    });
   });
 });
 
@@ -660,6 +690,35 @@ describe('rebuildStep loop guards', () => {
     const result = await run(rebuildStep, ctx.ctx, { stepId: 4, cursor: stuck });
     // day past `to` finishes the run; a no-advance next is marked error.
     expect(['ready', 'error']).toContain((result as { status: string }).status);
+  });
+
+  it('resumes a stale rebuilding chain from the saved cursor with half the span', async () => {
+    const tables = seedRebuildTables();
+    tables.finance_rollup_state[0].updatedAt = 1;
+    tables.finance_rollup_state[0].cursor = encodeRebuildCursor({
+      from: '2020-01-01',
+      to: '2026-10-23',
+      day: '2023-06-01',
+      wipe: false,
+      span: 30,
+    });
+    const ctx = mutationCtx(tables);
+    const result = await run(rebuildStep, ctx.ctx, {});
+    expect(result).toMatchObject({ done: false, status: 'rebuilding', from: '2020-01-01', to: '2026-10-23' });
+    const scheduled = ctx.scheduled[0] as { stepId?: number; cursor?: string };
+    expect(scheduled.stepId).toBe(4);
+    expect(decodeRebuildCursor(scheduled.cursor)?.span).toBe(15);
+    expect(decodeRebuildCursor(scheduled.cursor)?.day).toBe('2023-06-01');
+    expect(decodeRebuildCursor(tables.finance_rollup_state[0].cursor as string)?.span).toBe(15);
+  });
+
+  it('does not resume a live rebuilding chain', async () => {
+    const tables = seedRebuildTables();
+    tables.finance_rollup_state[0].updatedAt = Date.now() - ROLLUP_STALE_MS + 5_000;
+    const ctx = mutationCtx(tables);
+    const result = await run(rebuildStep, ctx.ctx, {});
+    expect(result).toMatchObject({ done: false, status: 'rebuilding', wrote: 0, from: null });
+    expect(ctx.scheduled).toEqual([]);
   });
 });
 

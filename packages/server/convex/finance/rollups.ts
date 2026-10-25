@@ -39,8 +39,8 @@ export const GLOBAL_ROLLUP_KEY = 'global';
 export const TOTAL_SCOPE_ID = 'net';
 export const BENCH_SCOPE_ID = 'SPX';
 
-export const ROLLUP_WRITE_BUDGET = 1600;
-export const ROLLUP_STEP_DAY_CAP = 60;
+export const ROLLUP_WRITE_BUDGET = 800;
+export const ROLLUP_STEP_DAY_CAP = 30;
 export const ROLLUP_DELETE_BATCH = 400;
 export const ROLLUP_CONSISTENCY_SAMPLE = 16;
 export const ROLLUP_CONSISTENCY_EPS = 0.02;
@@ -76,6 +76,8 @@ export type RebuildCursor = {
   to: string;
   day: string;
   wipe: boolean;
+  /** Days per step; shrunk when a step times out so the chain self-heals. */
+  span?: number;
 };
 
 export type DatedBalance = {
@@ -156,10 +158,12 @@ export function planRebuildSpan(args: {
   day: string;
   accountCount: number;
   writeBudget?: number;
+  span?: number;
 }): { start: string; end: string; next: string | null } {
   const start = args.day < args.from ? args.from : args.day;
   if (start > args.to) return { start, end: args.to, next: null };
-  const span = daysPerRebuildStep(args.accountCount, args.writeBudget);
+  const auto = daysPerRebuildStep(args.accountCount, args.writeBudget);
+  const span = args.span ? Math.max(1, Math.min(auto, args.span)) : auto;
   const rawEnd = addDays(start, span - 1);
   const end = rawEnd < args.to ? rawEnd : args.to;
   const next = end < args.to ? addDays(end, 1) : null;
@@ -200,7 +204,8 @@ export function decodeRebuildCursor(raw: string | undefined | null): RebuildCurs
     ) {
       return null;
     }
-    return { from: parsed.from, to: parsed.to, day: parsed.day, wipe: parsed.wipe };
+    const span = typeof parsed.span === 'number' && parsed.span >= 1 ? Math.floor(parsed.span) : undefined;
+    return { from: parsed.from, to: parsed.to, day: parsed.day, wipe: parsed.wipe, ...(span ? { span } : {}) };
   } catch {
     return null;
   }
@@ -590,3 +595,6 @@ export function rollupUnchanged(
 }
 
 export type { AccountGroupKey };
+
+/** A rebuilding chain whose state hasn't moved in this long is presumed dead (step threw). */
+export const ROLLUP_STALE_MS = 10 * 60 * 1000;
