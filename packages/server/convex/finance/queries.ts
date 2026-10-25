@@ -44,6 +44,7 @@ import {
   coarseSeries,
   headerFromComputed,
   headerFromReturn,
+  headerFromStoredSp500,
   seriesGrainForRange,
   seriesPointFromDoc,
   sp500ReturnScope,
@@ -394,7 +395,7 @@ export const series = query({
       rollup: freshness,
       points,
       twr: headerForSeries(storedTwr, points, twrWindow, (point) => point.value),
-      sp500Twr: headerForSeries(storedSp500, points, twrWindow, (point) => point.sp500Equiv),
+      sp500Twr: headerFromStoredSp500(storedSp500),
     };
   },
 });

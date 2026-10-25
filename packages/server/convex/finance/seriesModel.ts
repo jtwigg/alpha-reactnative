@@ -1,11 +1,7 @@
 import { daysBetween, monthStart, weekStart } from './dates';
 import { enclosingMonthEnds, enclosingWeekEnds } from './rollups';
 import { grainForRange, type RangeKey, type RollupGrain } from './series';
-import {
-  assertReturnScope,
-  parseAccountScope,
-  type TwrWindow,
-} from './twrModel';
+import { parseAccountScope, type TwrWindow } from './twrModel';
 
 export type SeriesPoint = {
   asOf: string;
@@ -26,20 +22,6 @@ export function assertSeriesScope(scope: string): asserts scope is SeriesScope {
 
 export function sp500ReturnScope(scope: string): string {
   return scope.startsWith('sp500:') ? scope : `sp500:${scope}`;
-}
-
-export function parseSp500ReturnScope(scope: string): string | null {
-  return scope.startsWith('sp500:') && scope.length > 6 ? scope.slice(6) : null;
-}
-
-/** Returns may also store a precomputed S&P TWR as `sp500:<inner-scope>`. */
-export function assertReturnOrSp500Scope(scope: string): void {
-  const inner = parseSp500ReturnScope(scope);
-  if (inner) {
-    assertReturnScope(inner);
-    return;
-  }
-  assertReturnScope(scope);
 }
 
 export function seriesAccountId(scope: string): string | null {
@@ -172,6 +154,11 @@ export function headerFromReturn(row: {
     asOf: row.asOf,
     source: 'returns',
   };
+}
+
+/** S&P TWR is never computed from the series path — only a stored returns row. */
+export function headerFromStoredSp500(stored: SeriesHeader | null): SeriesHeader | null {
+  return stored?.source === 'returns' ? stored : null;
 }
 
 export function headerFromComputed(

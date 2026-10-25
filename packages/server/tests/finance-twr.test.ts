@@ -56,9 +56,15 @@ describe('TWR helpers', () => {
     expect(accountScope('acc_1')).toBe('account:acc_1');
     expect(parseAccountScope('account:acc_1')).toBe('acc_1');
     expect(() => assertReturnScope('portfolio')).toThrow(/account:<id>/);
+    expect(() => assertReturnScope('sp500:')).toThrow(/sp500:<those>/);
+    expect(() => assertReturnScope('sp500:portfolio')).toThrow(/sp500:<those>/);
+    expect(() => assertReturnScope('sp500:sp500:total')).toThrow(/sp500:<those>/);
     assertReturnScope('total');
     assertReturnScope('reliable_subset');
     assertReturnScope('account:acc_1');
+    assertReturnScope('sp500:total');
+    assertReturnScope('sp500:reliable_subset');
+    assertReturnScope('sp500:account:acc_1');
   });
 
   it('replaces a batch by asOf and last-wins on scope+window', () => {

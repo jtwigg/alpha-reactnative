@@ -3,6 +3,7 @@ import { bearerMatches, timingSafeEqualString } from '../convex/finance/secret';
 import { dispatchFinanceOp } from '../convex/finance/gateway';
 import { createFinanceMcpHandler } from '../../../api/_lib/handler';
 import { convexSiteUrl } from '../../../api/_lib/convex';
+import { upsertReturnsSchema } from '../../../api/_lib/tools';
 
 describe('timing-safe bearer compare', () => {
   it('accepts an exact Bearer token', () => {
@@ -73,6 +74,29 @@ describe('dispatchFinanceOp', () => {
     await expect(
       dispatchFinanceOp({ runMutation: vi.fn(), runQuery: vi.fn() }, 'nope', {}),
     ).rejects.toThrow(/Unknown finance op/);
+  });
+});
+
+describe('upsert_returns scope', () => {
+  const item = {
+    window: '1Y' as const,
+    asOf: '2026-10-23',
+    startDate: '2025-10-23',
+    cumulative: 0.1,
+    reliable: true,
+    startOnAnchor: true,
+    flowsFullyKnown: true,
+    method: 'finance.twr.v1' as const,
+  };
+
+  it('accepts Finance S&P TWR scopes', () => {
+    for (const scope of ['sp500:total', 'sp500:reliable_subset', 'sp500:account:acc_1']) {
+      expect(upsertReturnsSchema.parse({ items: [{ ...item, scope }] }).items[0].scope).toBe(scope);
+    }
+  });
+
+  it('rejects an invalid S&P wrapper', () => {
+    expect(() => upsertReturnsSchema.parse({ items: [{ ...item, scope: 'sp500:portfolio' }] })).toThrow();
   });
 });
 

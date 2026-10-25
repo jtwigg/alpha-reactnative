@@ -7,6 +7,8 @@ import {
   coarseSeries,
   dedupeSeriesByKey,
   headerFromComputed,
+  headerFromReturn,
+  headerFromStoredSp500,
   seriesPointFromDoc,
   sp500ReturnScope,
   twrFromFlowAdjusted,
@@ -43,8 +45,10 @@ describe('series scopes and windows', () => {
     assertSeriesScope('account:acc_1');
     expect(() => assertSeriesScope('sp500:total')).toThrow(/account:<id>/);
     assertReturnScope('sp500:total');
+    assertReturnScope('sp500:reliable_subset');
     assertReturnScope('sp500:account:acc_1');
     expect(sp500ReturnScope('reliable_subset')).toBe('sp500:reliable_subset');
+    expect(sp500ReturnScope('account:acc_1')).toBe('sp500:account:acc_1');
     expect(twrWindowForRange('3M')).toBe('3M');
     expect(twrWindowForRange('YTD')).toBe('YTD');
     expect(twrWindowForRange('1Y')).toBe('1Y');
@@ -86,6 +90,28 @@ describe('TWR from a flow-adjusted path', () => {
     expect(header?.cumulative).toBeCloseTo(0.1, 8);
     expect(header?.annualized).not.toBeNull();
     expect(annualizeTwr(0.1, '2026-09-01', '2026-10-23')).toBeNull();
+  });
+
+  it('takes S&P TWR only from a stored returns row', () => {
+    const stored = headerFromReturn({
+      cumulative: 0.12,
+      annualized: 0.12,
+      window: '1Y',
+      startDate: '2025-10-23',
+      asOf: '2026-10-23',
+    });
+    expect(headerFromStoredSp500(stored)).toEqual(stored);
+    expect(headerFromStoredSp500(null)).toBeNull();
+    expect(
+      headerFromStoredSp500({
+        cumulative: 0.1,
+        annualized: 0.1,
+        window: '1Y',
+        startDate: '2025-10-23',
+        asOf: '2026-10-23',
+        source: 'computed',
+      }),
+    ).toBeNull();
   });
 });
 
