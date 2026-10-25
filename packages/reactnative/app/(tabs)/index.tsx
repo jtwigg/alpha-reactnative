@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useLocalSearchParams } from 'expo-router';
+
 import { ChatInput } from '@/components/chat/chat-input';
 import { HomeBriefing } from '@/components/chat/home-briefing';
 import { HomeThread, useHomeChat } from '@/components/chat/home-thread';
@@ -18,6 +20,7 @@ import { HomeUpdateBannerHost, VersionLabel } from '@/components/home-update-chr
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
+import { parseAskId } from '@/lib/app-links';
 import { isClerkConfigured } from '@/lib/convex';
 
 export default function HomeScreen() {
@@ -39,10 +42,21 @@ export default function HomeScreen() {
 }
 
 function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: string) => void }) {
-  const { messages, pending, send, openGrok } = useHomeChat(ready, onToast);
+  const params = useLocalSearchParams<{ ask?: string }>();
+  const askParam = typeof params.ask === 'string' ? params.ask : undefined;
+  const askId = askParam ? parseAskId(askParam) : null;
+  const askMalformed = Boolean(askParam && !askId);
+  const { messages, pending, send, openGrok, threadReady } = useHomeChat(ready, onToast);
   return (
     <View style={styles.flex}>
-      <HomeThread messages={messages} pending={pending} onOpenGrok={() => void openGrok()} />
+      <HomeThread
+        messages={messages}
+        pending={pending}
+        onOpenGrok={() => void openGrok()}
+        highlightAskId={askId}
+        askMissing={askMalformed}
+        ready={threadReady}
+      />
       <HomeBriefing ready={ready} />
       <ChatInput onSend={(text) => void send(text)} isLoading={pending} />
     </View>

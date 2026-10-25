@@ -1,5 +1,5 @@
 import { useAuth, useSignIn } from '@clerk/expo';
-import { Link, Redirect } from 'expo-router';
+import { Link, Redirect, useLocalSearchParams, type Href } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -7,12 +7,15 @@ import { AuthButton, AuthDivider, AuthError, AuthInput } from '@/components/auth
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { GoogleButton } from '@/components/auth/google-button';
 import { ThemedText } from '@/components/themed-text';
+import { safeReturnPath } from '@/lib/app-links';
 import { getClerkErrorMessage } from '@/lib/convex';
 import { captureAuthException, logAuth } from '@/lib/sentry';
 
 export function SignInForm() {
   const { isSignedIn } = useAuth();
   const { signIn, errors, fetchStatus } = useSignIn();
+  const params = useLocalSearchParams<{ return?: string }>();
+  const afterSignIn = (safeReturnPath(params.return) ?? '/') as Href;
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -68,7 +71,7 @@ export function SignInForm() {
   };
 
   if (isSignedIn) {
-    return <Redirect href="/" />;
+    return <Redirect href={afterSignIn} />;
   }
 
   if (needsTrust) {

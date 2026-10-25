@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
+const appLinks = require('./lib/app-links.json');
 const bundleIdentifier = process.env.IOS_BUNDLE_IDENTIFIER ?? 'com.twigg.alpha';
 const androidPackage = process.env.ANDROID_PACKAGE ?? 'com.example.johnsapp';
+const appLinkHost = appLinks.host ?? 'alpha-theta-silk.vercel.app';
 // Filled by `eas init` / `eas update:configure`, or set EAS_PROJECT_ID.
 const projectId = process.env.EAS_PROJECT_ID ?? '45f0cfd7-2b50-4deb-b537-b5e44f76b937';
 
@@ -37,6 +39,7 @@ module.exports = ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier,
+    associatedDomains: [`applinks:${appLinkHost}`],
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSMicrophoneUsageDescription:
@@ -54,6 +57,19 @@ module.exports = ({ config }) => ({
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     permissions: ['RECORD_AUDIO'],
+    intentFilters: [
+      {
+        action: 'VIEW',
+        autoVerify: true,
+        data: [
+          {
+            scheme: 'https',
+            host: appLinkHost,
+          },
+        ],
+        category: ['BROWSABLE', 'DEFAULT'],
+      },
+    ],
   },
   web: {
     output: 'static',
@@ -84,7 +100,7 @@ module.exports = ({ config }) => ({
   },
   extra: {
     router: {
-      origin: false,
+      origin: `https://${appLinkHost}`,
     },
     eas: {
       projectId,

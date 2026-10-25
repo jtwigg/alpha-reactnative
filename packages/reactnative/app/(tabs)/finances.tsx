@@ -1,5 +1,5 @@
 import { useQuery } from 'convex/react';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +35,7 @@ import {
   useFinancePalette,
 } from '@/components/finance/ui';
 import { api } from '@/lib/api';
+import { accountPath } from '@/lib/app-links';
 import { isClerkConfigured } from '@/lib/convex';
 import { useChartColors } from '@/lib/finance-colors';
 import { formatCoverageDate, formatPct, formatUsd } from '@/lib/finance-coverage';
@@ -231,7 +232,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
       counterpartLabel: counterpartLabel(flow),
       onPress: () => {
         const target = flowTargetAccount(flow);
-        if (target) router.push(`/finances/account/${encodeURIComponent(target)}`);
+        if (target) router.push(accountPath(target) as Href);
       },
     }));
   }, [hasLive, liveFlows, router]);

@@ -1,5 +1,5 @@
 import { useAuth } from '@clerk/expo';
-import { Redirect, Tabs } from 'expo-router';
+import { Redirect, Tabs, useGlobalSearchParams, usePathname, type Href } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
@@ -11,6 +11,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useStoreUser } from '@/hooks/use-store-user';
+import { currentAppPath, signInPath } from '@/lib/app-links';
 import { isClerkConfigured } from '@/lib/convex';
 import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 
@@ -26,6 +27,9 @@ function ClerkProtectedTabs() {
   const { isSignedIn: clerkSignedIn } = useAuth();
   const { stuck, diagnostic } = useConvexAuthStuck();
   const demo = useFinanceDemo() || isFinanceDemoFlag();
+  const pathname = usePathname();
+  const params = useGlobalSearchParams();
+  const returnTo = currentAppPath(pathname, params as Record<string, string | string[] | undefined>);
 
   if (stuck && diagnostic && !demo) {
     return <AuthStuck reason={diagnostic.reason} details={diagnostic.details} />;
@@ -51,7 +55,7 @@ function ClerkProtectedTabs() {
         </ThemedView>
       );
     }
-    return <Redirect href="/sign-in" />;
+    return <Redirect href={signInPath(returnTo) as Href} />;
   }
 
   return <AppTabs />;
@@ -75,6 +79,7 @@ function AppTabs() {
         }}
       />
       <Tabs.Screen name="chat" options={{ href: null }} />
+      <Tabs.Screen name="home" options={{ href: null }} />
       <Tabs.Screen
         name="briefings"
         options={{

@@ -1,5 +1,5 @@
 import { useAction, useQuery } from 'convex/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/lib/api';
@@ -21,7 +21,9 @@ function thinking(messages: ThreadMessage[]): boolean {
 }
 
 export function useHomeChat(ready: boolean, onToast: (message: string) => void) {
-  const messages = (useQuery(api.chat.thread, ready ? {} : 'skip') ?? []) as ThreadMessage[];
+  const loaded = useQuery(api.chat.thread, ready ? {} : 'skip') as ThreadMessage[] | undefined;
+  const messages = loaded ?? [];
+  const threadReady = loaded !== undefined;
   const ask = useAction(api.chat.ask);
   const [sending, setSending] = useState(false);
   const pending = thinking(messages) || sending;
@@ -43,19 +45,32 @@ export function useHomeChat(ready: boolean, onToast: (message: string) => void) 
     if (result === 'failed') onToast('Grok Bot is not installed');
   };
 
-  return { messages, pending, send, openGrok };
+  return { messages, pending, send, openGrok, threadReady };
 }
 
 export function HomeThread({
   messages,
   pending,
   onOpenGrok,
+  highlightAskId,
+  askMissing,
+  ready,
 }: {
   messages: ThreadMessage[];
   pending: boolean;
   onOpenGrok: () => void;
+  highlightAskId?: string | null;
+  askMissing?: boolean;
+  ready?: boolean;
 }) {
   const rows = useMemo(() => messages, [messages]);
+  const listRef = useRef<FlatList<ThreadMessage>>(null);
+  const highlightIndex = highlightAskId ? rows.findIndex((row) => row.messageId === highlightAskId) : -1;
+  const unknownAsk = Boolean(highlightAskId && ready && highlightIndex < 0);
+  useEffect(() => {
+    if (highlightIndex < 0) return;
+    listRef.current?.scrollToIndex({ index: highlightIndex, animated: true, viewPosition: 0.4 });
+  }, [highlightIndex]);
   return (
     <View style={styles.wrap}>
       <View style={styles.toolbar}>
@@ -70,16 +85,31 @@ export function HomeThread({
         </Pressable>
       </View>
 
+      {askMissing || unknownAsk ? (
+        <View style={styles.missing} accessibilityRole="alert">
+          <Text style={styles.missingText}>Ask not found</Text>
+        </View>
+      ) : null}
+
       <FlatList
+        ref={listRef}
         data={rows}
         keyExtractor={(item) => item.messageId}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
+        onScrollToIndexFailed={() => undefined}
         ListEmptyComponent={<Text style={styles.empty}>Ask anything. Replies land here live.</Text>}
         renderItem={({ item }) => (
           <View style={[styles.row, item.role === 'user' ? styles.rowUser : styles.rowAsst]}>
-            <View style={[styles.bubble, item.role === 'user' ? styles.bubbleUser : styles.bubbleAsst]}>
+            <View
+              style={[
+                styles.bubble,
+                item.role === 'user' ? styles.bubbleUser : styles.bubbleAsst,
+                item.messageId === highlightAskId && styles.bubbleOn,
+              ]}
+              accessibilityState={{ selected: item.messageId === highlightAskId }}
+            >
               <Text style={[styles.body, item.role === 'user' ? styles.bodyUser : styles.bodyAsst]}>{item.text}</Text>
               {item.role === 'user' && item.status === 'error' ? (
                 <Text style={styles.error}>Could not reach Assistant.</Text>
@@ -129,4 +159,16 @@ const styles = StyleSheet.create({
   error: { marginTop: 6, fontSize: 13, color: '#fca5a5' },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 },
   thinkingText: { fontSize: 15, color: '#6b7280' },
+  bubbleOn: { borderWidth: 2, borderColor: '#c2410c' },
+  missing: {
+    marginHorizontal: 20,
+    marginBottom: 8,
+    borderRadius: 10,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fdba74',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  missingText: { color: '#c2410c', fontWeight: '700', fontSize: 14 },
 });
