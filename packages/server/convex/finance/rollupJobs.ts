@@ -32,6 +32,12 @@ import {
 } from './rollups';
 import { signedAmount, type SeriesSnapshot } from './series';
 import {
+  carrySeriesForward,
+  coarseSeries,
+  seriesPointFromDoc,
+  type SeriesPoint,
+} from './seriesModel';
+import {
   consistencyResultValidator,
   rebuildAllResultValidator,
   rebuildStepResultValidator,
@@ -153,6 +159,9 @@ async function upsertRollup(
     value: row.value,
     interpolated: row.interpolated,
     ...(row.byClass ? { byClass: row.byClass } : {}),
+    ...(row.netInvested != null ? { netInvested: row.netInvested } : {}),
+    ...(row.sp500Equiv != null ? { sp500Equiv: row.sp500Equiv } : {}),
+    ...(row.estimated != null ? { estimated: row.estimated } : {}),
     version: row.version,
   };
   if (existing) {
@@ -220,6 +229,28 @@ async function loadBenchBars(
   return out;
 }
 
+async function earliestSeriesDate(ctx: MutationCtx): Promise<string | null> {
+  const first = await ctx.db.query('series').withIndex('by_date').order('asc').take(1);
+  return first[0]?.date ?? null;
+}
+
+async function latestSeriesDate(ctx: MutationCtx): Promise<string | null> {
+  const last = await ctx.db.query('series').withIndex('by_date').order('desc').take(1);
+  return last[0]?.date ?? null;
+}
+
+function minDate(left: string | null, right: string | null): string | null {
+  if (!left) return right;
+  if (!right) return left;
+  return left < right ? left : right;
+}
+
+function maxDate(left: string | null, right: string | null): string | null {
+  if (!left) return right;
+  if (!right) return left;
+  return left > right ? left : right;
+}
+
 async function earliestSnapshotDate(ctx: MutationCtx): Promise<string | null> {
   const accounts = await ctx.db.query('accounts').take(200);
   let earliest: string | null = null;
@@ -232,7 +263,7 @@ async function earliestSnapshotDate(ctx: MutationCtx): Promise<string | null> {
     const asOf = first[0]?.asOf;
     if (asOf && (!earliest || asOf < earliest)) earliest = asOf;
   }
-  return earliest;
+  return minDate(earliest, await earliestSeriesDate(ctx));
 }
 
 async function latestSnapshotDate(ctx: MutationCtx): Promise<string | null> {
@@ -247,7 +278,88 @@ async function latestSnapshotDate(ctx: MutationCtx): Promise<string | null> {
     const asOf = last[0]?.asOf;
     if (asOf && (!latest || asOf > latest)) latest = asOf;
   }
-  return latest;
+  return maxDate(latest, await latestSeriesDate(ctx));
+}
+
+async function listSeriesScopes(ctx: MutationCtx, accounts: Array<{ sourceId: string }>): Promise<string[]> {
+  const scopes = new Set<string>(['total', 'reliable_subset']);
+  for (const account of accounts) scopes.add(`account:${account.sourceId}`);
+  const recent = await ctx.db.query('series').withIndex('by_date').order('desc').take(200);
+  for (const row of recent) scopes.add(row.scope);
+  return [...scopes].sort();
+}
+
+async function loadSeriesPoints(
+  ctx: MutationCtx,
+  scope: string,
+  from: string,
+  to: string,
+): Promise<SeriesPoint[]> {
+  const prior = await ctx.db
+    .query('series')
+    .withIndex('by_scope_date', (q) => q.eq('scope', scope).lt('date', from))
+    .order('desc')
+    .take(1);
+  const inside = await ctx.db
+    .query('series')
+    .withIndex('by_scope_date', (q) => q.eq('scope', scope).gte('date', from).lte('date', to))
+    .take(400);
+  const out: SeriesPoint[] = [];
+  if (prior[0]) out.push(seriesPointFromDoc(prior[0]));
+  for (const row of inside) out.push(seriesPointFromDoc(row));
+  return out;
+}
+
+function seriesDaysToComputed(points: SeriesPoint[]): ComputedDay[] {
+  return points.map((point) => ({
+    asOf: point.asOf,
+    value: point.value,
+    interpolated: point.valueInterpolated,
+    netInvested: point.netInvested,
+    sp500Equiv: point.sp500Equiv,
+    estimated: point.estimated,
+  }));
+}
+
+async function rebuildSeriesSpan(
+  ctx: MutationCtx,
+  start: string,
+  end: string,
+  version: number,
+  accounts: Array<{ sourceId: string }>,
+): Promise<number> {
+  const scopes = await listSeriesScopes(ctx, accounts);
+  const days = eachDate(start, end);
+  let wrote = 0;
+  for (const scope of scopes) {
+    const source = await loadSeriesPoints(ctx, scope, start, end);
+    if (source.length === 0) continue;
+    const carried = carrySeriesForward(source, start, end, days);
+    if (carried.length === 0) continue;
+    const dayRows = seriesDaysToComputed(carried);
+    wrote += await writeComputed(ctx, {
+      grain: 'day',
+      scopeKind: 'series',
+      scopeId: scope,
+      days: dayRows,
+      version,
+    });
+    wrote += await writeComputed(ctx, {
+      grain: 'week',
+      scopeKind: 'series',
+      scopeId: scope,
+      days: seriesDaysToComputed(coarseSeries(carried, 'week', start, end)),
+      version,
+    });
+    wrote += await writeComputed(ctx, {
+      grain: 'month',
+      scopeKind: 'series',
+      scopeId: scope,
+      days: seriesDaysToComputed(coarseSeries(carried, 'month', start, end)),
+      version,
+    });
+  }
+  return wrote;
 }
 
 async function writeComputed(
@@ -271,6 +383,9 @@ async function writeComputed(
       value: day.value,
       interpolated: day.interpolated,
       byClass: args.byClass?.[day.asOf],
+      netInvested: day.netInvested,
+      sp500Equiv: day.sp500Equiv,
+      estimated: day.estimated,
       version: args.version,
     });
     if (status !== 'unchanged') wrote += 1;
@@ -449,6 +564,8 @@ async function rebuildSpan(
     days: rollupCoarse(bench, 'month', start, end),
     version,
   });
+
+  wrote += await rebuildSeriesSpan(ctx, start, end, version, accounts);
 
   return wrote;
 }

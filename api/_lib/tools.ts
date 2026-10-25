@@ -15,6 +15,7 @@ const FINANCE_TABLE = z.enum([
   'holdings',
   'flows',
   'returns',
+  'series',
 ]);
 
 const FLOW_KIND = z.enum(['internal_transfer', 'roth_conversion', 'external']);
@@ -144,7 +145,7 @@ const flowItem = z.object({
 const returnItem = z.object({
   scope: z
     .string()
-    .describe("'account:<id>', 'total', or 'reliable_subset'"),
+    .describe("'account:<id>', 'total', 'reliable_subset', or 'sp500:<those>'"),
   window: TWR_WINDOW,
   asOf: z.string().describe('YYYY-MM-DD'),
   startDate: z.string().describe('YYYY-MM-DD'),
@@ -155,6 +156,16 @@ const returnItem = z.object({
   flowsFullyKnown: z.boolean(),
   method: z.literal('finance.twr.v1'),
   note: z.string().optional(),
+});
+
+const seriesItem = z.object({
+  scope: z.string().describe("'account:<id>', 'total', or 'reliable_subset'"),
+  date: z.string().describe('YYYY-MM-DD'),
+  value: z.number(),
+  netInvested: z.number(),
+  sp500Equiv: z.number(),
+  valueInterpolated: z.boolean(),
+  estimated: z.boolean().describe('True for the window before flow data exists'),
 });
 
 export const upsertFlowsSchema = z.object({
@@ -171,6 +182,16 @@ export const deleteFlowsSchema = z.object({
 
 export const upsertReturnsSchema = z.object({
   items: z.array(returnItem).min(1).max(500),
+});
+
+export const upsertSeriesSchema = z.object({
+  items: z.array(seriesItem).min(1).max(500),
+});
+
+export const deleteSeriesSchema = z.object({
+  scope: z.string().describe("'account:<id>', 'total', or 'reliable_subset'"),
+  fromDate: z.string().optional().describe('YYYY-MM-DD inclusive'),
+  toDate: z.string().optional().describe('YYYY-MM-DD inclusive'),
 });
 
 function asText(result: unknown) {
@@ -251,7 +272,7 @@ export function registerFinanceTools(
     {
       title: 'Get finance digest',
       description:
-        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Also returns table-level flows and returns {count, checksum} over sorted finance.v1 content hashes. Paginate with continueCursor.',
+        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Also returns table-level flows, returns, and series {count, checksum} over sorted finance.v1 content hashes. Paginate with continueCursor.',
       inputSchema: getDigestSchema,
     },
     call('get_digest'),
@@ -328,9 +349,31 @@ export function registerFinanceTools(
     {
       title: 'Upsert TWR returns',
       description:
-        "Insert computed time-weighted returns. Batch cap 500. Key is scope+window+asOf. For each asOf in the batch, all stored rows with that asOf are replaced by the batch items for that asOf. scope is 'account:<id>', 'total', or 'reliable_subset'. window is 3M|6M|YTD|1Y|3Y|SI. method must be finance.twr.v1.",
+        "Insert computed time-weighted returns. Batch cap 500. Key is scope+window+asOf. For each asOf in the batch, all stored rows with that asOf are replaced by the batch items for that asOf. scope is 'account:<id>', 'total', 'reliable_subset', or 'sp500:<those>'. window is 3M|6M|YTD|1Y|3Y|SI. method must be finance.twr.v1.",
       inputSchema: upsertReturnsSchema,
     },
     call('upsert_returns'),
+  );
+
+  tool(
+    'upsert_series',
+    {
+      title: 'Upsert TWR series',
+      description:
+        "Insert or overwrite the daily TWR path (value, net invested, flow-adjusted S&P 500). Batch cap 500. Key is scope+date. Last item in the batch wins on a repeated key. scope is 'account:<id>', 'total', or 'reliable_subset'. estimated is true for the window before flow data. valueInterpolated marks gap-filled value days. Returns per-row inserted/updated/unchanged.",
+      inputSchema: upsertSeriesSchema,
+    },
+    call('upsert_series'),
+  );
+
+  tool(
+    'delete_series',
+    {
+      title: 'Delete TWR series',
+      description:
+        'Delete series rows for one scope. Optional fromDate/toDate (YYYY-MM-DD, inclusive). Write cap 500; if continueFrom is set, call again from that date. Audit-logged. Digest checksums are computed live.',
+      inputSchema: deleteSeriesSchema,
+    },
+    call('delete_series'),
   );
 }

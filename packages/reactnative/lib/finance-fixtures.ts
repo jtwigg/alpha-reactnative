@@ -29,6 +29,8 @@ import {
   type SeriesAccount,
   type SeriesSnapshot,
 } from '../../server/convex/finance/series';
+import { eachDate } from '../../server/convex/finance/dates';
+import { headerFromComputed, twrWindowForRange, type SeriesPoint } from '../../server/convex/finance/seriesModel';
 
 const AS_OF = '2026-10-23';
 const SYNCED = Date.UTC(2026, 9, 23);
@@ -420,7 +422,32 @@ export function demoHoldings(sourceId: string): HoldingsModel {
   return holdingsView(rows, balance);
 }
 
-export function demoTwr(scope: string) {
+export function demoSeries(scope: string, range: RangeKey = '1Y'): SeriesPoint[] {
+  const seed = scope.length * 17;
+  const earliest = '2024-01-02';
+  const window = rangeWindow(range, AS_OF, earliest);
+  const dates = eachDate(window.from, window.to).filter((_, i) => i % (range === 'All' || range === '5Y' ? 7 : 1) === 0);
+  let value = 82_000 + (seed % 40) * 250;
+  let invested = 80_000;
+  let sp = 80_000;
+  const flowDays = new Set(['2024-06-03', '2025-01-02', '2025-04-10', '2026-06-01', '2026-08-15']);
+  return dates.map((asOf, index) => {
+    if (flowDays.has(asOf)) invested += 2_500;
+    const drift = 1 + Math.sin((index + seed) / 18) * 0.004 + 0.00035;
+    value = Math.max(invested * 0.92, value * drift);
+    sp = Math.max(1, sp * (1.00028 + Math.sin((index + seed) / 22) * 0.002));
+    return {
+      asOf,
+      value: Math.round(value * 100) / 100,
+      netInvested: invested,
+      sp500Equiv: Math.round(sp * 100) / 100,
+      valueInterpolated: index % 19 === 0,
+      estimated: asOf < '2024-07-01',
+    };
+  });
+}
+
+export function demoTwr(scope: string, range: RangeKey = '1Y') {
   const reliable = scope !== 'total';
   const windows = (['3M', '6M', 'YTD', '1Y', '3Y', 'SI'] as const).map((window, index) => ({
     window,
@@ -432,7 +459,29 @@ export function demoTwr(scope: string) {
     flowsFullyKnown: reliable,
     note: reliable ? null : 'Sample: some 2024 contributions are estimated.',
   }));
-  return { scope, asOf: AS_OF, windows };
+  const series = demoSeries(scope, range);
+  const mapped = twrWindowForRange(range);
+  const stored = mapped ? windows.find((row) => row.window === mapped) : undefined;
+  return {
+    scope,
+    asOf: AS_OF,
+    windows,
+    series,
+    twr: stored
+      ? {
+          cumulative: stored.cumulative,
+          annualized: stored.annualized,
+          window: stored.window,
+          startDate: stored.startDate,
+          asOf: stored.asOf,
+          source: 'returns' as const,
+        }
+      : headerFromComputed(series, mapped),
+    sp500Twr: headerFromComputed(
+      series.map((point) => ({ value: point.sp500Equiv, netInvested: point.netInvested, asOf: point.asOf })),
+      mapped,
+    ),
+  };
 }
 
 export function demoFlows(accountId: string) {

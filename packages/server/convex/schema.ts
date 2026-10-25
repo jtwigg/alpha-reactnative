@@ -157,6 +157,24 @@ export default defineSchema({
     lastAsOf: v.optional(v.string()),
   }).index('by_symbol', ['symbol']),
 
+  /**
+   * Daily TWR path Finance writes: portfolio value, net invested, and a
+   * flow-adjusted S&P 500 dollar path. Key is scope+date.
+   */
+  series: defineTable({
+    scope: v.string(),
+    date: v.string(),
+    value: v.number(),
+    netInvested: v.number(),
+    sp500Equiv: v.number(),
+    valueInterpolated: v.boolean(),
+    estimated: v.boolean(),
+    updatedAt: v.number(),
+    contentHash: v.string(),
+  })
+    .index('by_scope_date', ['scope', 'date'])
+    .index('by_date', ['date']),
+
   /** Cash flows that affect TWR (external, Roth, internal). Finance writes only. */
   flows: defineTable({
     flowId: v.string(),
@@ -191,12 +209,16 @@ export default defineSchema({
       v.literal('group'),
       v.literal('total'),
       v.literal('bench'),
+      v.literal('series'),
     ),
     scopeId: v.string(),
     asOf: v.string(),
     value: v.number(),
     interpolated: v.boolean(),
     byClass: v.optional(v.record(v.string(), v.number())),
+    netInvested: v.optional(v.number()),
+    sp500Equiv: v.optional(v.number()),
+    estimated: v.optional(v.boolean()),
     version: v.number(),
   })
     .index('by_grain_scope_asOf', ['grain', 'scopeKind', 'scopeId', 'asOf'])

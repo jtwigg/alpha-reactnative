@@ -18,6 +18,8 @@ export const FINANCE_OPS = [
   'upsert_flows',
   'delete_flows',
   'upsert_returns',
+  'upsert_series',
+  'delete_series',
 ] as const;
 
 export type FinanceOp = (typeof FINANCE_OPS)[number];
@@ -103,6 +105,16 @@ export async function dispatchFinanceOp(
     case 'upsert_returns':
       return await ctx.runMutation(internal.finance.ingest.upsertReturns, {
         items: args.items,
+      });
+    case 'upsert_series':
+      return await ctx.runMutation(internal.finance.ingest.upsertSeries, {
+        items: args.items,
+      });
+    case 'delete_series':
+      return await ctx.runMutation(internal.finance.ingest.deleteSeries, {
+        scope: args.scope,
+        fromDate: args.fromDate,
+        toDate: args.toDate,
       });
     default:
       throw new Error(`Unknown finance op: ${op}`);

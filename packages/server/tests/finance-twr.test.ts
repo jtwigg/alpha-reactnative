@@ -94,13 +94,20 @@ describe('finance.v1 hashes for flows and returns', () => {
 });
 
 describe('gateway TWR ops', () => {
-  it('routes upsert_flows, delete_flows, and upsert_returns', async () => {
+  it('routes upsert_flows, delete_flows, upsert_returns, and series ops', async () => {
     const runMutation = vi.fn(async () => ({ inserted: 1 }));
     const runQuery = vi.fn();
     await dispatchFinanceOp({ runMutation, runQuery }, 'upsert_flows', { items: [FLOW] });
     await dispatchFinanceOp({ runMutation, runQuery }, 'delete_flows', { ids: ['flow_wf_1'] });
     await dispatchFinanceOp({ runMutation, runQuery }, 'upsert_returns', { items: [RETURN] });
-    expect(runMutation).toHaveBeenCalledTimes(3);
+    await dispatchFinanceOp({ runMutation, runQuery }, 'upsert_series', {
+      items: [{ scope: 'total', date: '2026-10-23', value: 1, netInvested: 1, sp500Equiv: 1, valueInterpolated: false, estimated: false }],
+    });
+    await dispatchFinanceOp({ runMutation, runQuery }, 'delete_series', {
+      scope: 'total',
+      fromDate: '2026-01-01',
+    });
+    expect(runMutation).toHaveBeenCalledTimes(5);
     expect(runQuery).not.toHaveBeenCalled();
   });
 });

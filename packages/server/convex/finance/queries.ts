@@ -31,12 +31,26 @@ import {
   netWorthResultValidator,
   pageArgsValidator,
   pageResultValidator,
+  rangeKeyValidator,
   snapshotDocValidator,
   snapshotsArgsValidator,
+  seriesChartResultValidator,
   twrRowValidator,
   flowRowValidator,
 } from './validators';
 import { TWR_WINDOWS, type TwrWindow } from './twrModel';
+import {
+  assertSeriesScope,
+  coarseSeries,
+  headerFromComputed,
+  headerFromReturn,
+  seriesGrainForRange,
+  seriesPointFromDoc,
+  sp500ReturnScope,
+  twrWindowForRange,
+  type SeriesHeader,
+  type SeriesPoint,
+} from './seriesModel';
 import type { QueryCtx } from '../_generated/server';
 
 export const isAllowed = query({
@@ -273,6 +287,117 @@ function latestAsOf(rows: Array<{ asOf: string }>): string | null {
   }
   return max;
 }
+
+async function latestReturnForWindow(
+  ctx: QueryCtx,
+  scope: string,
+  window: TwrWindow,
+): Promise<SeriesHeader | null> {
+  const rows = await ctx.db
+    .query('returns')
+    .withIndex('by_scope_asOf', (q) => q.eq('scope', scope))
+    .take(200);
+  const asOf = latestAsOf(rows);
+  if (!asOf) return null;
+  const row = rows.find((item) => item.asOf === asOf && item.window === window);
+  return row ? headerFromReturn(row) : null;
+}
+
+function headerForSeries(
+  stored: SeriesHeader | null,
+  points: SeriesPoint[],
+  window: TwrWindow | null,
+  valueOf: (point: SeriesPoint) => number,
+): SeriesHeader | null {
+  if (stored) return stored;
+  return headerFromComputed(
+    points.map((point) => ({ value: valueOf(point), netInvested: point.netInvested, asOf: point.asOf })),
+    window,
+  );
+}
+
+export const series = query({
+  args: {
+    scope: v.string(),
+    range: rangeKeyValidator,
+    asOf: v.optional(v.string()),
+    refreshNonce: v.optional(v.number()),
+  },
+  returns: seriesChartResultValidator,
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    assertSeriesScope(args.scope);
+    const range = args.range;
+    const grain = seriesGrainForRange(range);
+    const first = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', args.scope))
+      .order('asc')
+      .take(1);
+    const last = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', args.scope))
+      .order('desc')
+      .take(1);
+    const asOf = args.asOf ?? last[0]?.date ?? todayInTimeZone();
+    const window = rangeWindow(range, asOf, first[0]?.date ?? null);
+    const state = await loadRollupStateView(ctx);
+    const rollupRows = await loadRollupRange(
+      ctx,
+      grain,
+      'series',
+      args.scope,
+      window.from,
+      window.to,
+      2000,
+    );
+    const hasCoverage = rollupCoversRange({
+      rows: rollupRows,
+      from: window.from,
+      to: window.to,
+      grain,
+    });
+    const freshness = readerMode({ state, hasCoverage, asOf });
+    let points: SeriesPoint[];
+    if (freshness !== 'raw') {
+      points = rollupRows.map((row) => seriesPointFromDoc(row));
+    } else {
+      const prior = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => q.eq('scope', args.scope).lt('date', window.from))
+        .order('desc')
+        .take(1);
+      const inside = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) =>
+          q.eq('scope', args.scope).gte('date', window.from).lte('date', window.to),
+        )
+        .take(2000);
+      const raw = [...prior, ...inside]
+        .map((row) => seriesPointFromDoc(row))
+        .filter((point) => point.asOf);
+      points =
+        grain === 'day'
+          ? raw.filter((point) => point.asOf >= window.from && point.asOf <= window.to)
+          : coarseSeries(raw, grain, window.from, window.to);
+    }
+    const twrWindow = twrWindowForRange(range);
+    const storedTwr = twrWindow ? await latestReturnForWindow(ctx, args.scope, twrWindow) : null;
+    const storedSp500 = twrWindow
+      ? await latestReturnForWindow(ctx, sp500ReturnScope(args.scope), twrWindow)
+      : null;
+    return {
+      scope: args.scope,
+      range,
+      asOf,
+      grain,
+      rollup: freshness,
+      points,
+      twr: headerForSeries(storedTwr, points, twrWindow, (point) => point.value),
+      sp500Twr: headerForSeries(storedSp500, points, twrWindow, (point) => point.sp500Equiv),
+    };
+  },
+});
 
 export const twr = query({
   args: { scope: v.string(), refreshNonce: v.optional(v.number()) },

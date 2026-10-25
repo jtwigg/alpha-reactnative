@@ -157,6 +157,8 @@ describe('MCP handler', () => {
       expect(raw).toContain('upsert_flows');
       expect(raw).toContain('delete_flows');
       expect(raw).toContain('upsert_returns');
+      expect(raw).toContain('upsert_series');
+      expect(raw).toContain('delete_series');
       expect(raw).toContain('pendingTransactionId');
       expect(raw).toContain('externalToInvestable');
       expect(raw).toContain('finance.twr.v1');

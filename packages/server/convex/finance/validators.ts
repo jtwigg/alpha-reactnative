@@ -17,6 +17,7 @@ export const DELETE_ROW_BATCH = 200;
 export const DELETE_WRITE_BUDGET = 800;
 export const DELETE_TRANSACTION_IDS_MAX = 500;
 export const DELETE_FLOW_IDS_MAX = 500;
+export const DELETE_SERIES_WRITE_CAP = 500;
 export const PENDING_MATCH_READ_CAP = 500;
 
 export const snapshotSourceValidator = v.union(
@@ -39,6 +40,7 @@ export const financeTableValidator = v.union(
   v.literal('holdings'),
   v.literal('flows'),
   v.literal('returns'),
+  v.literal('series'),
 );
 
 export const flowKindValidator = v.union(
@@ -160,6 +162,30 @@ export const returnInputValidator = v.object({
   flowsFullyKnown: v.boolean(),
   method: twrMethodValidator,
   note: v.optional(v.string()),
+});
+
+export const seriesInputValidator = v.object({
+  scope: v.string(),
+  date: v.string(),
+  value: v.number(),
+  netInvested: v.number(),
+  sp500Equiv: v.number(),
+  valueInterpolated: v.boolean(),
+  estimated: v.boolean(),
+});
+
+export const deleteSeriesArgsValidator = v.object({
+  scope: v.string(),
+  fromDate: v.optional(v.string()),
+  toDate: v.optional(v.string()),
+});
+
+export const deleteSeriesResultValidator = v.object({
+  scope: v.string(),
+  deleted: v.number(),
+  fromDate: v.union(v.string(), v.null()),
+  toDate: v.union(v.string(), v.null()),
+  continueFrom: v.union(v.string(), v.null()),
 });
 
 export const deleteFlowsArgsValidator = v.object({
@@ -364,6 +390,7 @@ export const digestResultValidator = v.object({
   isDone: v.boolean(),
   flows: tableChecksumValidator,
   returns: tableChecksumValidator,
+  series: tableChecksumValidator,
 });
 
 export const exportBucketArgsValidator = v.object({
@@ -480,6 +507,35 @@ export const pageAccountValidator = v.object({
 
 export const rollupGrainValidator = v.union(v.literal('day'), v.literal('week'), v.literal('month'));
 export const rollupFreshnessValidator = v.union(v.literal('live'), v.literal('stale'), v.literal('raw'));
+
+export const seriesPointValidator = v.object({
+  asOf: v.string(),
+  value: v.number(),
+  netInvested: v.number(),
+  sp500Equiv: v.number(),
+  valueInterpolated: v.boolean(),
+  estimated: v.boolean(),
+});
+
+export const seriesHeaderValidator = v.object({
+  cumulative: v.number(),
+  annualized: v.union(v.number(), v.null()),
+  window: v.union(v.string(), v.null()),
+  startDate: v.union(v.string(), v.null()),
+  asOf: v.union(v.string(), v.null()),
+  source: v.union(v.literal('returns'), v.literal('computed')),
+});
+
+export const seriesChartResultValidator = v.object({
+  scope: v.string(),
+  range: rangeKeyValidator,
+  asOf: v.string(),
+  grain: rollupGrainValidator,
+  rollup: rollupFreshnessValidator,
+  points: v.array(seriesPointValidator),
+  twr: v.union(seriesHeaderValidator, v.null()),
+  sp500Twr: v.union(seriesHeaderValidator, v.null()),
+});
 
 export const pageResultValidator = v.object({
   range: rangeKeyValidator,

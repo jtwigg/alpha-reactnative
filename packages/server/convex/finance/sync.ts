@@ -204,8 +204,10 @@ export const digest = internalQuery({
     const cursor = decodeCursor<DigestCursor>(args.cursor);
     const table = args.table as FinanceTable | undefined;
     const walkTables =
-      !table || table === 'flows' || table === 'returns' ? TABLE_ORDER : [table];
-    const skipBuckets = table === 'flows' || table === 'returns';
+      !table || table === 'flows' || table === 'returns' || table === 'series'
+        ? TABLE_ORDER
+        : [table];
+    const skipBuckets = table === 'flows' || table === 'returns' || table === 'series';
     const page = skipBuckets
       ? { buckets: [], continueCursor: null, isDone: true }
       : await collectDigestPage(convexDigestSource(ctx), {
@@ -240,6 +242,20 @@ export const digest = internalQuery({
           return true;
         }).map((row) => row.contentHash),
       ),
+      series: await tableChecksum(
+        (await ctx.db.query('series').take(4000)).filter((row) => {
+          if (
+            args.accountId &&
+            row.scope !== args.accountId &&
+            row.scope !== `account:${args.accountId}`
+          ) {
+            return false;
+          }
+          if (bounds.fromDate && row.date < bounds.fromDate) return false;
+          if (bounds.toDate && row.date > bounds.toDate) return false;
+          return true;
+        }).map((row) => row.contentHash),
+      ),
     };
   },
 });
@@ -261,8 +277,8 @@ export const exportBucket = internalQuery({
   args: exportBucketArgsValidator,
   returns: exportBucketResultValidator,
   handler: async (ctx, args) => {
-    if (args.table === 'flows' || args.table === 'returns') {
-      throw new Error('exportBucket: flows and returns use get_digest checksums');
+    if (args.table === 'flows' || args.table === 'returns' || args.table === 'series') {
+      throw new Error('exportBucket: flows, returns, and series use get_digest checksums');
     }
     if (!isIsoMonth(args.month)) {
       throw new Error('exportBucket: month must be YYYY-MM');

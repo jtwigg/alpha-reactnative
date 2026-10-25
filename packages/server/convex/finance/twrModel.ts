@@ -32,7 +32,13 @@ export function parseAccountScope(scope: string): string | null {
 export function assertReturnScope(scope: string): void {
   if (scope === 'total' || scope === 'reliable_subset') return;
   if (parseAccountScope(scope)) return;
-  throw new Error(`returns.scope must be total, reliable_subset, or account:<id>, got ${scope}`);
+  if (scope.startsWith('sp500:') && scope.length > 6) {
+    assertReturnScope(scope.slice(6));
+    return;
+  }
+  throw new Error(
+    `returns.scope must be total, reliable_subset, account:<id>, or sp500:<those>, got ${scope}`,
+  );
 }
 
 export function assertReturnWindow(window: string): asserts window is TwrWindow {

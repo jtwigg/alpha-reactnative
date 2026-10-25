@@ -11,7 +11,7 @@
  *      after the last field line.
  *   2. Line 1 is the ASCII header `finance.v1`.
  *   3. Line 2 is the table name (`accounts` | `balance_snapshots` |
- *      `transactions` | `holdings` | `flows` | `returns`).
+ *      `transactions` | `holdings` | `flows` | `returns` | `series`).
  *   4. Then one `name=value` line per business field, in the **declared**
  *      order for that table (not sorted at runtime). Accounts include
  *      `provider` immediately after `sourceId`; manual accounts hash
@@ -22,7 +22,7 @@
  *        - boolean → `true` or `false`
  *        - date (`asOf`, `date`) → `YYYY-MM-DD`
  *        - money (`currentBalance`, `availableBalance`, `balance`, `amount`,
- *          `qty`, `value`) → fixed 8 decimals, no exponent, no thousands
+ *          `qty`, `value`, `netInvested`, `sp500Equiv`) → fixed 8 decimals, no exponent, no thousands
  *          separator, `-` if negative, no `+`. Zero is `0.00000000`.
  *          `-0` is `0.00000000`. Rounded half away from zero via
  *          `Math.round(abs * 1e8)`.
@@ -66,6 +66,7 @@ export const FINANCE_TABLES = [
   'holdings',
   'flows',
   'returns',
+  'series',
 ] as const;
 
 export type FinanceTable = (typeof FINANCE_TABLES)[number];
@@ -160,6 +161,16 @@ const RETURN_FIELDS = [
   'note',
 ] as const;
 
+const SERIES_FIELDS = [
+  'scope',
+  'date',
+  'value',
+  'netInvested',
+  'sp500Equiv',
+  'valueInterpolated',
+  'estimated',
+] as const;
+
 export const FINANCE_FIELD_ORDER = {
   accounts: ACCOUNT_FIELDS,
   balance_snapshots: SNAPSHOT_FIELDS,
@@ -167,6 +178,7 @@ export const FINANCE_FIELD_ORDER = {
   holdings: HOLDING_FIELDS,
   flows: FLOW_FIELDS,
   returns: RETURN_FIELDS,
+  series: SERIES_FIELDS,
 } as const;
 
 const MONEY_FIELDS = new Set([
@@ -178,6 +190,8 @@ const MONEY_FIELDS = new Set([
   'value',
   'cumulative',
   'annualized',
+  'netInvested',
+  'sp500Equiv',
 ]);
 
 const DATE_FIELDS = new Set(['asOf', 'date', 'coverageStart', 'startDate']);

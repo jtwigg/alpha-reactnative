@@ -227,10 +227,18 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
             <TwrCard
               scope={accountScope(sourceId)}
               live={live}
-              demo={live ? undefined : { windows: demoTwr(accountScope(sourceId)).windows, flows: demoFlows(sourceId) }}
+              demo={
+                live
+                  ? undefined
+                  : {
+                      ...demoTwr(accountScope(sourceId), range),
+                      flows: demoFlows(sourceId),
+                    }
+              }
               title="Time-weighted return"
               showFlowsFor={sourceId}
               refreshNonce={refreshNonce}
+              range={range}
             />
           ) : null}
 
