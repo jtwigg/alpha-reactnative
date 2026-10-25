@@ -43,6 +43,7 @@ import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountList, demoAccountSparklines, demoFlows, demoNetWorthPage, demoTwr } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
 import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
 import { useCachedValue } from '@/lib/finance-cache';
 import { pageFromPack, seriesFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
 import { useRefreshSpinner } from '@/lib/use-refresh';
@@ -65,7 +66,11 @@ export default function FinancesScreen() {
   if (!isClerkConfigured() && !demo && !isFinanceDemoFlag()) {
     return null;
   }
-  return <NetWorthPage demo={demo} />;
+  return (
+    <FinanceErrorBoundary>
+      <NetWorthPage demo={demo} />
+    </FinanceErrorBoundary>
+  );
 }
 
 function NetWorthPage({ demo }: { demo: boolean }) {
@@ -85,7 +90,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
   const livePack = useQuery(api.finance.queries.pagePack, allowed ? { refreshNonce } : 'skip');
   const pack = useCachedValue<PagePack>(`finance.pagePack`, livePack ?? undefined);
-  const needFallback = Boolean(allowed && livePack === null && pack == null);
+  const packed = pack ? pageFromPack(pack, range) : null;
+  const needFallback = Boolean(allowed && packed == null);
   const live = useQuery(
     api.finance.queries.page,
     needFallback ? { range: 'All', refreshNonce } : 'skip',
@@ -115,9 +121,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     allowed ? { scope: twrScope, refreshNonce } : 'skip',
   );
   const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${twrScope}`, liveSeriesPack ?? undefined);
+  const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
   const liveSeries = useQuery(
     api.finance.queries.series,
-    allowed && seriesPack == null ? { scope: twrScope, range, refreshNonce } : 'skip',
+    allowed && packedSeries == null ? { scope: twrScope, range, refreshNonce } : 'skip',
   );
   const liveTwr = useQuery(api.finance.queries.twr, allowed ? { scope: twrScope, refreshNonce } : 'skip');
   const liveFlows = useQuery(
@@ -146,9 +153,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     () => setRefreshNonce((nonce) => nonce + 1),
   );
 
-  const packed = pack ? pageFromPack(pack, range) : null;
   const full = packed ?? live ?? held;
-  const hasLive = Boolean(allowed && full && full.accounts.length > 0);
+  const hasLive = Boolean(allowed && full && Array.isArray(full.accounts) && full.accounts.length > 0);
   const byRange = useMemo(() => (full && !packed ? modelsForRanges(full) : null), [full, packed]);
   const demoByRange = useMemo(() => (demo ? modelsForRanges(demoNetWorthPage('All')) : null), [demo]);
   const data = useMemo(() => {
@@ -263,7 +269,6 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   }
 
   const usingDemo = demo && !hasLive;
-  const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
   const seriesPoints = hasLive
     ? (packedSeries?.points ?? liveSeries?.points ?? [])
     : (demoSeriesModel?.series ?? []);

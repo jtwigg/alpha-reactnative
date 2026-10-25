@@ -61,6 +61,9 @@ import {
   encodeCoverage,
   encodePoints,
   encodeSeriesPoints,
+  isColumnarPoints,
+  isColumnarSeries,
+  sanitizePageAccounts,
   parsePayload,
   rangesOverlapping,
   stringifyPayload,
@@ -953,20 +956,23 @@ export function expandPagePayload(
   row: Doc<'finance_serve'>,
   payload: ServePageRange & { accounts: unknown; rollup: 'live' | 'stale' | 'raw' },
 ) {
+  if (!isColumnarPoints(payload?.points)) return null;
+  const points = decodePoints(payload.points);
+  if (points.length === 0) return null;
   return {
     range: row.range as RangeKey,
     asOf: row.asOf,
-    headline: payload.headline,
-    change: payload.change,
-    changePct: payload.changePct,
-    assets: payload.assets,
-    liabilities: payload.liabilities,
-    byClass: payload.byClass,
-    points: decodePoints(payload.points),
+    headline: payload.headline ?? 0,
+    change: payload.change ?? 0,
+    changePct: payload.changePct ?? null,
+    assets: payload.assets ?? 0,
+    liabilities: payload.liabilities ?? 0,
+    byClass: payload.byClass ?? {},
+    points,
     coverageMarkers: decodeCoverage(payload.coverage),
-    accounts: payload.accounts,
-    grain: payload.grain,
-    rollup: payload.rollup,
+    accounts: sanitizePageAccounts(payload.accounts),
+    grain: payload.grain ?? 'day',
+    rollup: payload.rollup === 'live' || payload.rollup === 'raw' ? payload.rollup : 'stale',
   };
 }
 
@@ -974,15 +980,16 @@ export function expandSeriesPayload(
   row: Doc<'finance_serve'>,
   payload: ServeSeriesRange & { scope: string; rollup: 'live' | 'stale' | 'raw' },
 ) {
+  if (!isColumnarSeries(payload?.points)) return null;
   return {
     scope: payload.scope,
     range: row.range as RangeKey,
     asOf: row.asOf,
-    grain: payload.grain,
-    rollup: payload.rollup,
+    grain: payload.grain ?? 'day',
+    rollup: payload.rollup === 'live' || payload.rollup === 'raw' ? payload.rollup : 'stale',
     points: decodeSeriesPoints(payload.points),
-    twr: payload.twr,
-    sp500Twr: payload.sp500Twr,
+    twr: payload.twr ?? null,
+    sp500Twr: payload.sp500Twr ?? null,
   };
 }
 

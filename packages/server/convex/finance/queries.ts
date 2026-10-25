@@ -231,7 +231,8 @@ export const page = query({
       range,
     );
     if (served) {
-      return expandPagePayload(served.row, served.payload) as never;
+      const expanded = expandPagePayload(served.row, served.payload);
+      if (expanded) return expanded;
     }
     const accounts = await ctx.db.query('accounts').take(80);
     const accountIds = accounts.map((row) => row.sourceId);
@@ -351,7 +352,8 @@ export const series = query({
       range,
     );
     if (served) {
-      return expandSeriesPayload(served.row, served.payload);
+      const expanded = expandSeriesPayload(served.row, served.payload);
+      if (expanded) return expanded;
     }
     const grain = seriesGrainForRange(range);
     const first = await ctx.db
@@ -614,28 +616,34 @@ export const pagePack = query({
     let version = 0;
     let accounts: unknown = null;
     for (const range of RANGE_KEYS) {
-      const served = await loadServePayload<
-        ServePageRange & { accounts: unknown; rollup: 'live' | 'stale' | 'raw' }
-      >(ctx, 'page', SERVE_PAGE_SCOPE, range);
-      if (!served) continue;
-      asOf = served.row.asOf;
-      version = served.row.version;
-      accounts = served.payload.accounts;
-      ranges[range] = {
-        headline: served.payload.headline,
-        change: served.payload.change,
-        changePct: served.payload.changePct,
-        assets: served.payload.assets,
-        liabilities: served.payload.liabilities,
-        byClass: served.payload.byClass,
-        grain: served.payload.grain,
-        rollup: served.payload.rollup,
-        points: served.payload.points,
-        coverage: served.payload.coverage,
-      };
+      try {
+        const served = await loadServePayload<
+          ServePageRange & { accounts: unknown; rollup: 'live' | 'stale' | 'raw' }
+        >(ctx, 'page', SERVE_PAGE_SCOPE, range);
+        if (!served) continue;
+        const expanded = expandPagePayload(served.row, served.payload);
+        if (!expanded) continue;
+        asOf = served.row.asOf;
+        version = served.row.version;
+        accounts = expanded.accounts;
+        ranges[range] = {
+          headline: expanded.headline,
+          change: expanded.change,
+          changePct: expanded.changePct,
+          assets: expanded.assets,
+          liabilities: expanded.liabilities,
+          byClass: expanded.byClass,
+          grain: expanded.grain,
+          rollup: expanded.rollup,
+          points: served.payload.points,
+          coverage: served.payload.coverage ?? { asOf: [], label: [], className: [] },
+        };
+      } catch {
+        continue;
+      }
     }
-    if (!asOf || !accounts) return null;
-    return { asOf, version, accounts, ranges } as never;
+    if (!asOf || Object.keys(ranges).length === 0) return null;
+    return { asOf, version, accounts: accounts ?? [], ranges } as never;
   },
 });
 
@@ -673,24 +681,30 @@ export const seriesPack = query({
     let asOf: string | null = null;
     let version = 0;
     for (const range of RANGE_KEYS) {
-      const served = await loadServePayload<ServeSeriesRange & { scope: string; rollup: 'live' | 'stale' | 'raw' }>(
-        ctx,
-        'series',
-        args.scope,
-        range,
-      );
-      if (!served) continue;
-      asOf = served.row.asOf;
-      version = served.row.version;
-      ranges[range] = {
-        grain: served.payload.grain,
-        rollup: served.payload.rollup,
-        points: served.payload.points,
-        twr: served.payload.twr,
-        sp500Twr: served.payload.sp500Twr,
-      };
+      try {
+        const served = await loadServePayload<ServeSeriesRange & { scope: string; rollup: 'live' | 'stale' | 'raw' }>(
+          ctx,
+          'series',
+          args.scope,
+          range,
+        );
+        if (!served) continue;
+        const expanded = expandSeriesPayload(served.row, served.payload);
+        if (!expanded) continue;
+        asOf = served.row.asOf;
+        version = served.row.version;
+        ranges[range] = {
+          grain: expanded.grain,
+          rollup: expanded.rollup,
+          points: served.payload.points,
+          twr: expanded.twr,
+          sp500Twr: expanded.sp500Twr,
+        };
+      } catch {
+        continue;
+      }
     }
-    if (!asOf) return null;
+    if (!asOf || Object.keys(ranges).length === 0) return null;
     return { scope: args.scope, asOf, version, ranges } as never;
   },
 });

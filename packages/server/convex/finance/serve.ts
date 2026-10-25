@@ -110,16 +110,27 @@ export function encodePoints(points: ChartPoint[]): ColumnarPoints {
   };
 }
 
-export function decodePoints(col: ColumnarPoints): ChartPoint[] {
+export function isColumnarPoints(col: unknown): col is ColumnarPoints {
+  if (!col || typeof col !== 'object') return false;
+  const row = col as Partial<ColumnarPoints>;
+  return Array.isArray(row.dates) && Array.isArray(row.totals);
+}
+
+export function decodePoints(col: ColumnarPoints | null | undefined): ChartPoint[] {
+  if (!col?.dates || !Array.isArray(col.dates)) return [];
+  const classKeys = Array.isArray(col.classKeys) ? col.classKeys : [];
+  const classCols = Array.isArray(col.classCols) ? col.classCols : [];
+  const totals = Array.isArray(col.totals) ? col.totals : [];
+  const interpolated = Array.isArray(col.interpolated) ? col.interpolated : [];
   return col.dates.map((asOf, index) => {
     const byClass: Record<string, number> = {};
-    col.classKeys.forEach((key, keyIndex) => {
-      byClass[key] = col.classCols[keyIndex]?.[index] ?? 0;
+    classKeys.forEach((key, keyIndex) => {
+      byClass[key] = classCols[keyIndex]?.[index] ?? 0;
     });
     return {
       asOf,
-      total: col.totals[index] ?? 0,
-      interpolated: Boolean(col.interpolated[index]),
+      total: totals[index] ?? 0,
+      interpolated: Boolean(interpolated[index]),
       byClass,
     };
   });
@@ -136,14 +147,26 @@ export function encodeSeriesPoints(points: SeriesPoint[]): ColumnarSeries {
   };
 }
 
-export function decodeSeriesPoints(col: ColumnarSeries): SeriesPoint[] {
+export function isColumnarSeries(col: unknown): col is ColumnarSeries {
+  if (!col || typeof col !== 'object') return false;
+  const row = col as Partial<ColumnarSeries>;
+  return Array.isArray(row.dates) && Array.isArray(row.value);
+}
+
+export function decodeSeriesPoints(col: ColumnarSeries | null | undefined): SeriesPoint[] {
+  if (!col?.dates || !Array.isArray(col.dates)) return [];
+  const value = Array.isArray(col.value) ? col.value : [];
+  const netInvested = Array.isArray(col.netInvested) ? col.netInvested : [];
+  const sp500Equiv = Array.isArray(col.sp500Equiv) ? col.sp500Equiv : [];
+  const valueInterpolated = Array.isArray(col.valueInterpolated) ? col.valueInterpolated : [];
+  const estimated = Array.isArray(col.estimated) ? col.estimated : [];
   return col.dates.map((asOf, index) => ({
     asOf,
-    value: col.value[index] ?? 0,
-    netInvested: col.netInvested[index] ?? 0,
-    sp500Equiv: col.sp500Equiv[index] ?? 0,
-    valueInterpolated: Boolean(col.valueInterpolated[index]),
-    estimated: Boolean(col.estimated[index]),
+    value: value[index] ?? 0,
+    netInvested: netInvested[index] ?? 0,
+    sp500Equiv: sp500Equiv[index] ?? 0,
+    valueInterpolated: Boolean(valueInterpolated[index]),
+    estimated: Boolean(estimated[index]),
   }));
 }
 
@@ -157,18 +180,79 @@ export function encodeCoverage(
   };
 }
 
-export function decodeCoverage(col: ColumnarCoverage): Array<{
+export function decodeCoverage(col: ColumnarCoverage | null | undefined): Array<{
   asOf: string;
   label: string;
   class: string;
   kind: 'class';
 }> {
+  if (!col?.asOf || !Array.isArray(col.asOf)) return [];
+  const label = Array.isArray(col.label) ? col.label : [];
+  const className = Array.isArray(col.className) ? col.className : [];
   return col.asOf.map((asOf, index) => ({
     asOf,
-    label: col.label[index] ?? '',
-    class: col.className[index] ?? '',
+    label: label[index] ?? '',
+    class: className[index] ?? '',
     kind: 'class' as const,
   }));
+}
+
+const SNAPSHOT_SOURCES = new Set(['manual', 'observed', 'reconstructed', 'interpolated']);
+
+/** Strip extra snapshot fields (e.g. accountId) so Convex object validators accept serve docs. */
+export function liteSnapshot(raw: unknown): {
+  asOf: string;
+  balance: number;
+  source: 'manual' | 'observed' | 'reconstructed' | 'interpolated';
+} | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.asOf !== 'string' || typeof row.balance !== 'number' || !Number.isFinite(row.balance)) {
+    return null;
+  }
+  const source = SNAPSHOT_SOURCES.has(String(row.source))
+    ? (row.source as 'manual' | 'observed' | 'reconstructed' | 'interpolated')
+    : 'observed';
+  return { asOf: row.asOf, balance: row.balance, source };
+}
+
+export function sanitizePageAccounts(raw: unknown): Array<{
+  sourceId: string;
+  name: string;
+  class: string;
+  provider: string;
+  isManual: boolean;
+  currentBalance: number;
+  signedBalance: number;
+  currency: string;
+  syncedAt: number;
+  coverageStart?: string;
+  firstAsOf: string | null;
+  latestSnapshot: ReturnType<typeof liteSnapshot>;
+}> {
+  if (!Array.isArray(raw)) return [];
+  const out: ReturnType<typeof sanitizePageAccounts> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    if (typeof row.sourceId !== 'string' || typeof row.name !== 'string') continue;
+    if (typeof row.currentBalance !== 'number' || !Number.isFinite(row.currentBalance)) continue;
+    out.push({
+      sourceId: row.sourceId,
+      name: row.name,
+      class: typeof row.class === 'string' ? row.class : 'other',
+      provider: typeof row.provider === 'string' ? row.provider : 'unknown',
+      isManual: Boolean(row.isManual ?? row.provider === 'manual'),
+      currentBalance: row.currentBalance,
+      signedBalance: typeof row.signedBalance === 'number' ? row.signedBalance : row.currentBalance,
+      currency: typeof row.currency === 'string' ? row.currency : 'USD',
+      syncedAt: typeof row.syncedAt === 'number' ? row.syncedAt : 0,
+      coverageStart: typeof row.coverageStart === 'string' ? row.coverageStart : undefined,
+      firstAsOf: typeof row.firstAsOf === 'string' ? row.firstAsOf : null,
+      latestSnapshot: liteSnapshot(row.latestSnapshot),
+    });
+  }
+  return out;
 }
 
 export function stringifyPayload(value: unknown): string {
