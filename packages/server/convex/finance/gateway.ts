@@ -20,6 +20,10 @@ export const FINANCE_OPS = [
   'upsert_returns',
   'upsert_series',
   'delete_series',
+  'recompute_charts',
+  'recompute_chart_scope',
+  'recompute_charts_from',
+  'check_chart_consistency',
 ] as const;
 
 export type FinanceOp = (typeof FINANCE_OPS)[number];
@@ -117,6 +121,21 @@ export async function dispatchFinanceOp(
         scope: args.scope,
         fromDate: args.fromDate,
         toDate: args.toDate,
+      });
+    case 'recompute_charts':
+      return await ctx.runMutation(internal.finance.serveJobs.recomputeAll, {});
+    case 'recompute_chart_scope':
+      return await ctx.runMutation(internal.finance.serveJobs.recomputeScope, {
+        kind: args.kind,
+        scopeId: args.scopeId,
+      });
+    case 'recompute_charts_from':
+      return await ctx.runMutation(internal.finance.serveJobs.recomputeFrom, { from: args.from });
+    case 'check_chart_consistency':
+      return await ctx.runQuery(internal.finance.serveJobs.checkConsistency, {
+        sample: args.sample,
+        kind: args.kind,
+        scopeId: args.scopeId,
       });
     default:
       throw new Error(`Unknown finance op: ${op}`);

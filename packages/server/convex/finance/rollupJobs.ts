@@ -761,6 +761,7 @@ export const rebuildStep = internalMutation({
       version: runId,
       updatedAt: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, internal.finance.serveJobs.writeAffected, { from: cursor.from });
     return {
       done: true,
       status: 'ready' as const,

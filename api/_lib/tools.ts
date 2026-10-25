@@ -212,6 +212,25 @@ export const deleteSeriesSchema = z.object({
   toDate: z.string().optional().describe('YYYY-MM-DD inclusive'),
 });
 
+export const recomputeChartsSchema = z.object({});
+
+export const recomputeChartScopeSchema = z.object({
+  kind: z.enum(['page', 'account', 'sparklines', 'stack', 'series']),
+  scopeId: z
+    .string()
+    .describe("page: 'net'; sparklines: 'all'; stack: 'overview' or a range; account: sourceId; series: total | reliable_subset | account:<id>"),
+});
+
+export const recomputeChartsFromSchema = z.object({
+  from: z.string().describe('YYYY-MM-DD dirty-from date. Rewrites serve docs whose range window includes this date.'),
+});
+
+export const checkChartConsistencySchema = z.object({
+  sample: z.number().optional().describe('How many (kind, range) pairs to check (default 8)'),
+  kind: z.enum(['page', 'account', 'sparklines', 'stack', 'series']).optional(),
+  scopeId: z.string().optional(),
+});
+
 function asText(result: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -393,5 +412,49 @@ export function registerFinanceTools(
       inputSchema: deleteSeriesSchema,
     },
     call('delete_series'),
+  );
+
+  tool(
+    'recompute_charts',
+    {
+      title: 'Recompute all chart serve docs',
+      description:
+        'John-only. Schedule a rewrite of every ready-to-serve chart document (net worth, sparklines, stack, per-account history, TWR series) from current finance_rollups. Same as `npx convex run finance/serveJobs:recomputeAll`.',
+      inputSchema: recomputeChartsSchema,
+    },
+    call('recompute_charts'),
+  );
+
+  tool(
+    'recompute_chart_scope',
+    {
+      title: 'Recompute one chart scope',
+      description:
+        'John-only. Rewrite serve docs for one kind+scopeId across all ranges. Same as `npx convex run finance/serveJobs:recomputeScope`.',
+      inputSchema: recomputeChartScopeSchema,
+    },
+    call('recompute_chart_scope'),
+  );
+
+  tool(
+    'recompute_charts_from',
+    {
+      title: 'Recompute charts from a date',
+      description:
+        'John-only. Dirty-from rewrite: recompute serve docs whose range window includes `from`. Same as `npx convex run finance/serveJobs:recomputeFrom`.',
+      inputSchema: recomputeChartsFromSchema,
+    },
+    call('recompute_charts_from'),
+  );
+
+  tool(
+    'check_chart_consistency',
+    {
+      title: 'Check precomputed charts vs live',
+      description:
+        'John-only. Compare stored finance_serve payloads to a live recompute from rollups. Same as `npx convex run finance/serveJobs:checkConsistency`.',
+      inputSchema: checkChartConsistencySchema,
+    },
+    call('check_chart_consistency'),
   );
 }

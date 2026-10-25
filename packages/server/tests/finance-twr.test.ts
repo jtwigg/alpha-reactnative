@@ -127,4 +127,18 @@ describe('gateway TWR ops', () => {
     expect(runMutation).toHaveBeenCalledTimes(5);
     expect(runQuery).not.toHaveBeenCalled();
   });
+
+  it('routes John-only chart recompute ops', async () => {
+    const runMutation = vi.fn(async () => ({ scheduled: true }));
+    const runQuery = vi.fn(async () => ({ checked: 0, matched: 0, mismatches: [] }));
+    await dispatchFinanceOp({ runMutation, runQuery }, 'recompute_charts', {});
+    await dispatchFinanceOp({ runMutation, runQuery }, 'recompute_chart_scope', {
+      kind: 'page',
+      scopeId: 'net',
+    });
+    await dispatchFinanceOp({ runMutation, runQuery }, 'recompute_charts_from', { from: '2024-01-01' });
+    await dispatchFinanceOp({ runMutation, runQuery }, 'check_chart_consistency', { sample: 8 });
+    expect(runMutation).toHaveBeenCalledTimes(3);
+    expect(runQuery).toHaveBeenCalledTimes(1);
+  });
 });

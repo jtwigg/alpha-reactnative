@@ -33,6 +33,8 @@ import {
 } from './series';
 import { grainDates, valuesFromAccountRollups } from './rollups';
 import { loadRollupRange, loadRollupStateView } from './rollupJobs';
+import { loadServePayload } from './serveJobs';
+import { SERVE_SPARK_SCOPE, SERVE_STACK_SCOPE, decodePoints, type ColumnarPoints } from './serve';
 import {
   CONVEX_QUERY_READ_BUDGET,
   chartPointValidator,
@@ -146,6 +148,35 @@ export const sparklines = query({
     if (!(RANGE_KEYS as readonly string[]).includes(range)) {
       throw new Error('Invalid range');
     }
+    const served = await loadServePayload<{
+      dates: string[];
+      rows: Array<{
+        sourceId: string;
+        values: Array<number | null>;
+        change: number;
+        changePct: number | null;
+        tone: 'good' | 'bad' | 'flat';
+        weighted: { change: number; pct: number | null; tone: 'good' | 'bad' | 'flat' };
+      }>;
+      groups: Array<{
+        key: 'cash' | 'investments' | 'real_estate' | 'liability' | 'other';
+        values: Array<number | null>;
+        change: number;
+        changePct: number | null;
+        tone: 'good' | 'bad' | 'flat';
+        weighted: { change: number; pct: number | null; tone: 'good' | 'bad' | 'flat' };
+      }>;
+    }>(ctx, 'sparklines', SERVE_SPARK_SCOPE, range);
+    if (served) {
+      return {
+        range,
+        asOf: served.row.asOf,
+        dates: served.payload.dates,
+        rows: served.payload.rows,
+        groups: served.payload.groups,
+        documentsRead: 1,
+      };
+    }
     const accounts = await ctx.db.query('accounts').take(ACCOUNT_LIST_CAP);
     const accountIds = accounts.map((row) => row.sourceId);
     const lookup = snapshotLookup(ctx);
@@ -258,6 +289,63 @@ export const stack = query({
     for (const value of [args.from, args.to]) {
       if (value !== undefined && !isIsoDate(value)) throw new Error('Invalid date');
     }
+    if (!args.from && !args.to) {
+      const served = await loadServePayload<{
+        from: string;
+        to: string;
+        step: 'day' | 'week';
+        firstAsOf: string | null;
+        dates: string[];
+        accounts: Array<{
+          sourceId: string;
+          name: string;
+          class: string;
+          group: 'cash' | 'investments' | 'real_estate' | 'liability' | 'other';
+          values: Array<number | null>;
+        }>;
+      }>(ctx, 'stack', SERVE_STACK_SCOPE, 'All');
+      if (served) {
+        return {
+          asOf: served.row.asOf,
+          firstAsOf: served.payload.firstAsOf,
+          from: served.payload.from,
+          to: served.payload.to,
+          step: served.payload.step,
+          dates: served.payload.dates,
+          accounts: served.payload.accounts,
+          documentsRead: 1,
+        };
+      }
+    } else if (args.from && args.to) {
+      for (const key of ['1M', '3M', 'YTD', '1Y', '5Y', 'All'] as const) {
+        const served = await loadServePayload<{
+          from: string;
+          to: string;
+          step: 'day' | 'week';
+          firstAsOf: string | null;
+          dates: string[];
+          accounts: Array<{
+            sourceId: string;
+            name: string;
+            class: string;
+            group: 'cash' | 'investments' | 'real_estate' | 'liability' | 'other';
+            values: Array<number | null>;
+          }>;
+        }>(ctx, 'stack', key, key);
+        if (served && served.payload.from === args.from && served.payload.to === args.to) {
+          return {
+            asOf: served.row.asOf,
+            firstAsOf: served.payload.firstAsOf,
+            from: served.payload.from,
+            to: served.payload.to,
+            step: served.payload.step,
+            dates: served.payload.dates,
+            accounts: served.payload.accounts,
+            documentsRead: 1,
+          };
+        }
+      }
+    }
     const accounts = await ctx.db.query('accounts').take(ACCOUNT_LIST_CAP);
     const accountIds = accounts.map((row) => row.sourceId);
     const lookup = snapshotLookup(ctx);
@@ -365,6 +453,41 @@ export const detail = query({
     const range = (args.range ?? '1Y') as RangeKey;
     if (!(RANGE_KEYS as readonly string[]).includes(range)) {
       throw new Error('Invalid range');
+    }
+    const served = await loadServePayload<Record<string, unknown>>(ctx, 'account', args.sourceId, range);
+    if (served) {
+      const payload = served.payload;
+      return {
+        sourceId: args.sourceId,
+        name: payload.name as string,
+        institution: payload.institution as string,
+        typeLabel: payload.typeLabel as string,
+        provider: payload.provider as string,
+        connectionId: (payload.connectionId as string | null) ?? null,
+        class: payload.class as string,
+        mask: (payload.mask as string | null) ?? null,
+        type: payload.type as string,
+        subtype: (payload.subtype as string | null) ?? null,
+        currentBalance: payload.currentBalance as number,
+        availableBalance: (payload.availableBalance as number | null) ?? null,
+        currency: payload.currency as string,
+        syncedAt: payload.syncedAt as number,
+        updatedAt: payload.updatedAt as number,
+        coverageStart: (payload.coverageStart as string | null) ?? null,
+        latestSnapshot: (payload.latestSnapshot as {
+          asOf: string;
+          balance: number;
+          source: 'manual' | 'observed' | 'reconstructed' | 'interpolated';
+        } | null) ?? null,
+        history: {
+          range,
+          asOf: served.row.asOf,
+          points: decodePoints(payload.points as ColumnarPoints),
+          change: payload.change as number,
+          changePct: (payload.changePct as number | null) ?? null,
+          firstAsOf: (payload.firstAsOf as string | null) ?? null,
+        },
+      };
     }
     const account = await ctx.db
       .query('accounts')
