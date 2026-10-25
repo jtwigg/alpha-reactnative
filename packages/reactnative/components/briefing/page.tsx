@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BriefingCard } from '@/components/briefing/card';
+import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { LinkNotFound } from '@/components/link-not-found';
 import { api } from '@/lib/api';
 import { briefingsPath, findBriefingItem, parseBriefingDate, parseBriefingItemRef } from '@/lib/app-links';
@@ -31,7 +32,11 @@ const MAX = 720;
 
 export function BriefingsScreen() {
   if (!isClerkConfigured()) return null;
-  return <BriefingsPage />;
+  return (
+    <QueryErrorBoundary surface="briefings">
+      <BriefingsPage />
+    </QueryErrorBoundary>
+  );
 }
 
 function BriefingsPage() {

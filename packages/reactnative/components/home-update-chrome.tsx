@@ -91,9 +91,12 @@ export function HomeUpdateBanner({
   );
 }
 
-function BannerInner() {
+function BannerInner({
+  release,
+}: {
+  release: { latestBuildNumber?: string | null; testflightUrl?: string | null } | null | undefined;
+}) {
   const nativeBuild = useMemo(() => currentNativeBuildVersion(), []);
-  const release = useQuery(api.app.release.latest);
   const updates = Updates.useUpdates();
   const [busy, setBusy] = useState(false);
 
@@ -142,11 +145,16 @@ function BannerInner() {
   );
 }
 
-/** Top-of-Home update banner. Soft-fails if Convex `app_release` is not deployed. */
+function BannerWithRelease() {
+  const release = useQuery(api.app.release.latest);
+  return <BannerInner release={release} />;
+}
+
+/** Top-of-Home update banner. Soft-fails if Convex `app_release` is down; OTA prompt still works. */
 export function HomeUpdateBannerHost() {
   return (
-    <SoftQueryBoundary fallback={null}>
-      <BannerInner />
+    <SoftQueryBoundary fallback={<BannerInner release={null} />}>
+      <BannerWithRelease />
     </SoftQueryBoundary>
   );
 }

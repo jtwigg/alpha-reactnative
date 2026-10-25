@@ -21,12 +21,13 @@ const fingerprintPath = join(appRoot, '.native-fingerprint.json');
 const write = process.argv.includes('--write');
 
 const NATIVE_DEP = /^(expo|react-native|@sentry\/react-native|@expo\/|react-native-)/;
+const JS_ONLY_DEP = /^(jest-expo$|babel-preset-expo$|@testing-library\/)/;
 
 export function nativeDepVersions(pkg) {
   const all = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   return Object.fromEntries(
     Object.entries(all)
-      .filter(([name]) => NATIVE_DEP.test(name))
+      .filter(([name]) => NATIVE_DEP.test(name) && !JS_ONLY_DEP.test(name))
       .sort(([a], [b]) => a.localeCompare(b)),
   );
 }

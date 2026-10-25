@@ -15,10 +15,14 @@ export function SentryAuthObserver() {
   const convexRef = useRef<{ isLoading: boolean; isAuthenticated: boolean } | null>(null);
 
   useEffect(() => {
-    if (isSignedIn && clerkId) {
-      Sentry.setUser({ id: clerkId });
-    } else {
-      Sentry.setUser(null);
+    try {
+      if (isSignedIn && clerkId) {
+        Sentry.setUser({ id: clerkId });
+      } else {
+        Sentry.setUser(null);
+      }
+    } catch {
+      /* Sentry must not crash launch or auth transitions */
     }
   }, [clerkId, isSignedIn]);
 

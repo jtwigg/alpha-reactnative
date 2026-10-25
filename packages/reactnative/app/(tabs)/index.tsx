@@ -17,6 +17,7 @@ import { ChatInput } from '@/components/chat/chat-input';
 import { HomeBriefing } from '@/components/chat/home-briefing';
 import { HomeThread, useHomeChat } from '@/components/chat/home-thread';
 import { HomeUpdateBannerHost, VersionLabel } from '@/components/home-update-chrome';
+import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
@@ -41,11 +42,27 @@ export default function HomeScreen() {
   return <SignedInHome />;
 }
 
-function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: string) => void }) {
-  const params = useLocalSearchParams<{ ask?: string }>();
-  const askParam = typeof params.ask === 'string' ? params.ask : undefined;
-  const askId = askParam ? parseAskId(askParam) : null;
-  const askMalformed = Boolean(askParam && !askId);
+function HomeGreeting() {
+  const { isAuthenticated } = useConvexAuth();
+  const me = useQuery(api.users.current, isAuthenticated ? {} : 'skip');
+  return (
+    <ThemedText type="title" style={styles.hello}>
+      {me ? `Hello, ${me.name}` : 'Home'}
+    </ThemedText>
+  );
+}
+
+function HomeChatSection({
+  ready,
+  onToast,
+  askId,
+  askMalformed,
+}: {
+  ready: boolean;
+  onToast: (message: string) => void;
+  askId: string | null;
+  askMalformed: boolean;
+}) {
   const { messages, pending, send, openGrok, threadReady } = useHomeChat(ready, onToast);
   return (
     <View style={styles.flex}>
@@ -57,8 +74,24 @@ function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: strin
         askMissing={askMalformed}
         ready={threadReady}
       />
-      <HomeBriefing ready={ready} />
       <ChatInput onSend={(text) => void send(text)} isLoading={pending} />
+    </View>
+  );
+}
+
+function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: string) => void }) {
+  const params = useLocalSearchParams<{ ask?: string }>();
+  const askParam = typeof params.ask === 'string' ? params.ask : undefined;
+  const askId = askParam ? parseAskId(askParam) : null;
+  const askMalformed = Boolean(askParam && !askId);
+  return (
+    <View style={styles.flex}>
+      <QueryErrorBoundary compact surface="home-thread">
+        <HomeChatSection ready={ready} onToast={onToast} askId={askId} askMalformed={askMalformed} />
+      </QueryErrorBoundary>
+      <QueryErrorBoundary compact surface="home-briefing">
+        <HomeBriefing ready={ready} />
+      </QueryErrorBoundary>
     </View>
   );
 }
@@ -68,8 +101,6 @@ function SignedInHome() {
   const { signOut } = useClerk();
   const { isSignedIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
-  const me = useQuery(api.users.current, isAuthenticated ? {} : 'skip');
-  const greeting = me ? `Hello, ${me.name}` : 'Home';
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (message: string) => {
@@ -88,9 +119,15 @@ function SignedInHome() {
           <View style={styles.header}>
             <View style={styles.headerText}>
               <Text style={styles.kicker}>Home</Text>
-              <ThemedText type="title" style={styles.hello}>
-                {greeting}
-              </ThemedText>
+              <QueryErrorBoundary
+                surface="home-greeting"
+                fallback={
+                  <ThemedText type="title" style={styles.hello}>
+                    Home
+                  </ThemedText>
+                }>
+                <HomeGreeting />
+              </QueryErrorBoundary>
               <ThemedText style={styles.muted}>
                 {user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? 'Signed in'}
               </ThemedText>

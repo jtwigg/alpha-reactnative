@@ -12,7 +12,15 @@ import {
   withTimeout,
 } from '@/lib/convex';
 
-const convex = new ConvexReactClient(getConvexCloudUrl());
+function createConvexClient(): ConvexReactClient {
+  try {
+    return new ConvexReactClient(getConvexCloudUrl());
+  } catch {
+    return new ConvexReactClient('https://placeholder.convex.cloud');
+  }
+}
+
+const convex = createConvexClient();
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '';
 
 /**

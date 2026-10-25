@@ -5,6 +5,7 @@ import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { AccessDenied } from '@/components/access-denied';
 import { AuthStuck, useConvexAuthStuck } from '@/components/auth/auth-stuck';
+import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { HapticTab } from '@/components/haptic-tab';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -17,7 +18,11 @@ import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 
 export default function TabLayout() {
   if (isClerkConfigured()) {
-    return <ClerkProtectedTabs />;
+    return (
+      <QueryErrorBoundary surface="tabs">
+        <ClerkProtectedTabs />
+      </QueryErrorBoundary>
+    );
   }
   return <AppTabs />;
 }
