@@ -29,16 +29,31 @@ export function parseAccountScope(scope: string): string | null {
   return scope.startsWith('account:') && scope.length > 8 ? scope.slice(8) : null;
 }
 
+export function parseSp500ReturnScope(scope: string): string | null {
+  return scope.startsWith('sp500:') && scope.length > 6 ? scope.slice(6) : null;
+}
+
+/** `total`, `reliable_subset`, or `account:<id>` — not a nested `sp500:` prefix. */
+export function isPlainReturnScope(scope: string): boolean {
+  return scope === 'total' || scope === 'reliable_subset' || Boolean(parseAccountScope(scope));
+}
+
+/**
+ * Stored TWR row scopes, including Finance-computed S&P TWR at `sp500:<inner>`
+ * (`sp500:total`, `sp500:reliable_subset`, `sp500:account:<id>`).
+ */
+export function isReturnScope(scope: string): boolean {
+  if (isPlainReturnScope(scope)) return true;
+  const inner = parseSp500ReturnScope(scope);
+  return inner != null && isPlainReturnScope(inner);
+}
+
+export const RETURN_SCOPE_MESSAGE =
+  "returns.scope must be total, reliable_subset, account:<id>, or sp500:<those> (sp500:total, sp500:reliable_subset, sp500:account:<id>)";
+
 export function assertReturnScope(scope: string): void {
-  if (scope === 'total' || scope === 'reliable_subset') return;
-  if (parseAccountScope(scope)) return;
-  if (scope.startsWith('sp500:') && scope.length > 6) {
-    assertReturnScope(scope.slice(6));
-    return;
-  }
-  throw new Error(
-    `returns.scope must be total, reliable_subset, account:<id>, or sp500:<those>, got ${scope}`,
-  );
+  if (isReturnScope(scope)) return;
+  throw new Error(`${RETURN_SCOPE_MESSAGE}, got ${scope}`);
 }
 
 export function assertReturnWindow(window: string): asserts window is TwrWindow {

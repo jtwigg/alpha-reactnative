@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReturnScope } from '../../packages/server/convex/finance/twrModel';
 import type { ConvexFinanceClient } from './convex';
 
 const SNAPSHOT_SOURCE = z.enum([
@@ -145,6 +146,10 @@ const flowItem = z.object({
 const returnItem = z.object({
   scope: z
     .string()
+    .refine(isReturnScope, {
+      message:
+        "scope must be 'account:<id>', 'total', 'reliable_subset', or 'sp500:<those>' (sp500:total, sp500:reliable_subset, sp500:account:<id>)",
+    })
     .describe("'account:<id>', 'total', 'reliable_subset', or 'sp500:<those>'"),
   window: TWR_WINDOW,
   asOf: z.string().describe('YYYY-MM-DD'),

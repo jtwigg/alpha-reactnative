@@ -477,10 +477,16 @@ export function demoTwr(scope: string, range: RangeKey = '1Y') {
           source: 'returns' as const,
         }
       : headerFromComputed(series, mapped),
-    sp500Twr: headerFromComputed(
-      series.map((point) => ({ value: point.sp500Equiv, netInvested: point.netInvested, asOf: point.asOf })),
-      mapped,
-    ),
+    sp500Twr: stored
+      ? {
+          cumulative: stored.cumulative - 0.008,
+          annualized: stored.annualized == null ? null : stored.annualized - 0.006,
+          window: stored.window,
+          startDate: stored.startDate,
+          asOf: stored.asOf,
+          source: 'returns' as const,
+        }
+      : null,
   };
 }
 
