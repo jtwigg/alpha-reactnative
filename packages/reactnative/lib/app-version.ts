@@ -4,7 +4,7 @@
  * TestFlight build 3 (runtime 1.0.0).
  */
 export const APP_VERSION = '1.0.0';
-export const JS_OTA_BUILD = 11;
+export const JS_OTA_BUILD = 12;
 
 export function jsVersionLabel(appVersion = APP_VERSION, ota = JS_OTA_BUILD): string {
   return `v${appVersion} (ota ${ota})`;

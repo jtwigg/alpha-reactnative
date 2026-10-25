@@ -91,7 +91,7 @@ Nothing in this PR can finish these for you. Do them in this order:
 4. **Apple Developer Program** — paid membership is required for TestFlight. In App Store Connect, create an **app record** (needed so TestFlight has a place to land; do not fill a public store listing or submit for App Store review). Paste the numeric Apple ID into `eas.json` → `submit.production.ios.ascAppId`.
 5. **Vercel** — [vercel.com](https://vercel.com). Import **this GitHub repo**. Root Directory = repo root. Vercel reads `vercel.json` and deploys **web only**. Public URL: **https://alpha-theta-silk.vercel.app**.
 6. **GitHub Actions** — create an Expo access token at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens). In the GitHub repo: Settings → Secrets and variables → Actions → **EXPO_TOKEN**. That is the only required secret: the workflow takes `EXPO_PUBLIC_CONVEX_URL` and `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` from the channel's build profile `env` in `eas.json`, and `EAS_PROJECT_ID` defaults to the project in `app.config.js`. A repository secret with the same name overrides each default.
-7. **OpenAI** (only if you use Chat / Whisper) — set `OPENAI_API_KEY` on the Convex dashboard.
+7. **OpenAI** (only if you use Whisper dictation) — set `OPENAI_API_KEY` on the Convex dashboard. Home chat no longer calls OpenAI.
 
 Replace placeholder branding before the first TestFlight build: `com.example.johnsapp`, `assets/images/icon.png`, `splash-icon.png`, and `favicon.png`.
 
@@ -119,7 +119,7 @@ pnpm convex dev            # syncs schema, auth.config.ts, and functions
 | `CLERK_JWT_ISSUER_DOMAIN` | `https://awaited-jennet-2760.clerk.accounts.dev` (**no trailing slash**). Set this on **dev:posh-mink-581** (and on production later). |
 | `ALLOWED_EMAILS` | `john.twigg@gmail.com` (comma-separated later). Case-insensitive. **Default-deny if unset.** Also gates finance reads. |
 | `ALLOWED_USER_IDS` | optional Clerk `user_…` ids if the session JWT has no `email` claim |
-| `OPENAI_API_KEY` | optional, chat + Whisper |
+| `OPENAI_API_KEY` | optional, Whisper dictation only |
 | `FINANCE_SERVER_SECRET` | server-to-server secret for `POST /finance/server` (same value on Vercel). **Not** a Convex deploy/admin key. |
 
 `packages/server/convex/auth.config.ts` defaults to that issuer (`applicationID: "convex"` matches the session token `aud`) and still honors `CLERK_JWT_ISSUER_DOMAIN` / `CLERK_FRONTEND_API_URL` if you override it. Production Clerk uses `pk_live_` / the production Frontend API URL.
@@ -442,3 +442,29 @@ Authorization: Bearer $BRIEFINGS_INGEST_SECRET
 The body is one calendar day (`personal` + `crankcase`). Re-sends overwrite that date. Schema, a synthetic example, and the feedback webhook body are in [`docs/briefings.md`](docs/briefings.md). Item ids are `date-account-threadId`, not card position.
 
 Feedback is an allowlisted Convex action that POSTs to `FEEDBACK_WEBHOOK_URL` with `Authorization: Bearer $FEEDBACK_WEBHOOK_KEY` and `source: "email-briefing-deck"` — the same payload the old `/api/feedback` forwarded. Those two env vars stay on Convex; they are never `EXPO_PUBLIC_*`. Sentry redacts briefing item text. There is no public query on `briefing_audit_log`.
+
+### Home quick-ask (Assistant)
+
+Home has a one-exchange composer (last user message + latest reply, pending until Assistant posts back). The Chat tab is gone. Sending stores `chat_asks` (one row per user) and POSTs to the same webhook as briefing feedback:
+
+```
+POST $FEEDBACK_WEBHOOK_URL
+Authorization: Bearer $FEEDBACK_WEBHOOK_KEY
+{
+  "type": "chat",
+  "messageId": "ask_<id>",
+  "threadId": "home",
+  "text": "<user question>",
+  "createdAt": 1761350000000
+}
+```
+
+Assistant replies:
+
+```
+POST https://posh-mink-581.convex.site/chat/reply
+Authorization: Bearer $BRIEFINGS_INGEST_SECRET
+{ "messageId": "ask_<id>", "text": "<reply>" }
+```
+
+`threadId` can replace `messageId` and updates the latest home ask. **Open in Grok Bot** uses `Linking.openURL('grokbot://app/v1/agent?id=fcff0fa9-a9cd-444b-8c28-6a5904690983')` with try/catch — no `LSApplicationQueriesSchemes` entry (OTA-safe). `canOpenURL` would need a native build.

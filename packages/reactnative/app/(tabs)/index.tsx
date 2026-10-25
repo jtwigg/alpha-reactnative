@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppBuildLabel } from '@/components/app-build-label';
+import { QuickAsk } from '@/components/chat/quick-ask';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
@@ -49,6 +50,12 @@ function SignedInHome() {
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast((current) => (current === message ? null : current)), 3200);
+  };
 
   const handleSave = async () => {
     const text = draft.trim();
@@ -85,6 +92,9 @@ function SignedInHome() {
             </Pressable>
           ) : null}
         </View>
+
+        <QuickAsk ready={isAuthenticated} onToast={showToast} />
+        {toast ? <Text style={styles.toast}>{toast}</Text> : null}
 
         <ThemedText style={styles.sectionTitle}>Private notes</ThemedText>
         <ThemedText style={styles.muted}>
@@ -190,6 +200,18 @@ const styles = StyleSheet.create({
   saveText: { color: '#fff', fontWeight: '600' },
   disabled: { opacity: 0.4 },
   error: { color: '#b42318', marginHorizontal: 20, marginBottom: 8 },
+  toast: {
+    marginHorizontal: 20,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#11181C',
+    color: '#fff',
+    overflow: 'hidden',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
   list: { paddingHorizontal: 20, paddingBottom: 24, gap: 8 },
   note: {
     backgroundColor: '#f3f3f3',
