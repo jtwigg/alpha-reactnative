@@ -46,6 +46,7 @@ import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
 import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
 import { useCachedValue } from '@/lib/finance-cache';
 import { seriesFromPack, type SeriesPack } from '@/lib/finance-packs';
 import { useRefreshSpinner } from '@/lib/use-refresh';
@@ -99,7 +100,9 @@ export default function AccountDetailScreen() {
   return (
     <>
       {screen}
-      <AccountDetailBody sourceId={sourceId} live={access === 'allowed'} />
+      <FinanceErrorBoundary title="Account">
+        <AccountDetailBody sourceId={sourceId} live={access === 'allowed'} />
+      </FinanceErrorBoundary>
     </>
   );
 }
@@ -154,9 +157,10 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   );
   const liveSeriesPack = useQuery(api.finance.queries.seriesPack, live ? { scope, refreshNonce } : 'skip');
   const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${scope}`, liveSeriesPack ?? undefined);
+  const packedSeriesEarly = seriesPack ? seriesFromPack(seriesPack, range) : null;
   const liveSeries = useQuery(
     api.finance.queries.series,
-    live && seriesPack == null ? { scope, range, refreshNonce } : 'skip',
+    live && packedSeriesEarly == null ? { scope, range, refreshNonce } : 'skip',
   );
   const liveTwr = useQuery(api.finance.queries.twr, live ? { scope, refreshNonce } : 'skip');
   const liveFlows = useQuery(api.finance.queries.flows, live ? { accountId: sourceId, refreshNonce } : 'skip');
@@ -228,7 +232,7 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const color = colors.groups[group];
   const balance = detail.latestSnapshot?.balance ?? detail.currentBalance;
   const shown = signedAmount(detail.class, balance);
-  const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
+  const packedSeries = packedSeriesEarly;
   const seriesPoints = live
     ? (packedSeries?.points ?? liveSeries?.points ?? [])
     : (demoSeriesModel?.series ?? []);

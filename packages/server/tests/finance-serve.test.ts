@@ -8,8 +8,10 @@ import {
   diffNumbers,
   encodePoints,
   encodeSeriesPoints,
+  liteSnapshot,
   payloadBytes,
   rangePointCount,
+  sanitizePageAccounts,
   serveQueryCost,
   sameNumbers,
 } from '../convex/finance/serve';
@@ -18,6 +20,75 @@ import { pageFromPack, seriesFromPack } from '../../../packages/reactnative/lib/
 
 const AS_OF = '2026-10-24';
 const FIRST = '2014-03-07';
+
+describe('serve consumers tolerate missing/partial packs', () => {
+  it('decode helpers return empty arrays instead of throwing', () => {
+    expect(decodePoints(undefined)).toEqual([]);
+    expect(decodePoints({} as never)).toEqual([]);
+    expect(decodeSeriesPoints(undefined)).toEqual([]);
+    expect(decodeSeriesPoints({ dates: ['2026-01-01'] } as never)).toEqual([
+      {
+        asOf: '2026-01-01',
+        value: 0,
+        netInvested: 0,
+        sp500Equiv: 0,
+        valueInterpolated: false,
+        estimated: false,
+      },
+    ]);
+  });
+
+  it('pageFromPack returns null for a missing range instead of substituting All', () => {
+    const pack = {
+      asOf: '2026-10-24',
+      version: 1,
+      accounts: [],
+      ranges: {
+        All: {
+          headline: 1,
+          change: 0,
+          changePct: 0,
+          assets: 1,
+          liabilities: 0,
+          byClass: { cash: 1 },
+          grain: 'month' as const,
+          rollup: 'stale' as const,
+          points: encodePoints([{ asOf: '2026-01-01', total: 1, interpolated: false, byClass: { cash: 1 } }]),
+          coverage: { asOf: [], label: [], className: [] },
+        },
+      },
+    };
+    expect(pageFromPack(pack, '1M')).toBeNull();
+    expect(pageFromPack(pack, 'All')?.points).toHaveLength(1);
+    expect(pageFromPack({ ...pack, ranges: { '1M': { headline: 1 } as never } }, '1M')).toBeNull();
+    expect(pageFromPack(null, 'All')).toBeNull();
+  });
+
+  it('strips extra snapshot fields so Convex object validators accept serve accounts', () => {
+    expect(liteSnapshot({ accountId: 'acc_1', asOf: '2026-10-24', balance: 10, source: 'observed' })).toEqual({
+      asOf: '2026-10-24',
+      balance: 10,
+      source: 'observed',
+    });
+    const accounts = sanitizePageAccounts([
+      {
+        sourceId: 'acc_1',
+        name: 'Cash',
+        class: 'cash',
+        provider: 'manual',
+        isManual: true,
+        currentBalance: 10,
+        signedBalance: 10,
+        currency: 'USD',
+        syncedAt: 1,
+        firstAsOf: '2026-01-01',
+        latestSnapshot: { accountId: 'acc_1', asOf: '2026-10-24', balance: 10, source: 'observed' },
+      },
+    ]);
+    expect(accounts[0]?.latestSnapshot).toEqual({ asOf: '2026-10-24', balance: 10, source: 'observed' });
+    expect(sanitizePageAccounts(undefined)).toEqual([]);
+  });
+});
 
 describe('columnar encode/decode keeps full resolution', () => {
   it('round-trips chart points without dropping days', () => {

@@ -1,4 +1,10 @@
-import { decodeCoverage, decodePoints, decodeSeriesPoints } from '../../server/convex/finance/serve';
+import {
+  decodeCoverage,
+  decodePoints,
+  decodeSeriesPoints,
+  isColumnarPoints,
+  isColumnarSeries,
+} from '../../server/convex/finance/serve';
 import type { RangeKey } from '../../server/convex/finance/series';
 import type { SeriesPoint } from '../../server/convex/finance/seriesModel';
 
@@ -64,27 +70,38 @@ export type SeriesPack = {
   ranges: Record<string, SeriesPackRange>;
 };
 
-export function pageFromPack(pack: PagePack, range: RangeKey) {
-  const row = pack.ranges[range] ?? pack.ranges.All;
-  if (!row) return null;
-  return {
-    range,
-    asOf: pack.asOf,
-    headline: row.headline,
-    change: row.change,
-    changePct: row.changePct,
-    assets: row.assets,
-    liabilities: row.liabilities,
-    byClass: row.byClass,
-    points: decodePoints(row.points),
-    coverageMarkers: decodeCoverage(row.coverage),
-    accounts: pack.accounts,
-    grain: row.grain,
-    rollup: row.rollup,
-  };
+/** Only the requested range — never silently substitute All. */
+export function pageFromPack(pack: PagePack | null | undefined, range: RangeKey) {
+  try {
+    if (!pack || typeof pack !== 'object') return null;
+    const row = pack.ranges?.[range];
+    if (!row || !isColumnarPoints(row.points)) return null;
+    const points = decodePoints(row.points);
+    if (points.length === 0) return null;
+    return {
+      range,
+      asOf: typeof pack.asOf === 'string' ? pack.asOf : points.at(-1)?.asOf ?? '',
+      headline: row.headline ?? 0,
+      change: row.change ?? 0,
+      changePct: row.changePct ?? null,
+      assets: row.assets ?? 0,
+      liabilities: row.liabilities ?? 0,
+      byClass: row.byClass ?? {},
+      points,
+      coverageMarkers: decodeCoverage(row.coverage),
+      accounts: Array.isArray(pack.accounts) ? pack.accounts : [],
+      grain: row.grain ?? 'day',
+      rollup: row.rollup ?? 'stale',
+    };
+  } catch {
+    return null;
+  }
 }
 
-export function seriesFromPack(pack: SeriesPack, range: RangeKey): {
+export function seriesFromPack(
+  pack: SeriesPack | null | undefined,
+  range: RangeKey,
+): {
   scope: string;
   range: RangeKey;
   asOf: string;
@@ -94,16 +111,21 @@ export function seriesFromPack(pack: SeriesPack, range: RangeKey): {
   twr: SeriesPackRange['twr'];
   sp500Twr: SeriesPackRange['sp500Twr'];
 } | null {
-  const row = pack.ranges[range] ?? pack.ranges.All;
-  if (!row) return null;
-  return {
-    scope: pack.scope,
-    range,
-    asOf: pack.asOf,
-    grain: row.grain,
-    rollup: row.rollup,
-    points: decodeSeriesPoints(row.points),
-    twr: row.twr,
-    sp500Twr: row.sp500Twr,
-  };
+  try {
+    if (!pack || typeof pack !== 'object') return null;
+    const row = pack.ranges?.[range];
+    if (!row || !isColumnarSeries(row.points)) return null;
+    return {
+      scope: pack.scope,
+      range,
+      asOf: typeof pack.asOf === 'string' ? pack.asOf : '',
+      grain: row.grain ?? 'day',
+      rollup: row.rollup ?? 'stale',
+      points: decodeSeriesPoints(row.points),
+      twr: row.twr ?? null,
+      sp500Twr: row.sp500Twr ?? null,
+    };
+  } catch {
+    return null;
+  }
 }

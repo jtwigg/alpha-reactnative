@@ -440,7 +440,9 @@ export function pageAccountsFromSeries(
         syncedAt: account.syncedAt,
         coverageStart: account.coverageStart,
         firstAsOf: first?.asOf ?? null,
-        latestSnapshot: latest,
+        latestSnapshot: latest
+          ? { asOf: latest.asOf, balance: latest.balance, source: latest.source }
+          : null,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
