@@ -368,9 +368,9 @@ Streamable HTTP. Clients send `Authorization: Bearer $FINANCE_MCP_TOKEN`. The ro
 https://alpha-theta-silk.vercel.app/api/mcp
 ```
 
-Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`, `upsert_flows`, `delete_flows`, `upsert_returns`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` / `delete_flows` cap 500 ids (Convex `_id` or `sourceId` / `flowId`).
+Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`, `upsert_flows`, `delete_flows`, `upsert_returns`, `upsert_series`, `delete_series`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` / `delete_flows` cap 500 ids (Convex `_id` or `sourceId` / `flowId`); `delete_series` write cap 500 rows (`continueFrom` to page).
 
-Time-weighted returns: Finance writes `flows` (keyed by `flowId`) and `returns` (keyed by `scope+window+asOf`). `upsert_returns` replaces every stored row for each `asOf` present in the batch. The app is read-only. `get_digest` adds table-level `flows` and `returns` `{ count, checksum }` — SHA-256 of sorted `finance.v1` content hashes joined by LF, same as `bucketHash`.
+Time-weighted returns: Finance writes `flows` (keyed by `flowId`), `returns` (keyed by `scope+window+asOf`), and daily `series` (keyed by `scope+date`: value, netInvested, sp500Equiv). `upsert_returns` replaces every stored row for each `asOf` present in the batch. `returns.scope` may also be `sp500:<inner>` for a precomputed S&P TWR. The app is read-only. `get_digest` adds table-level `flows`, `returns`, and `series` `{ count, checksum }` — SHA-256 of sorted `finance.v1` content hashes joined by LF, same as `bucketHash`. Series rows fold into `finance_rollups` as `scopeKind: "series"` (day / week / month) with the same ingest invalidation as snapshots.
 
 ```
 upsert_flows({ items: [{
@@ -383,12 +383,22 @@ upsert_flows({ items: [{
 delete_flows({ ids: string[] })             // 1–500 Convex _id or flowId
 
 upsert_returns({ items: [{
-  scope: "account:<id>" | "total" | "reliable_subset",
+  scope: "account:<id>" | "total" | "reliable_subset" | "sp500:<those>",
   window: "3M" | "6M" | "YTD" | "1Y" | "3Y" | "SI",
   asOf, startDate, cumulative, annualized?, // annualized nullable
   reliable, startOnAnchor, flowsFullyKnown,
   method: "finance.twr.v1", note?
 }] })                                       // 1–500 items; replaces all rows for each asOf in the batch
+
+upsert_series({ items: [{
+  scope: "account:<id>" | "total" | "reliable_subset",
+  date,                                     // YYYY-MM-DD
+  value, netInvested, sp500Equiv,
+  valueInterpolated,                        // gap-filled value
+  estimated                                 // true before flow data exists
+}] })                                       // 1–500 items; key scope+date, last in batch wins
+
+delete_series({ scope, fromDate?, toDate? }) // inclusive dates; continueFrom pages at 500
 ```
 
 Pending → posted: a posted `upsert_transactions` row deletes the pending row named by `pendingTransactionId` (same account). Without a link, a newly inserted posted row replaces at most one pending row on the same account with the same amount, normalized merchant/name, and date within 5 days (closest wins). Replacements and `delete_transactions` calls are written to the `finance_audit_log` table (no public read path). Digests are computed live, so deletes are reflected immediately.

@@ -188,6 +188,15 @@ describe('canonicalizeFinanceRow', () => {
       'method',
       'note',
     ]);
+    expect([...FINANCE_FIELD_ORDER.series]).toEqual([
+      'scope',
+      'date',
+      'value',
+      'netInvested',
+      'sp500Equiv',
+      'valueInterpolated',
+      'estimated',
+    ]);
   });
 });
 

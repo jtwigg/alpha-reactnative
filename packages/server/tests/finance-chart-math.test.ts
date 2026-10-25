@@ -4,6 +4,7 @@ import {
   axisDateLabel,
   buildCurves,
   buildSegments,
+  buildStepAfterCurves,
   curveAreaPath,
   curvesToPath,
   formatCompactUsd,
@@ -107,5 +108,13 @@ describe('monotone curves', () => {
     expect(segs.at(-1)!.x2).toBeCloseTo(20, 9);
     expect(segs.at(-1)!.y2).toBeCloseTo(98, 9);
     expect(curveAreaPath([], 10)).toBe('');
+  });
+
+  it('steps after: hold y, then jump at the next x', () => {
+    const curves = buildStepAfterCurves([10, 10, 20], x, y);
+    expect(curves).toHaveLength(3);
+    expect(curves[0]).toMatchObject({ x1: 0, y1: 90, x2: 10, y2: 90 });
+    expect(curves[1]).toMatchObject({ x1: 10, y1: 90, x2: 20, y2: 90 });
+    expect(curves[2]).toMatchObject({ x1: 20, y1: 90, x2: 20, y2: 80 });
   });
 });

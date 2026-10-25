@@ -295,10 +295,11 @@ function NetWorthPage({ demo }: { demo: boolean }) {
               <TwrCard
                 scope="reliable_subset"
                 live={hasLive}
-                demo={usingDemo ? demoTwr('reliable_subset') : undefined}
+                demo={usingDemo ? demoTwr('reliable_subset', range) : undefined}
                 allowAllToggle
                 title="Portfolio return"
                 refreshNonce={refreshNonce}
+                range={range}
               />
 
               <CompositionCard

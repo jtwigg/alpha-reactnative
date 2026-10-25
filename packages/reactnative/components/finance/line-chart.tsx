@@ -12,6 +12,7 @@ import { seriesOpacity } from '@/lib/series-highlight';
 import {
   axisDateLabel,
   buildCurves,
+  buildStepAfterCurves,
   curveAreaPath,
   curvesToPath,
   formatCompactUsd,
@@ -32,7 +33,24 @@ export type ChartSeries = {
   gaps?: boolean[];
   dashed?: boolean;
   fill?: boolean;
+  /** Hold the current y until the next x, then jump (cash-flow step). */
+  stepAfter?: boolean;
   strokeWidth?: number;
+};
+
+export type ChartBand = {
+  topKey: string;
+  bottomKey: string;
+  positiveColor: string;
+  negativeColor: string;
+};
+
+type BandCol = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  color: string;
 };
 
 export type ChartMarker = { asOf: string; color: string };
@@ -55,6 +73,8 @@ export function LineChart({
   markers = [],
   highlight,
   renderCompare,
+  bands = [],
+  dimFlags,
 }: {
   dates: string[];
   series: ChartSeries[];
@@ -70,6 +90,10 @@ export function LineChart({
   highlight?: SeriesHighlight;
   /** Enables two-point A/B compare; renders the summary under the chart. */
   renderCompare?: (pair: ComparePair, clear: () => void) => ReactNode;
+  /** Shade the gap between two series (e.g. value vs net invested). */
+  bands?: ChartBand[];
+  /** Per-date hatch/dim for estimated or interpolated spans. */
+  dimFlags?: boolean[];
 }) {
   const palette = useFinancePalette();
   const [width, setWidth] = useState(0);
@@ -101,15 +125,58 @@ export function LineChart({
     const y = (value: number) => PAD.top + (1 - (value - y0) / (y1 - y0 || 1)) * innerH;
     const budget = Math.floor(NATIVE_SEGMENT_BUDGET / Math.max(visible.length, 1));
     const lines = visible.map((s) => {
-      const curves = buildCurves(s.values, x, y, s.gaps, s.dashed);
+      const curves = s.stepAfter
+        ? buildStepAfterCurves(s.values, x, y, s.gaps, s.dashed)
+        : buildCurves(s.values, x, y, s.gaps, s.dashed);
       return {
         series: s,
         curves,
         segments: Platform.OS === 'web' ? [] : sampleCurves(curves, budget),
       };
     });
-    return { ticks, x, y, lines, baseline: PAD.top + innerH, innerH, width, height };
-  }, [count, height, includeZero, visible, width]);
+    const byKey = new Map(visible.map((s) => [s.key, s] as const));
+    const bandCols = bands.flatMap((band) => {
+      const top = byKey.get(band.topKey);
+      const bottom = byKey.get(band.bottomKey);
+      if (!top || !bottom) return [];
+      const cols: BandCol[] = [];
+      for (let i = 0; i < count - 1; i += 1) {
+        const t0 = top.values[i];
+        const t1 = top.values[i + 1];
+        const b0 = bottom.values[i];
+        const b1 = bottom.values[i + 1];
+        if (t0 == null || t1 == null || b0 == null || b1 == null) continue;
+        const midTop = (t0 + t1) / 2;
+        const midBottom = (b0 + b1) / 2;
+        cols.push({
+          left: x(i),
+          right: x(i + 1),
+          top: y(Math.max(midTop, midBottom)),
+          bottom: y(Math.min(midTop, midBottom)),
+          color: midTop >= midBottom ? band.positiveColor : band.negativeColor,
+        });
+      }
+      return cols;
+    });
+    const dimCols: Array<{ left: number; right: number }> = [];
+    if (dimFlags && dimFlags.length === count) {
+      let i = 0;
+      while (i < count) {
+        if (!dimFlags[i]) {
+          i += 1;
+          continue;
+        }
+        const start = i;
+        while (i < count && dimFlags[i]) i += 1;
+        const end = Math.min(i, count - 1);
+        dimCols.push({
+          left: x(start),
+          right: x(end === start ? Math.min(start + 1, count - 1) : end),
+        });
+      }
+    }
+    return { ticks, x, y, lines, bandCols, dimCols, baseline: PAD.top + innerH, innerH, width, height };
+  }, [bands, count, dimFlags, height, includeZero, visible, width]);
 
   const onTap = (index: number, tapY: number) => {
     if (!highlight || !geometry) return;
@@ -161,6 +228,8 @@ export function LineChart({
               </Reveal>
             ) : null}
             <Grid geometry={geometry} palette={palette} includeZero={includeZero} />
+            <ProfitBands geometry={geometry} />
+            <DimHatch geometry={geometry} palette={palette} />
             {pair ? (
               <View
                 style={[
@@ -376,6 +445,8 @@ function tooltipBounds(hairX: number, width: number) {
 type Geometry = {
   ticks: number[];
   lines: Array<{ series: ChartSeries; curves: Curve[]; segments: Segment[] }>;
+  bandCols: BandCol[];
+  dimCols: Array<{ left: number; right: number }>;
   x: (index: number) => number;
   y: (value: number) => number;
   baseline: number;
@@ -383,6 +454,83 @@ type Geometry = {
   width: number;
   height: number;
 };
+
+const ProfitBands = memo(function ProfitBands({ geometry }: { geometry: Geometry }) {
+  if (geometry.bandCols.length === 0) return null;
+  return (
+    <>
+      {geometry.bandCols.map((col, i) => (
+        <View
+          key={`band-${i}`}
+          style={{
+            position: 'absolute',
+            left: col.left,
+            width: Math.max(col.right - col.left, 0.5),
+            top: col.top,
+            height: Math.max(col.bottom - col.top, 0),
+            backgroundColor: col.color,
+            opacity: 0.22,
+          }}
+        />
+      ))}
+    </>
+  );
+});
+
+const DimHatch = memo(function DimHatch({
+  geometry,
+  palette,
+}: {
+  geometry: Geometry;
+  palette: FinancePalette;
+}) {
+  if (geometry.dimCols.length === 0) return null;
+  return (
+    <>
+      {geometry.dimCols.map((col, i) => {
+        const width = Math.max(col.right - col.left, 0);
+        const stripes = Math.max(2, Math.floor(width / 5));
+        return (
+          <View
+            key={`dim-${i}`}
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: col.left,
+              width,
+              top: PAD.top,
+              height: geometry.innerH,
+              overflow: 'hidden',
+            }}
+          >
+            <View
+              style={{
+                ...StyleSheet.absoluteFillObject,
+                backgroundColor: palette.subtle,
+                opacity: 0.1,
+              }}
+            />
+            {Array.from({ length: stripes }, (_, s) => (
+              <View
+                key={`hatch-${i}-${s}`}
+                style={{
+                  position: 'absolute',
+                  left: s * 5,
+                  top: -4,
+                  width: 1.5,
+                  height: geometry.innerH + 8,
+                  backgroundColor: palette.subtle,
+                  opacity: 0.35,
+                  transform: [{ rotate: '18deg' }],
+                }}
+              />
+            ))}
+          </View>
+        );
+      })}
+    </>
+  );
+});
 
 const Grid = memo(function Grid({
   geometry,

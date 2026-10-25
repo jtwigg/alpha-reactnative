@@ -26,7 +26,7 @@ import {
 export const ROLLUP_GRAINS = ['day', 'week', 'month'] as const;
 export type { RollupFreshness, RollupGrain };
 
-export const ROLLUP_SCOPE_KINDS = ['account', 'class', 'group', 'total', 'bench'] as const;
+export const ROLLUP_SCOPE_KINDS = ['account', 'class', 'group', 'total', 'bench', 'series'] as const;
 export type RollupScopeKind = (typeof ROLLUP_SCOPE_KINDS)[number];
 
 export const ROLLUP_STATUSES = ['ready', 'pending', 'rebuilding'] as const;
@@ -51,6 +51,9 @@ export type RollupRow = {
   value: number;
   interpolated: boolean;
   byClass?: Record<string, number>;
+  netInvested?: number;
+  sp500Equiv?: number;
+  estimated?: boolean;
   version: number;
 };
 
@@ -225,6 +228,9 @@ export type ComputedDay = {
   asOf: string;
   value: number;
   interpolated: boolean;
+  netInvested?: number;
+  sp500Equiv?: number;
+  estimated?: boolean;
 };
 
 export function computeAccountDays(args: {
@@ -306,7 +312,14 @@ export function rollupCoarse(
     const start = grain === 'week' ? weekStart(end) : monthStart(end);
     const hit = lastInBucket(days, start, end);
     if (!hit) continue;
-    out.push({ asOf: end, value: hit.value, interpolated: hit.interpolated });
+    out.push({
+      asOf: end,
+      value: hit.value,
+      interpolated: hit.interpolated,
+      netInvested: hit.netInvested,
+      sp500Equiv: hit.sp500Equiv,
+      estimated: hit.estimated,
+    });
   }
   return out;
 }
@@ -524,13 +537,30 @@ export function sameByClass(
 }
 
 export function rollupUnchanged(
-  existing: { value: number; interpolated: boolean; byClass?: Record<string, number> },
-  next: { value: number; interpolated: boolean; byClass?: Record<string, number> },
+  existing: {
+    value: number;
+    interpolated: boolean;
+    byClass?: Record<string, number>;
+    netInvested?: number;
+    sp500Equiv?: number;
+    estimated?: boolean;
+  },
+  next: {
+    value: number;
+    interpolated: boolean;
+    byClass?: Record<string, number>;
+    netInvested?: number;
+    sp500Equiv?: number;
+    estimated?: boolean;
+  },
 ): boolean {
   return (
     existing.value === next.value &&
     existing.interpolated === next.interpolated &&
-    sameByClass(existing.byClass, next.byClass)
+    sameByClass(existing.byClass, next.byClass) &&
+    (existing.netInvested ?? null) === (next.netInvested ?? null) &&
+    (existing.sp500Equiv ?? null) === (next.sp500Equiv ?? null) &&
+    Boolean(existing.estimated) === Boolean(next.estimated)
   );
 }
 

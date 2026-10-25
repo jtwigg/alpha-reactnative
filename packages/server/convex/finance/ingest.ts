@@ -23,6 +23,7 @@ import {
   dedupeReturnsByKey,
   groupByAsOf,
 } from './twrModel';
+import { assertSeriesScope } from './seriesModel';
 import { isLinkedPending, pendingWindow, pickPendingMatch, type PendingMatch } from './pending';
 import { transactionBucketDigests } from './sync';
 import {
@@ -55,10 +56,14 @@ import {
   transactionInputValidator,
   flowInputValidator,
   returnInputValidator,
+  seriesInputValidator,
   deleteFlowsArgsValidator,
   deleteFlowsResultValidator,
+  deleteSeriesArgsValidator,
+  deleteSeriesResultValidator,
   upsertResultValidator,
   upsertTransactionsResultValidator,
+  DELETE_SERIES_WRITE_CAP,
 } from './validators';
 
 type AccountInput = {
@@ -134,6 +139,16 @@ type ReturnInput = {
   flowsFullyKnown: boolean;
   method: 'finance.twr.v1';
   note?: string;
+};
+
+type SeriesInput = {
+  scope: string;
+  date: string;
+  value: number;
+  netInvested: number;
+  sp500Equiv: number;
+  valueInterpolated: boolean;
+  estimated: boolean;
 };
 
 function optionalDate(value: string | undefined, field: string): void {
@@ -661,6 +676,108 @@ export const upsertReturns = internalMutation({
   },
 });
 
+function seriesFields(item: SeriesInput): SeriesInput {
+  assertSeriesScope(item.scope);
+  return omitUndefined({
+    scope: item.scope,
+    date: item.date,
+    value: item.value,
+    netInvested: item.netInvested,
+    sp500Equiv: item.sp500Equiv,
+    valueInterpolated: item.valueInterpolated,
+    estimated: item.estimated,
+  });
+}
+
+export const upsertSeries = internalMutation({
+  args: { items: v.array(seriesInputValidator) },
+  returns: upsertResultValidator,
+  handler: async (ctx, { items }) => {
+    assertBatchSize(items.length, BATCH_CAP);
+    const counts = emptyUpsertCounts();
+    const now = Date.now();
+    const lastWins = markBatchWinners(
+      items,
+      (item) => `${item.scope}|${item.date}`,
+      (_item, index) => index,
+    );
+    const seriesDiries: Array<{ accountId: string; from: string }> = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const raw = items[i];
+      parseIsoDate(raw.date);
+      const item = seriesFields(raw);
+      const key = `${item.scope}|${item.date}`;
+      if (!lastWins[i]) {
+        recordStatus(counts, key, 'skipped_lower_precedence');
+        continue;
+      }
+      const contentHash = await financeContentHash('series', item);
+      const existing = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => q.eq('scope', item.scope).eq('date', item.date))
+        .unique();
+      const status = decidePlainWrite(existing?.contentHash ?? null, contentHash);
+      recordStatus(counts, key, status);
+      if (status === 'unchanged') continue;
+      const doc = omitUndefined({ ...item, updatedAt: now, contentHash });
+      if (existing) await ctx.db.replace(existing._id, doc);
+      else await ctx.db.insert('series', doc);
+      seriesDiries.push({ accountId: `series:${item.scope}`, from: item.date });
+    }
+    await touchRollups(ctx, seriesDiries);
+    return counts;
+  },
+});
+
+export const deleteSeries = internalMutation({
+  args: deleteSeriesArgsValidator,
+  returns: deleteSeriesResultValidator,
+  handler: async (ctx, args) => {
+    assertSeriesScope(args.scope);
+    if (args.fromDate) parseIsoDate(args.fromDate);
+    if (args.toDate) parseIsoDate(args.toDate);
+    if (args.fromDate && args.toDate && args.toDate < args.fromDate) {
+      throw new Error('deleteSeries: `toDate` must be on or after `fromDate`');
+    }
+    const rows = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => {
+        const base = q.eq('scope', args.scope);
+        if (args.fromDate && args.toDate) return base.gte('date', args.fromDate).lte('date', args.toDate);
+        if (args.fromDate) return base.gte('date', args.fromDate);
+        if (args.toDate) return base.lte('date', args.toDate);
+        return base;
+      })
+      .take(DELETE_SERIES_WRITE_CAP + 1);
+    const page = rows.slice(0, DELETE_SERIES_WRITE_CAP);
+    const overflow = rows.length > DELETE_SERIES_WRITE_CAP;
+    for (const row of page) await ctx.db.delete(row._id);
+    const first = page[0]?.date ?? args.fromDate ?? null;
+    const last = page[page.length - 1]?.date ?? args.toDate ?? null;
+    if (page.length > 0) {
+      await writeAudit(ctx, {
+        op: 'delete_series',
+        ids: [args.scope],
+        count: page.length,
+        details: {
+          scope: args.scope,
+          fromDate: args.fromDate ?? null,
+          toDate: args.toDate ?? null,
+          deleted: page.map((row) => row.date),
+        },
+      });
+      await touchRollups(ctx, [{ accountId: `series:${args.scope}`, from: first ?? '1970-01-01' }]);
+    }
+    return {
+      scope: args.scope,
+      deleted: page.length,
+      fromDate: args.fromDate ?? first,
+      toDate: args.toDate ?? last,
+      continueFrom: overflow ? rows[DELETE_SERIES_WRITE_CAP]?.date ?? last : null,
+    };
+  },
+});
+
 export const deleteFlows = internalMutation({
   args: deleteFlowsArgsValidator,
   returns: deleteFlowsResultValidator,
@@ -939,6 +1056,15 @@ export const deleteAccounts = internalMutation({
         .withIndex('by_scope_asOf', (q) => q.eq('scope', `account:${accountId}`))
         .take(DELETE_ROW_BATCH);
       for (const row of scoped) await ctx.db.delete(row._id);
+      const scopedSeries = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => q.eq('scope', `account:${accountId}`))
+        .take(DELETE_ROW_BATCH);
+      for (const row of scopedSeries) await ctx.db.delete(row._id);
+      const leftoverSeries = await ctx.db
+        .query('series')
+        .withIndex('by_scope_date', (q) => q.eq('scope', `account:${accountId}`))
+        .take(1);
       writes = session.snapshots + session.transactions + session.holdings + session.accounts;
 
       const leftoverSnaps = await ctx.db
@@ -957,7 +1083,13 @@ export const deleteAccounts = internalMutation({
         .query('flows')
         .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
         .take(1);
-      if (leftoverSnaps.length || leftoverTxns.length || leftoverHolds.length || leftoverFlows.length) {
+      if (
+        leftoverSnaps.length ||
+        leftoverTxns.length ||
+        leftoverHolds.length ||
+        leftoverFlows.length ||
+        leftoverSeries.length
+      ) {
         remainingIds.push(...ids.slice(i));
         break;
       }

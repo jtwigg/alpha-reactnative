@@ -405,12 +405,27 @@ export function Avatar({ label, color }: { label: string; color: string }) {
   );
 }
 
-export function LegendItem({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+export function LegendItem({
+  color,
+  label,
+  dashed,
+  hatched,
+}: {
+  color: string;
+  label: string;
+  dashed?: boolean;
+  hatched?: boolean;
+}) {
   const palette = useFinancePalette();
   return (
     <View style={styles.legendItem}>
       <View style={styles.legendSwatch}>
-        {dashed ? (
+        {hatched ? (
+          <View style={[styles.legendHatchBox, { backgroundColor: `${color}33` }]}>
+            <View style={[styles.legendHatch, { backgroundColor: color }]} />
+            <View style={[styles.legendHatch, styles.legendHatchTwo, { backgroundColor: color }]} />
+          </View>
+        ) : dashed ? (
           <>
             <View style={[styles.legendDash, { backgroundColor: color }]} />
             <View style={[styles.legendDash, { backgroundColor: color }]} />
@@ -513,6 +528,9 @@ const styles = StyleSheet.create({
   legendSwatch: { width: 16, flexDirection: 'row', justifyContent: 'space-between' },
   legendLine: { width: 16, height: 3, borderRadius: 2 },
   legendDash: { width: 4, height: 3, borderRadius: 1 },
+  legendHatchBox: { width: 16, height: 10, borderRadius: 2, overflow: 'hidden' },
+  legendHatch: { position: 'absolute', left: 4, top: -3, width: 1.5, height: 16, transform: [{ rotate: '20deg' }] },
+  legendHatchTwo: { left: 10 },
   legendLabel: { fontSize: 12, fontWeight: '500' },
   state: { alignItems: 'center', gap: 8, paddingVertical: 32, paddingHorizontal: 24 },
   center: { textAlign: 'center' },

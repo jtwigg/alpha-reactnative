@@ -4,7 +4,7 @@ import { Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewS
 import { useFinancePalette } from '@/components/finance/ui';
 import type { SeriesHighlight } from '@/hooks/use-series-highlight';
 
-export type SwatchKind = 'line' | 'dashed' | 'square' | 'hollow';
+export type SwatchKind = 'line' | 'dashed' | 'square' | 'hollow' | 'step' | 'hatch';
 
 /**
  * Tap to highlight (tap again to clear), long-press to hide or show, hover
@@ -78,6 +78,22 @@ function Swatch({ kind, color }: { kind: SwatchKind; color: string }) {
       </View>
     );
   }
+  if (kind === 'step') {
+    return (
+      <View style={styles.lineBox}>
+        <View style={[styles.stepLow, { backgroundColor: color }]} />
+        <View style={[styles.stepHigh, { backgroundColor: color }]} />
+      </View>
+    );
+  }
+  if (kind === 'hatch') {
+    return (
+      <View style={[styles.square, { overflow: 'hidden', backgroundColor: `${color}33` }]}>
+        <View style={[styles.hatch, { backgroundColor: color }]} />
+        <View style={[styles.hatch, styles.hatchTwo, { backgroundColor: color }]} />
+      </View>
+    );
+  }
   return (
     <View style={styles.lineBox}>
       <View style={[styles.line, { backgroundColor: color }]} />
@@ -101,6 +117,10 @@ const styles = StyleSheet.create({
   lineBox: { width: 16, height: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   line: { width: 16, height: 2.5, borderRadius: 2 },
   dash: { width: 4, height: 2, borderRadius: 1 },
+  stepLow: { position: 'absolute', left: 0, bottom: 2, width: 8, height: 2, borderRadius: 1 },
+  stepHigh: { position: 'absolute', right: 0, top: 2, width: 8, height: 2, borderRadius: 1 },
+  hatch: { position: 'absolute', left: 2, top: -2, width: 1.5, height: 14, transform: [{ rotate: '20deg' }] },
+  hatchTwo: { left: 6 },
   square: { width: 10, height: 10, borderRadius: 2 },
   hollow: { borderWidth: 2, backgroundColor: 'transparent' },
 });

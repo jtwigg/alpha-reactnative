@@ -117,6 +117,56 @@ const sign = (value: number) => (value < 0 ? -1 : value > 0 ? 1 : 0);
  * never overshoots its neighbours: no fake peaks, no dips below a flat run.
  * Tangents are computed per contiguous run, so null gaps stay gaps.
  */
+/** Straight cubic that reads as a line (used for stepAfter horizontals/verticals). */
+function lineCurve(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  dashed: boolean,
+): Curve {
+  const dx = (x2 - x1) / 3;
+  const dy = (y2 - y1) / 3;
+  return {
+    x1,
+    y1,
+    cx1: x1 + dx,
+    cy1: y1 + dy,
+    cx2: x2 - dx,
+    cy2: y2 - dy,
+    x2,
+    y2,
+    dashed,
+  };
+}
+
+/**
+ * Step-after: hold the current value until the next x, then jump. Reads as
+ * deposits landing at end of day.
+ */
+export function buildStepAfterCurves(
+  values: (number | null)[],
+  x: (index: number) => number,
+  y: (value: number) => number,
+  gaps?: boolean[],
+  dashed = false,
+): Curve[] {
+  const out: Curve[] = [];
+  for (let i = 0; i < values.length - 1; i += 1) {
+    const a = values[i];
+    const b = values[i + 1];
+    if (a == null || b == null) continue;
+    const dim = dashed || Boolean(gaps?.[i] || gaps?.[i + 1]);
+    const x1 = x(i);
+    const y1 = y(a);
+    const x2 = x(i + 1);
+    const y2 = y(b);
+    out.push(lineCurve(x1, y1, x2, y1, dim));
+    if (y1 !== y2) out.push(lineCurve(x2, y1, x2, y2, dim));
+  }
+  return out;
+}
+
 export function buildCurves(
   values: (number | null)[],
   x: (index: number) => number,

@@ -17,7 +17,7 @@ export const TABLE_ORDER: FinanceTable[] = [
   'holdings',
 ];
 
-export type DateIndexedTable = Exclude<FinanceTable, 'accounts' | 'flows' | 'returns'>;
+export type DateIndexedTable = Exclude<FinanceTable, 'accounts' | 'flows' | 'returns' | 'series'>;
 
 export const TABLE_DATE_FIELD: Record<DateIndexedTable, 'asOf' | 'date'> = {
   balance_snapshots: 'asOf',
