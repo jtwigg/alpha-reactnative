@@ -9,10 +9,11 @@ import {
   isNativeBuildOlder,
   openTestFlight,
   otaBuildFromExtra,
+  otaBuildFromManifest,
   parseBuildNumber,
   pickUpdatePrompt,
   testflightOpenUrls,
-  updatePromptLabel,
+  updateBannerCopy,
 } from '../../reactnative/lib/app-update';
 
 type Handler = (ctx: unknown, args: unknown) => Promise<unknown>;
@@ -107,11 +108,17 @@ describe('native vs OTA prompt', () => {
     ).toBeNull();
   });
 
-  it('labels the native pill New build available', () => {
-    expect(updatePromptLabel({ kind: 'native', latestBuildNumber: '4' })).toBe('New build available');
-    expect(updatePromptLabel({ kind: 'ota', pending: false })).toBe('Update available');
-    expect(updatePromptLabel({ kind: 'ota', pending: true })).toBe('Restart to update');
-    expect(updatePromptLabel({ kind: 'ota', pending: false }, true)).toBe('Updating…');
+  it('uses the Home banner copy and prefers native over OTA', () => {
+    expect(updateBannerCopy({ kind: 'native', latestBuildNumber: '4' })).toBe(
+      'New build available, open TestFlight',
+    );
+    expect(updateBannerCopy({ kind: 'ota', pending: false }, { availableOta: 16 })).toBe(
+      'Update available: ota 16, tap to update & restart',
+    );
+    expect(updateBannerCopy({ kind: 'ota', pending: true }, { availableOta: 16, busy: true })).toBe(
+      'Downloading update…',
+    );
+    expect(otaBuildFromManifest({ extra: { expoClient: { extra: { jsOtaBuild: 16 } } } })).toBe(16);
   });
 
   it('opens TestFlight itms-beta first, then web fallbacks, without canOpenURL', async () => {

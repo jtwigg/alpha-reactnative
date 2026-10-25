@@ -11,10 +11,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppBuildLabel } from '@/components/app-build-label';
 import { ChatInput } from '@/components/chat/chat-input';
 import { HomeBriefing } from '@/components/chat/home-briefing';
 import { HomeThread, useHomeChat } from '@/components/chat/home-thread';
+import { HomeUpdateBannerHost, VersionLabel } from '@/components/home-update-chrome';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { api } from '@/lib/api';
@@ -25,11 +25,12 @@ export default function HomeScreen() {
     return (
       <ThemedView style={styles.page}>
         <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
+          <HomeUpdateBannerHost />
           <View style={styles.header}>
             <ThemedText type="title">Home</ThemedText>
           </View>
+          <VersionLabel />
           <View style={styles.flex} />
-          <AppBuildLabel />
         </SafeAreaView>
       </ThemedView>
     );
@@ -43,7 +44,6 @@ function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: strin
     <View style={styles.flex}>
       <HomeThread messages={messages} pending={pending} onOpenGrok={() => void openGrok()} />
       <HomeBriefing ready={ready} />
-      <AppBuildLabel />
       <ChatInput onSend={(text) => void send(text)} isLoading={pending} />
     </View>
   );
@@ -70,6 +70,7 @@ function SignedInHome() {
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}>
+          <HomeUpdateBannerHost />
           <View style={styles.header}>
             <View style={styles.headerText}>
               <Text style={styles.kicker}>Home</Text>
@@ -86,6 +87,7 @@ function SignedInHome() {
               </Pressable>
             ) : null}
           </View>
+          <VersionLabel />
 
           {toast ? <Text style={styles.toast}>{toast}</Text> : null}
 
