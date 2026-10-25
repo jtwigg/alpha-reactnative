@@ -212,6 +212,10 @@ describe('MCP handler', () => {
       expect(raw).toContain('replaceScope=true on the first batch');
       expect(raw).toContain('wipe runs once');
       expect(raw).toContain('omit replaceScope');
+      expect(raw).toContain('recompute_charts');
+      expect(raw).toContain('recompute_chart_scope');
+      expect(raw).toContain('recompute_charts_from');
+      expect(raw).toContain('check_chart_consistency');
 
       const called = await handler(
         new Request('http://localhost/api/mcp', {

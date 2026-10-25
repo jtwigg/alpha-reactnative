@@ -36,6 +36,7 @@ const INDEXES: Record<string, Record<string, string[]>> = {
     by_grain_kind_asOf: ['grain', 'scopeKind', 'asOf'],
   },
   finance_rollup_state: { by_key: ['key'] },
+  finance_serve: { by_kind_scope_range: ['kind', 'scopeId', 'range'] },
 };
 
 type Row = Record<string, unknown> & { _id: string; _creationTime: number };

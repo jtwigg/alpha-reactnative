@@ -23,6 +23,8 @@ import {
   rollupCoversRange,
 } from './rollups';
 import { loadRollupRange, loadRollupStateView } from './rollupJobs';
+import { expandPagePayload, expandSeriesPayload, loadServePayload } from './serveJobs';
+import { SERVE_PAGE_SCOPE, type ServePageRange, type ServeSeriesRange } from './serve';
 import {
   CONVEX_QUERY_READ_BUDGET,
   accountDocValidator,
@@ -35,8 +37,12 @@ import {
   snapshotDocValidator,
   snapshotsArgsValidator,
   seriesChartResultValidator,
+  seriesHeaderValidator,
   twrRowValidator,
   flowRowValidator,
+  pageAccountValidator,
+  rollupGrainValidator,
+  rollupFreshnessValidator,
 } from './validators';
 import { TWR_WINDOWS, type TwrWindow } from './twrModel';
 import {
@@ -218,6 +224,15 @@ export const page = query({
     if (!(RANGE_KEYS as readonly string[]).includes(range)) {
       throw new Error('Invalid range');
     }
+    const served = await loadServePayload<ServePageRange & { accounts: unknown; rollup: 'live' | 'stale' | 'raw' }>(
+      ctx,
+      'page',
+      SERVE_PAGE_SCOPE,
+      range,
+    );
+    if (served) {
+      return expandPagePayload(served.row, served.payload) as never;
+    }
     const accounts = await ctx.db.query('accounts').take(80);
     const accountIds = accounts.map((row) => row.sourceId);
     const seriesAccounts = accounts.map((row) => ({
@@ -329,6 +344,15 @@ export const series = query({
     await requireAllowedIdentity(ctx);
     assertSeriesScope(args.scope);
     const range = args.range;
+    const served = await loadServePayload<ServeSeriesRange & { scope: string; rollup: 'live' | 'stale' | 'raw' }>(
+      ctx,
+      'series',
+      args.scope,
+      range,
+    );
+    if (served) {
+      return expandSeriesPayload(served.row, served.payload);
+    }
     const grain = seriesGrainForRange(range);
     const first = await ctx.db
       .query('series')
@@ -545,5 +569,128 @@ export const flows = query({
       });
     }
     return out;
+  },
+});
+
+const pagePackRangeValidator = v.object({
+  headline: v.number(),
+  change: v.number(),
+  changePct: v.union(v.number(), v.null()),
+  assets: v.number(),
+  liabilities: v.number(),
+  byClass: v.record(v.string(), v.number()),
+  grain: rollupGrainValidator,
+  rollup: rollupFreshnessValidator,
+  points: v.object({
+    dates: v.array(v.string()),
+    totals: v.array(v.number()),
+    interpolated: v.array(v.number()),
+    classKeys: v.array(v.string()),
+    classCols: v.array(v.array(v.number())),
+  }),
+  coverage: v.object({
+    asOf: v.array(v.string()),
+    label: v.array(v.string()),
+    className: v.array(v.string()),
+  }),
+});
+
+/** All six net-worth ranges in one subscription. Compact columnar series. */
+export const pagePack = query({
+  args: { refreshNonce: v.optional(v.number()) },
+  returns: v.union(
+    v.object({
+      asOf: v.string(),
+      version: v.number(),
+      accounts: v.array(pageAccountValidator),
+      ranges: v.record(v.string(), pagePackRangeValidator),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx) => {
+    await requireAllowedIdentity(ctx);
+    const ranges: Record<string, unknown> = {};
+    let asOf: string | null = null;
+    let version = 0;
+    let accounts: unknown = null;
+    for (const range of RANGE_KEYS) {
+      const served = await loadServePayload<
+        ServePageRange & { accounts: unknown; rollup: 'live' | 'stale' | 'raw' }
+      >(ctx, 'page', SERVE_PAGE_SCOPE, range);
+      if (!served) continue;
+      asOf = served.row.asOf;
+      version = served.row.version;
+      accounts = served.payload.accounts;
+      ranges[range] = {
+        headline: served.payload.headline,
+        change: served.payload.change,
+        changePct: served.payload.changePct,
+        assets: served.payload.assets,
+        liabilities: served.payload.liabilities,
+        byClass: served.payload.byClass,
+        grain: served.payload.grain,
+        rollup: served.payload.rollup,
+        points: served.payload.points,
+        coverage: served.payload.coverage,
+      };
+    }
+    if (!asOf || !accounts) return null;
+    return { asOf, version, accounts, ranges } as never;
+  },
+});
+
+const seriesPackRangeValidator = v.object({
+  grain: rollupGrainValidator,
+  rollup: rollupFreshnessValidator,
+  points: v.object({
+    dates: v.array(v.string()),
+    value: v.array(v.number()),
+    netInvested: v.array(v.number()),
+    sp500Equiv: v.array(v.number()),
+    valueInterpolated: v.array(v.number()),
+    estimated: v.array(v.number()),
+  }),
+  twr: v.union(seriesHeaderValidator, v.null()),
+  sp500Twr: v.union(seriesHeaderValidator, v.null()),
+});
+
+/** All six TWR series ranges for one scope. */
+export const seriesPack = query({
+  args: { scope: v.string(), refreshNonce: v.optional(v.number()) },
+  returns: v.union(
+    v.object({
+      scope: v.string(),
+      asOf: v.string(),
+      version: v.number(),
+      ranges: v.record(v.string(), seriesPackRangeValidator),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    await requireAllowedIdentity(ctx);
+    assertSeriesScope(args.scope);
+    const ranges: Record<string, unknown> = {};
+    let asOf: string | null = null;
+    let version = 0;
+    for (const range of RANGE_KEYS) {
+      const served = await loadServePayload<ServeSeriesRange & { scope: string; rollup: 'live' | 'stale' | 'raw' }>(
+        ctx,
+        'series',
+        args.scope,
+        range,
+      );
+      if (!served) continue;
+      asOf = served.row.asOf;
+      version = served.row.version;
+      ranges[range] = {
+        grain: served.payload.grain,
+        rollup: served.payload.rollup,
+        points: served.payload.points,
+        twr: served.payload.twr,
+        sp500Twr: served.payload.sp500Twr,
+      };
+    }
+    if (!asOf) return null;
+    return { scope: args.scope, asOf, version, ranges } as never;
   },
 });

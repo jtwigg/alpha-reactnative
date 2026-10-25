@@ -247,6 +247,27 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_scopeKey', ['scopeKey']),
 
+  /**
+   * Ready-to-serve chart pages. One compact doc per (kind, scopeId, range).
+   * Reads are a single indexed get. Rebuild / serveJobs writes these.
+   */
+  finance_serve: defineTable({
+    kind: v.union(
+      v.literal('page'),
+      v.literal('account'),
+      v.literal('sparklines'),
+      v.literal('stack'),
+      v.literal('series'),
+    ),
+    scopeId: v.string(),
+    range: v.string(),
+    version: v.number(),
+    asOf: v.string(),
+    grain: v.union(v.literal('day'), v.literal('week'), v.literal('month')),
+    payload: v.string(),
+    updatedAt: v.number(),
+  }).index('by_kind_scope_range', ['kind', 'scopeId', 'range']),
+
   /** Precomputed time-weighted returns. Key is scope+window+asOf. Finance writes only. */
   returns: defineTable({
     scope: v.string(),

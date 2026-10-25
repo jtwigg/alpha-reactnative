@@ -46,6 +46,8 @@ import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
 import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { useCachedValue } from '@/lib/finance-cache';
+import { seriesFromPack, type SeriesPack } from '@/lib/finance-packs';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { useChartMode } from '@/lib/chart-mode';
@@ -113,15 +115,49 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const { timeWeighted, setTimeWeighted, showSp500, setShowSp500 } = useChartMode();
   const scope = accountScope(sourceId);
 
+  const [visited, setVisited] = useState<Set<RangeKey>>(() => new Set(['All', range]));
+  useEffect(() => {
+    setVisited((current) => {
+      if (current.has(range)) return current;
+      const next = new Set(current);
+      next.add(range);
+      return next;
+    });
+  }, [range]);
   const liveDetail = useQuery(
     api.finance.accounts.detail,
     live ? { sourceId, range: 'All', refreshNonce } : 'skip',
+  );
+  const detail1M = useQuery(
+    api.finance.accounts.detail,
+    live && visited.has('1M') ? { sourceId, range: '1M', refreshNonce } : 'skip',
+  );
+  const detail3M = useQuery(
+    api.finance.accounts.detail,
+    live && visited.has('3M') ? { sourceId, range: '3M', refreshNonce } : 'skip',
+  );
+  const detailYtd = useQuery(
+    api.finance.accounts.detail,
+    live && visited.has('YTD') ? { sourceId, range: 'YTD', refreshNonce } : 'skip',
+  );
+  const detail1Y = useQuery(
+    api.finance.accounts.detail,
+    live && visited.has('1Y') ? { sourceId, range: '1Y', refreshNonce } : 'skip',
+  );
+  const detail5Y = useQuery(
+    api.finance.accounts.detail,
+    live && visited.has('5Y') ? { sourceId, range: '5Y', refreshNonce } : 'skip',
   );
   const fineDetail = useQuery(
     api.finance.accounts.detail,
     live && isDailyRange(range) ? { sourceId, range, refreshNonce } : 'skip',
   );
-  const liveSeries = useQuery(api.finance.queries.series, live ? { scope, range, refreshNonce } : 'skip');
+  const liveSeriesPack = useQuery(api.finance.queries.seriesPack, live ? { scope, refreshNonce } : 'skip');
+  const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${scope}`, liveSeriesPack ?? undefined);
+  const liveSeries = useQuery(
+    api.finance.queries.series,
+    live && seriesPack == null ? { scope, range, refreshNonce } : 'skip',
+  );
   const liveTwr = useQuery(api.finance.queries.twr, live ? { scope, refreshNonce } : 'skip');
   const liveFlows = useQuery(api.finance.queries.flows, live ? { accountId: sourceId, refreshNonce } : 'skip');
   const demoSeriesModel = useMemo(() => (live ? undefined : demoTwr(scope, range)), [live, range, scope]);
@@ -154,11 +190,14 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
       if (!demo) return demo;
       return { ...demo, history: trimHistoryToRange(demo.history, range) };
     }
+    const byRange = { '1M': detail1M, '3M': detail3M, YTD: detailYtd, '1Y': detail1Y, '5Y': detail5Y, All: liveDetail };
+    const hit = byRange[range];
+    if (hit && hit.history.range === range) return hit;
     const source = liveDetail ?? held;
     if (source === undefined || source === null) return source;
     if (fineDetail && fineDetail.history.range === range) return fineDetail;
     return { ...source, history: trimHistoryToRange(source.history, range) };
-  }, [fineDetail, held, live, liveDetail, range, sourceId]);
+  }, [detail1M, detail1Y, detail3M, detail5Y, detailYtd, fineDetail, held, live, liveDetail, range, sourceId]);
 
   if (detail === undefined) {
     return (
@@ -189,7 +228,10 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
   const color = colors.groups[group];
   const balance = detail.latestSnapshot?.balance ?? detail.currentBalance;
   const shown = signedAmount(detail.class, balance);
-  const seriesPoints = live ? (liveSeries?.points ?? []) : (demoSeriesModel?.series ?? []);
+  const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
+  const seriesPoints = live
+    ? (packedSeries?.points ?? liveSeries?.points ?? [])
+    : (demoSeriesModel?.series ?? []);
   const hasSeries = seriesPoints.length >= 2;
   const twrOn = timeWeighted;
   const sp500On = showSp500 && group !== 'liability';
@@ -237,12 +279,14 @@ function AccountDetailBody({ sourceId, live }: { sourceId: string; live: boolean
                   suffix={RANGE_SUFFIX[range]}
                 />
                 <TwrHeader
-                  twr={live ? (liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
-                  sp500Twr={live ? (liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)}
+                  twr={live ? (packedSeries?.twr ?? liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
+                  sp500Twr={
+                    live ? (packedSeries?.sp500Twr ?? liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)
+                  }
                   showSp500={sp500On}
                 />
                 {depositIncomplete ? <IncompleteDepositBadge note={depositNote} /> : null}
-                {live && liveSeries === undefined ? (
+                {live && packedSeries == null && liveSeries === undefined ? (
                   <ActivityIndicator />
                 ) : (
                   <TwrChart

@@ -43,6 +43,8 @@ import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountList, demoAccountSparklines, demoFlows, demoNetWorthPage, demoTwr } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
 import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { useCachedValue } from '@/lib/finance-cache';
+import { pageFromPack, seriesFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
 import {
@@ -81,25 +83,41 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const scrollRef = useRef<ScrollView>(null);
   const chartY = useRef(0);
   const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
-  const live = useQuery(api.finance.queries.page, allowed ? { range: 'All', refreshNonce } : 'skip');
+  const livePack = useQuery(api.finance.queries.pagePack, allowed ? { refreshNonce } : 'skip');
+  const pack = useCachedValue<PagePack>(`finance.pagePack`, livePack ?? undefined);
+  const needFallback = Boolean(allowed && livePack === null && pack == null);
+  const live = useQuery(
+    api.finance.queries.page,
+    needFallback ? { range: 'All', refreshNonce } : 'skip',
+  );
   const fine = useQuery(
     api.finance.queries.page,
-    allowed && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+    needFallback && isDailyRange(range) ? { range, refreshNonce } : 'skip',
   );
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
   const [held, setHeld] = useState(live);
   const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
   const liveSparks = useQuery(api.finance.accounts.sparklines, allowed ? { range: 'All', refreshNonce } : 'skip');
+  const spark1M = useQuery(api.finance.accounts.sparklines, pack ? { range: '1M', refreshNonce } : 'skip');
+  const spark3M = useQuery(api.finance.accounts.sparklines, pack ? { range: '3M', refreshNonce } : 'skip');
+  const sparkYtd = useQuery(api.finance.accounts.sparklines, pack ? { range: 'YTD', refreshNonce } : 'skip');
+  const spark1Y = useQuery(api.finance.accounts.sparklines, pack ? { range: '1Y', refreshNonce } : 'skip');
+  const spark5Y = useQuery(api.finance.accounts.sparklines, pack ? { range: '5Y', refreshNonce } : 'skip');
   const fineSparks = useQuery(
     api.finance.accounts.sparklines,
-    allowed && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+    needFallback && isDailyRange(range) ? { range, refreshNonce } : 'skip',
   );
   const [heldSparks, setHeldSparks] = useState(liveSparks);
   const twrScope = twrAll ? 'total' : 'reliable_subset';
   const router = useRouter();
+  const liveSeriesPack = useQuery(
+    api.finance.queries.seriesPack,
+    allowed ? { scope: twrScope, refreshNonce } : 'skip',
+  );
+  const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${twrScope}`, liveSeriesPack ?? undefined);
   const liveSeries = useQuery(
     api.finance.queries.series,
-    allowed ? { scope: twrScope, range, refreshNonce } : 'skip',
+    allowed && seriesPack == null ? { scope: twrScope, range, refreshNonce } : 'skip',
   );
   const liveTwr = useQuery(api.finance.queries.twr, allowed ? { scope: twrScope, refreshNonce } : 'skip');
   const liveFlows = useQuery(
@@ -128,18 +146,20 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     () => setRefreshNonce((nonce) => nonce + 1),
   );
 
-  const full = live ?? held;
+  const packed = pack ? pageFromPack(pack, range) : null;
+  const full = packed ?? live ?? held;
   const hasLive = Boolean(allowed && full && full.accounts.length > 0);
-  const byRange = useMemo(() => (full ? modelsForRanges(full) : null), [full]);
+  const byRange = useMemo(() => (full && !packed ? modelsForRanges(full) : null), [full, packed]);
   const demoByRange = useMemo(() => (demo ? modelsForRanges(demoNetWorthPage('All')) : null), [demo]);
   const data = useMemo(() => {
+    if (packed) return packed;
     if (hasLive) {
       if (fine && fine.range === range) return fine;
       return byRange?.[range] ?? full;
     }
     if (demo) return demoByRange?.[range] ?? demoNetWorthPage(range);
     return full;
-  }, [byRange, demo, demoByRange, fine, full, hasLive, range]);
+  }, [byRange, demo, demoByRange, fine, full, hasLive, packed, range]);
   const accountList = hasLive
     ? (liveAccounts ?? heldAccounts)
     : demo
@@ -151,6 +171,9 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   );
   const trends = useMemo<AccountTrends>(() => {
     const sparks = (() => {
+      const byRangeSparks = { '1M': spark1M, '3M': spark3M, YTD: sparkYtd, '1Y': spark1Y, '5Y': spark5Y, All: liveSparks };
+      const hit = byRangeSparks[range];
+      if (hit && hit.range === range) return hit;
       if (hasLive || !demo) {
         if (fineSparks && fineSparks.range === range) return fineSparks;
         const source = liveSparks ?? heldSparks;
@@ -165,7 +188,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
       rangeLabel: RANGE_SUFFIX[range],
       mode: changeMode,
     };
-  }, [changeMode, demo, fineSparks, hasLive, heldSparks, liveSparks, range, sparkAccounts]);
+  }, [changeMode, demo, fineSparks, hasLive, heldSparks, liveSparks, range, spark1M, spark3M, spark5Y, spark1Y, sparkYtd, sparkAccounts]);
   const pickRange = (next: RangeKey) => {
     setRange(next);
     setRangeGen((gen) => gen + 1);
@@ -240,7 +263,10 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   }
 
   const usingDemo = demo && !hasLive;
-  const seriesPoints = hasLive ? (liveSeries?.points ?? []) : (demoSeriesModel?.series ?? []);
+  const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
+  const seriesPoints = hasLive
+    ? (packedSeries?.points ?? liveSeries?.points ?? [])
+    : (demoSeriesModel?.series ?? []);
   const hasSeries = seriesPoints.length >= 2;
   const twrOn = timeWeighted && activeGroup === 'all';
   const sp500On = showSp500 && activeGroup !== 'liability';
@@ -298,12 +324,16 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                         suffix={RANGE_SUFFIX[range]}
                       />
                       <TwrHeader
-                        twr={hasLive ? (liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
-                        sp500Twr={hasLive ? (liveSeries?.sp500Twr ?? null) : (demoSeriesModel?.sp500Twr ?? null)}
+                        twr={hasLive ? (packedSeries?.twr ?? liveSeries?.twr ?? null) : (demoSeriesModel?.twr ?? null)}
+                        sp500Twr={
+                          hasLive
+                            ? (packedSeries?.sp500Twr ?? liveSeries?.sp500Twr ?? null)
+                            : (demoSeriesModel?.sp500Twr ?? null)
+                        }
                         showSp500={sp500On}
                       />
                       {depositIncomplete ? <IncompleteDepositBadge note={depositNote} /> : null}
-                      {hasLive && liveSeries === undefined ? (
+                      {hasLive && packedSeries == null && liveSeries === undefined ? (
                         <ActivityIndicator />
                       ) : (
                         <TwrChart
