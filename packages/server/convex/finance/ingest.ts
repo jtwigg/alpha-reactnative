@@ -23,7 +23,12 @@ import {
   dedupeReturnsByKey,
   groupByAsOf,
 } from './twrModel';
-import { assertSeriesScope } from './seriesModel';
+import {
+  assertSeriesMethod,
+  assertSeriesScope,
+  scopesInSeriesBatch,
+  shouldReplaceSeriesScope,
+} from './seriesModel';
 import { isLinkedPending, pendingWindow, pickPendingMatch, type PendingMatch } from './pending';
 import { transactionBucketDigests } from './sync';
 import {
@@ -56,7 +61,7 @@ import {
   transactionInputValidator,
   flowInputValidator,
   returnInputValidator,
-  seriesInputValidator,
+  upsertSeriesArgsValidator,
   deleteFlowsArgsValidator,
   deleteFlowsResultValidator,
   deleteSeriesArgsValidator,
@@ -149,6 +154,7 @@ type SeriesInput = {
   sp500Equiv: number;
   valueInterpolated: boolean;
   estimated: boolean;
+  method: 'finance.bench.v1';
 };
 
 function optionalDate(value: string | undefined, field: string): void {
@@ -678,6 +684,7 @@ export const upsertReturns = internalMutation({
 
 function seriesFields(item: SeriesInput): SeriesInput {
   assertSeriesScope(item.scope);
+  assertSeriesMethod(item.method);
   return omitUndefined({
     scope: item.scope,
     date: item.date,
@@ -686,16 +693,66 @@ function seriesFields(item: SeriesInput): SeriesInput {
     sp500Equiv: item.sp500Equiv,
     valueInterpolated: item.valueInterpolated,
     estimated: item.estimated,
+    method: item.method,
   });
 }
 
+async function deleteSeriesScope(ctx: MutationCtx, scope: string): Promise<{ deleted: number; from: string | null }> {
+  let deleted = 0;
+  let from: string | null = null;
+  while (true) {
+    const page = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope))
+      .take(DELETE_SERIES_WRITE_CAP);
+    if (page.length === 0) break;
+    if (from == null) from = page[0]?.date ?? null;
+    for (const row of page) {
+      await ctx.db.delete(row._id);
+      deleted += 1;
+    }
+  }
+  return { deleted, from };
+}
+
 export const upsertSeries = internalMutation({
-  args: { items: v.array(seriesInputValidator) },
+  args: upsertSeriesArgsValidator,
   returns: upsertResultValidator,
-  handler: async (ctx, { items }) => {
+  handler: async (ctx, { items, replaceScope, replaceBatchId }) => {
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
+    const scopes = scopesInSeriesBatch(items);
+    let seenBatchId = false;
+    if (replaceBatchId) {
+      const existing = await ctx.db
+        .query('series_replace_batches')
+        .withIndex('by_batchId', (q) => q.eq('batchId', replaceBatchId))
+        .unique();
+      seenBatchId = Boolean(existing);
+    }
+    let replaced = 0;
+    if (shouldReplaceSeriesScope({ replaceScope, replaceBatchId, seenBatchId })) {
+      let earliest: string | null = null;
+      for (const scope of scopes) {
+        const wiped = await deleteSeriesScope(ctx, scope);
+        replaced += wiped.deleted;
+        if (wiped.from && (earliest == null || wiped.from < earliest)) earliest = wiped.from;
+      }
+      if (replaceBatchId && !seenBatchId) {
+        await ctx.db.insert('series_replace_batches', {
+          batchId: replaceBatchId,
+          scopes,
+          createdAt: now,
+        });
+      }
+      if (replaced > 0) {
+        await touchRollups(
+          ctx,
+          scopes.map((scope) => ({ accountId: `series:${scope}`, from: earliest ?? '1970-01-01' })),
+        );
+      }
+    }
     const lastWins = markBatchWinners(
       items,
       (item) => `${item.scope}|${item.date}`,
@@ -725,7 +782,7 @@ export const upsertSeries = internalMutation({
       seriesDiries.push({ accountId: `series:${item.scope}`, from: item.date });
     }
     await touchRollups(ctx, seriesDiries);
-    return counts;
+    return replaced > 0 ? { ...counts, replaced } : counts;
   },
 });
 

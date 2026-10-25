@@ -3,6 +3,8 @@ import { enclosingMonthEnds, enclosingWeekEnds } from './rollups';
 import { grainForRange, type RangeKey, type RollupGrain } from './series';
 import { parseAccountScope, type TwrWindow } from './twrModel';
 
+export const SERIES_METHOD = 'finance.bench.v1' as const;
+
 export type SeriesPoint = {
   asOf: string;
   value: number;
@@ -18,6 +20,32 @@ export function assertSeriesScope(scope: string): asserts scope is SeriesScope {
   if (scope === 'total' || scope === 'reliable_subset') return;
   if (parseAccountScope(scope)) return;
   throw new Error(`series.scope must be total, reliable_subset, or account:<id>, got ${scope}`);
+}
+
+export function assertSeriesMethod(method: string): void {
+  if (method !== SERIES_METHOD) throw new Error(`series.method must be ${SERIES_METHOD}`);
+}
+
+/** Unique scopes in a series upsert batch, sorted. */
+export function scopesInSeriesBatch(items: Array<{ scope: string }>): string[] {
+  return [...new Set(items.map((item) => item.scope))].sort();
+}
+
+/**
+ * Whether this upsert_series call should delete existing rows for the batch's
+ * scopes before writing. `replaceScope` only applies on the first batch of a
+ * rewrite: later batches with the same `replaceBatchId` skip the delete.
+ * Without a batch id, Finance must send `replaceScope: true` on the first
+ * ≤500 batch only.
+ */
+export function shouldReplaceSeriesScope(args: {
+  replaceScope?: boolean;
+  replaceBatchId?: string;
+  seenBatchId?: boolean;
+}): boolean {
+  if (!args.replaceScope) return false;
+  if (args.replaceBatchId && args.seenBatchId) return false;
+  return true;
 }
 
 export function sp500ReturnScope(scope: string): string {

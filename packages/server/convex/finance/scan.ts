@@ -238,7 +238,7 @@ export async function collectDigestPage(
         break tableLoop;
       }
 
-      if (table === 'flows' || table === 'returns') continue;
+      if (table === 'flows' || table === 'returns' || table === 'series') continue;
       if (table === 'accounts') {
         const account = await source.loadAccountBucket(accountId);
         documentsRead += 1;
@@ -304,6 +304,125 @@ export async function collectDigestPage(
     continueCursor: stoppedEarly ? lastEmitted : null,
     isDone: !stoppedEarly,
     documentsRead,
+  };
+}
+
+export type SeriesDigestSource = {
+  listScopes: (scope?: string) => Promise<string[]>;
+  firstDate: (scope: string, fromDate?: string, toDate?: string) => Promise<string | null>;
+  lastDate: (scope: string, fromDate?: string, toDate?: string) => Promise<string | null>;
+  rowsInMonth: (scope: string, month: string) => Promise<DigestRow[]>;
+};
+
+/** Series digest buckets keyed (table=series, accountId=scope, month). */
+export async function collectSeriesDigestPage(
+  source: SeriesDigestSource,
+  args: {
+    scope?: string;
+    fromDate?: string;
+    toDate?: string;
+    cursor: DigestCursor | null;
+    limit: number;
+    readBudget: number;
+    hash: (hashes: string[]) => Promise<string>;
+  },
+): Promise<{
+  buckets: DigestBucket[];
+  continueCursor: DigestCursor | null;
+  isDone: boolean;
+  documentsRead: number;
+  rowHashes: string[];
+}> {
+  const scopes = await source.listScopes(args.scope);
+  const buckets: DigestBucket[] = [];
+  const rowHashes: string[] = [];
+  let documentsRead = 0;
+  let lastEmitted: DigestCursor | null = null;
+  let stoppedEarly = false;
+
+  scopeLoop: for (const scope of scopes) {
+    if (buckets.length >= args.limit || documentsRead >= args.readBudget) {
+      stoppedEarly = true;
+      break;
+    }
+    const first = await source.firstDate(scope, args.fromDate, args.toDate);
+    const last = await source.lastDate(scope, args.fromDate, args.toDate);
+    documentsRead += 2;
+    if (!first || !last) continue;
+    let month = monthOf(first);
+    const endMonth = monthOf(last);
+    if (args.cursor?.table === 'series' && args.cursor.accountId === scope && args.cursor.month) {
+      const resume = addMonths(args.cursor.month, 1);
+      if (resume > month) month = resume;
+    }
+    for (const current of eachMonth(month, endMonth)) {
+      if (!afterCursor('series', scope, current, args.cursor)) continue;
+      if (buckets.length >= args.limit || documentsRead >= args.readBudget) {
+        stoppedEarly = true;
+        break scopeLoop;
+      }
+      const rows = await source.rowsInMonth(scope, current);
+      documentsRead += rows.length;
+      if (rows.length === 0) continue;
+      buckets.push({
+        table: 'series',
+        accountId: scope,
+        month: current,
+        count: rows.length,
+        sum: formatFixedSum(rows.map((row) => row.amount)),
+        bucketHash: await args.hash(rows.map((row) => row.contentHash)),
+      });
+      lastEmitted = { table: 'series', accountId: scope, month: current };
+      for (const row of rows) rowHashes.push(row.contentHash);
+    }
+  }
+
+  return {
+    buckets,
+    continueCursor: stoppedEarly ? lastEmitted : null,
+    isDone: !stoppedEarly,
+    documentsRead,
+    rowHashes,
+  };
+}
+
+export function memorySeriesDigestSource(
+  rows: Array<{ scope: string; date: string; value: number; contentHash: string }>,
+): SeriesDigestSource {
+  const sorted = [...rows].sort((a, b) => {
+    const byScope = a.scope.localeCompare(b.scope);
+    return byScope !== 0 ? byScope : a.date.localeCompare(b.date);
+  });
+  const inRange = (scope: string, fromDate?: string, toDate?: string) =>
+    rowsInDateRange(
+      sorted.filter((row) => row.scope === scope),
+      (row) => row.date,
+      fromDate,
+      toDate,
+    );
+  return {
+    async listScopes(scope) {
+      if (scope) {
+        const aliases = scope === 'total' || scope === 'reliable_subset' || scope.startsWith('account:')
+          ? [scope]
+          : [scope, `account:${scope}`];
+        return aliases.filter((name) => sorted.some((row) => row.scope === name));
+      }
+      return [...new Set(sorted.map((row) => row.scope))].sort();
+    },
+    async firstDate(scope, fromDate, toDate) {
+      return inRange(scope, fromDate, toDate)[0]?.date ?? null;
+    },
+    async lastDate(scope, fromDate, toDate) {
+      const match = inRange(scope, fromDate, toDate);
+      return match[match.length - 1]?.date ?? null;
+    },
+    async rowsInMonth(scope, month) {
+      return inRange(scope, monthStart(month), monthEnd(month)).map((row) => ({
+        contentHash: row.contentHash,
+        amount: row.value,
+      }));
+    },
   };
 }
 

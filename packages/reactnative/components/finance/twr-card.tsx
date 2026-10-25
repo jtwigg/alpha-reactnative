@@ -1,8 +1,9 @@
 import { useQuery } from 'convex/react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Badge, Card, FText, SectionHeader, TABULAR, useFinancePalette } from '@/components/finance/ui';
+import { IncompleteDepositBadge } from '@/components/finance/twr-chart';
+import { Card, FText, SectionHeader, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
 import { formatCoverageDate, formatUsdSigned } from '@/lib/finance-coverage';
 
@@ -56,11 +57,6 @@ export function TwrCard({
   if (live && (liveTwr === undefined || liveFlows === undefined)) return null;
   if (flows.length === 0 && !incomplete) return null;
 
-  const openNote = () => {
-    if (!note) return;
-    Alert.alert('Return note', note);
-  };
-
   const openFlow = (flow: FlowRow) => {
     const target =
       flow.counterpart?.type === 'transaction'
@@ -78,14 +74,14 @@ export function TwrCard({
     <Card>
       <SectionHeader title="Flows" subtitle="Cash that affects this account’s time-weighted return." />
       {incomplete ? (
-        <Pressable onPress={openNote} disabled={!note} accessibilityRole="button">
-          <Badge label="Estimated / incomplete flows" tone="accent" />
+        <View>
+          <IncompleteDepositBadge note={note} />
           {note ? (
             <FText variant="caption" tone="subtle" style={styles.noteHint}>
               {note}
             </FText>
           ) : null}
-        </Pressable>
+        </View>
       ) : null}
       {flows.map((flow) => (
         <Pressable

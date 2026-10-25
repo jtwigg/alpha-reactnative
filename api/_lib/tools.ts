@@ -171,6 +171,7 @@ const seriesItem = z.object({
   sp500Equiv: z.number(),
   valueInterpolated: z.boolean(),
   estimated: z.boolean().describe('True for the window before flow data exists'),
+  method: z.literal('finance.bench.v1'),
 });
 
 export const upsertFlowsSchema = z.object({
@@ -191,6 +192,18 @@ export const upsertReturnsSchema = z.object({
 
 export const upsertSeriesSchema = z.object({
   items: z.array(seriesItem).min(1).max(500),
+  replaceScope: z
+    .boolean()
+    .optional()
+    .describe(
+      'If true, delete every stored series row for each scope present in this batch, then write the items. For a full rewrite larger than 500 rows, set replaceScope true only on the first batch (or pass the same replaceBatchId on every batch of that rewrite — the delete runs once). Later batches without replaceScope just upsert.',
+    ),
+  replaceBatchId: z
+    .string()
+    .optional()
+    .describe(
+      'Opaque rewrite id. The first upsert_series call with replaceScope=true and this id wipes those scopes; later batches that repeat the id skip the wipe so a 1,850-row scope can land in four ≤500 batches.',
+    ),
 });
 
 export const deleteSeriesSchema = z.object({
@@ -277,7 +290,7 @@ export function registerFinanceTools(
     {
       title: 'Get finance digest',
       description:
-        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Also returns table-level flows, returns, and series {count, checksum} over sorted finance.v1 content hashes. Paginate with continueCursor.',
+        'Reconcile buckets of (table, accountId, YYYY-MM) with count, 8-decimal sum, and bucketHash (SHA-256 of sorted contentHash values joined by LF). Series buckets use accountId = scope (total | reliable_subset | account:<id>) and sum of value. Series is walked per-scope (no table-wide take(4000)). Also returns table-level flows, returns, and series {count, checksum}. Paginate with continueCursor.',
       inputSchema: getDigestSchema,
     },
     call('get_digest'),
@@ -365,7 +378,7 @@ export function registerFinanceTools(
     {
       title: 'Upsert TWR series',
       description:
-        "Insert or overwrite the daily TWR path (value, net invested, flow-adjusted S&P 500). Batch cap 500. Key is scope+date. Last item in the batch wins on a repeated key. scope is 'account:<id>', 'total', or 'reliable_subset'. estimated is true for the window before flow data. valueInterpolated marks gap-filled value days. Returns per-row inserted/updated/unchanged.",
+        "Insert or overwrite the daily TWR path (value, net invested, flow-adjusted S&P 500). Batch cap 500. Key is scope+date. Last item in the batch wins on a repeated key. scope is 'account:<id>', 'total', or 'reliable_subset'. method must be finance.bench.v1. estimated is true for the window before flow data. valueInterpolated marks gap-filled value days. For a full rewrite (e.g. ~1,850 days), set replaceScope=true on the first batch only, or pass one replaceBatchId on every batch of that rewrite so the wipe runs once. Later batches upsert. Returns per-row inserted/updated/unchanged plus optional replaced.",
       inputSchema: upsertSeriesSchema,
     },
     call('upsert_series'),

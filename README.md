@@ -370,7 +370,7 @@ https://alpha-theta-silk.vercel.app/api/mcp
 
 Tools: `upsert_accounts`, `upsert_snapshots`, `upsert_transactions`, `upsert_holdings`, `fill_gaps`, `get_digest`, `export_bucket`, `list_accounts`, `delete_accounts`, `delete_transactions`, `upsert_flows`, `delete_flows`, `upsert_returns`, `upsert_series`, `delete_series`. Upsert batch cap 500; `fill_gaps` write cap 800; `delete_transactions` / `delete_flows` cap 500 ids (Convex `_id` or `sourceId` / `flowId`); `delete_series` write cap 500 rows (`continueFrom` to page).
 
-Time-weighted returns: Finance writes `flows` (keyed by `flowId`), `returns` (keyed by `scope+window+asOf`), and daily `series` (keyed by `scope+date`: value, netInvested, sp500Equiv). `upsert_returns` replaces every stored row for each `asOf` present in the batch. `returns.scope` may also be `sp500:<inner>` (`sp500:total`, `sp500:reliable_subset`, `sp500:account:<id>`) for the S&P TWR Finance computed. The chart header reads that stored row only — it never derives S&P TWR from the series path, and shows `—` when the row is missing. The app is read-only. `get_digest` adds table-level `flows`, `returns`, and `series` `{ count, checksum }` — SHA-256 of sorted `finance.v1` content hashes joined by LF, same as `bucketHash`. Series rows fold into `finance_rollups` as `scopeKind: "series"` (day / week / month) with the same ingest invalidation as snapshots. The net-worth and account-detail balance charts keep two independent, device-local toggles: **Time-weighted** (value + net-invested step + profit gap + TWR) and **S&P 500** (flow-adjusted overlay when series exist, otherwise the rebased market-index overlay).
+Time-weighted returns: Finance writes `flows` (keyed by `flowId`), `returns` (keyed by `scope+window+asOf`), and daily `series` (keyed by `scope+date`: value, netInvested, sp500Equiv). `upsert_returns` replaces every stored row for each `asOf` present in the batch. `returns.scope` may also be `sp500:<inner>` (`sp500:total`, `sp500:reliable_subset`, `sp500:account:<id>`) for the S&P TWR Finance computed. The chart header reads that stored row only — it never derives S&P TWR from the series path, and shows `—` when the row is missing. The app is read-only. `get_digest` adds table-level `flows`, `returns`, and `series` `{ count, checksum }`, and emits series **buckets** keyed `(table=series, accountId=scope, month)` with `count`, 8-decimal `sum` of `value`, and `bucketHash`. Series digest walks `by_scope_date` per scope (no table-wide `take(4000)`). Series rows fold into `finance_rollups` as `scopeKind: "series"` (day / week / month) with the same ingest invalidation as snapshots. The net-worth and account-detail balance charts keep two independent, device-local toggles: **Time-weighted** (value + net-invested step + profit gap + TWR) and **S&P 500** (flow-adjusted overlay when series exist, otherwise the rebased market-index overlay). On a TWR chart the value line is dashed where `valueInterpolated`, real points get dots, profit/loss is the value−net-invested shade, short windows rebase S&P onto the first-day value, flows are tappable markers, and unreliable accounts show **Incomplete deposit data**.
 
 ```
 upsert_flows({ items: [{
@@ -390,13 +390,22 @@ upsert_returns({ items: [{
   method: "finance.twr.v1", note?
 }] })                                       // 1–500 items; replaces all rows for each asOf in the batch
 
-upsert_series({ items: [{
-  scope: "account:<id>" | "total" | "reliable_subset",
-  date,                                     // YYYY-MM-DD
-  value, netInvested, sp500Equiv,
-  valueInterpolated,                        // gap-filled value
-  estimated                                 // true before flow data exists
-}] })                                       // 1–500 items; key scope+date, last in batch wins
+upsert_series({
+  items: [{
+    scope: "account:<id>" | "total" | "reliable_subset",
+    date,                                   // YYYY-MM-DD
+    value, netInvested, sp500Equiv,
+    valueInterpolated,                      // gap-filled value
+    estimated,                              // true before flow data exists
+    method: "finance.bench.v1"
+  }],
+  replaceScope?,                            // wipe those scopes, then write
+  replaceBatchId?                           // same id on every batch of one rewrite
+})                                          // 1–500 items; key scope+date, last in batch wins
+
+// Full rewrite (~1,850 days / scope): set replaceScope=true on the first batch
+// only, OR pass one replaceBatchId on every batch — the wipe runs once.
+// Later batches omit replaceScope (or repeat the same replaceBatchId).
 
 delete_series({ scope, fromDate?, toDate? }) // inclusive dates; continueFrom pages at 500
 ```

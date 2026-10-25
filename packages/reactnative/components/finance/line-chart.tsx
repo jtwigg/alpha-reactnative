@@ -36,6 +36,8 @@ export type ChartSeries = {
   /** Hold the current y until the next x, then jump (cash-flow step). */
   stepAfter?: boolean;
   strokeWidth?: number;
+  /** Draw a persistent dot on these indices (real, non-interpolated points). */
+  dots?: boolean[];
 };
 
 export type ChartBand = {
@@ -265,6 +267,31 @@ export function LineChart({
                 <WebLines geometry={geometry} active={active} />
               )}
             </Reveal>
+            {geometry.lines.map(({ series: line }) =>
+              line.dots?.map((on, index) => {
+                if (!on) return null;
+                const value = line.values[index];
+                if (value == null) return null;
+                return (
+                  <View
+                    key={`pt-${line.key}-${index}`}
+                    style={{ opacity: seriesOpacity(line.key, active) }}
+                  >
+                    <View
+                      style={[
+                        styles.pointDot,
+                        {
+                          left: geometry.x(index) - POINT_DOT / 2,
+                          top: geometry.y(value) - POINT_DOT / 2,
+                          backgroundColor: line.color,
+                          borderColor: palette.card,
+                        },
+                      ]}
+                    />
+                  </View>
+                );
+              }),
+            )}
             {pair ? <CompareMarks geometry={geometry} pair={pair} palette={palette} active={active} /> : null}
             {hairX != null ? (
               <>
@@ -417,6 +444,7 @@ function CompareMarks({
 }
 
 const DOT = 10;
+const POINT_DOT = 6;
 const HALO = 24;
 const PILL_W = 108;
 
@@ -740,6 +768,7 @@ const styles = StyleSheet.create({
   crosshair: { position: 'absolute', width: 1, opacity: 0.5 },
   halo: { position: 'absolute', width: HALO, height: HALO, borderRadius: HALO / 2, opacity: 0.18 },
   dot: { position: 'absolute', width: DOT, height: DOT, borderRadius: DOT / 2, borderWidth: 2 },
+  pointDot: { position: 'absolute', width: POINT_DOT, height: POINT_DOT, borderRadius: POINT_DOT / 2, borderWidth: 1.5 },
   tooltip: { position: 'absolute', top: 0 },
   pill: {
     position: 'absolute',

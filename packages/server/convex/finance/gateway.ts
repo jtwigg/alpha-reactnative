@@ -109,6 +109,8 @@ export async function dispatchFinanceOp(
     case 'upsert_series':
       return await ctx.runMutation(internal.finance.ingest.upsertSeries, {
         items: args.items,
+        replaceScope: args.replaceScope,
+        replaceBatchId: args.replaceBatchId,
       });
     case 'delete_series':
       return await ctx.runMutation(internal.finance.ingest.deleteSeries, {

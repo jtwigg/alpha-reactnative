@@ -196,6 +196,7 @@ describe('canonicalizeFinanceRow', () => {
       'sp500Equiv',
       'valueInterpolated',
       'estimated',
+      'method',
     ]);
   });
 });
