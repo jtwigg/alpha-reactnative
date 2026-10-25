@@ -452,7 +452,7 @@ export function registerFinanceTools(
     {
       title: 'Check precomputed charts vs live',
       description:
-        'John-only. Compare stored finance_serve payloads to a live recompute from rollups. Same as `npx convex run finance/serveJobs:checkConsistency`.',
+        'John-only. Compare stored finance_serve payloads to a live recompute from rollups. Returns diagnosis (ok|incomplete|mismatch|mixed) and per-pair reason/diff (serve_missing, live_raw, no_source, length, value). Same as `npx convex run finance/serveJobs:checkConsistency`.',
       inputSchema: checkChartConsistencySchema,
     },
     call('check_chart_consistency'),

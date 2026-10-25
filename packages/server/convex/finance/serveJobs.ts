@@ -12,6 +12,7 @@ import {
   readerMode,
   rollupCoversRange,
   valuesFromAccountRollups,
+  type RollupFreshness,
 } from './rollups';
 import {
   RANGE_KEYS,
@@ -52,17 +53,19 @@ import {
   SERVE_PAGE_SCOPE,
   SERVE_SPARK_SCOPE,
   SERVE_STACK_SCOPE,
+  classifyServeCheck,
   decodeCoverage,
   decodePoints,
   decodeSeriesPoints,
+  diagnosisFromPairs,
   encodeCoverage,
   encodePoints,
   encodeSeriesPoints,
   parsePayload,
   rangesOverlapping,
-  sameNumbers,
   stringifyPayload,
   type ServeAccountRange,
+  type ServeCheckPair,
   type ServeKind,
   type ServePageRange,
   type ServeSeriesRange,
@@ -192,10 +195,20 @@ function headerForSeries(
   );
 }
 
-async function loadPageRange(
-  ctx: DbCtx,
-  range: RangeKey,
-): Promise<{ range: RangeKey; model: ReturnType<typeof modelFromRollupPoints> } | null> {
+type PageLive = {
+  range: RangeKey;
+  freshness: RollupFreshness;
+  hasAccounts: boolean;
+  hasRows: boolean;
+  model: ReturnType<typeof modelFromRollupPoints> | null;
+};
+
+/**
+ * Build a page from existing total rollup rows even while coverage is raw/stale.
+ * Only skip when there are no rows — otherwise recomputeAll writes nothing and
+ * checkConsistency reports a silent fail.
+ */
+async function loadPageRange(ctx: DbCtx, range: RangeKey): Promise<PageLive> {
   const accounts = await ctx.db.query('accounts').take(80);
   const accountIds = accounts.map((row) => row.sourceId);
   const seriesAccounts = accounts.map((row) => ({
@@ -217,9 +230,14 @@ async function loadPageRange(
   const rollupRows = await loadRollupRange(ctx, grain, 'total', TOTAL_SCOPE_ID, window.from, window.to, 2000);
   const hasCoverage = rollupCoversRange({ rows: rollupRows, from: window.from, to: window.to, grain });
   const freshness = readerMode({ state, hasCoverage, asOf });
-  if (freshness === 'raw') return null;
+  if (rollupRows.length === 0) {
+    return { range, freshness, hasAccounts: accounts.length > 0, hasRows: false, model: null };
+  }
   return {
     range,
+    freshness,
+    hasAccounts: accounts.length > 0,
+    hasRows: true,
     model: modelFromRollupPoints({
       accounts: seriesAccounts,
       firsts: ends.firstByAccount,
@@ -228,7 +246,7 @@ async function loadPageRange(
       range,
       asOf,
       grain,
-      rollup: freshness,
+      rollup: freshness === 'raw' ? 'stale' : freshness,
     }),
   };
 }
@@ -237,7 +255,7 @@ async function writePages(ctx: MutationCtx, ranges: RangeKey[], version: number)
   let wrote = 0;
   for (const range of ranges) {
     const built = await loadPageRange(ctx, range);
-    if (!built) continue;
+    if (!built.model) continue;
     const payload: ServePageRange = {
       headline: built.model.headline,
       change: built.model.change,
@@ -256,7 +274,7 @@ async function writePages(ctx: MutationCtx, ranges: RangeKey[], version: number)
       version,
       asOf: built.model.asOf,
       grain: built.model.grain,
-      payload: { ...payload, accounts: built.model.accounts, rollup: built.model.rollup },
+      payload: { ...payload, accounts: built.model.accounts, rollup: built.freshness === 'raw' ? 'stale' : built.model.rollup },
     });
     wrote += 1;
   }
@@ -310,7 +328,12 @@ async function writeSparks(ctx: MutationCtx, ranges: RangeKey[], version: number
   return wrote;
 }
 
-async function writeStacks(ctx: MutationCtx, ranges: RangeKey[], version: number): Promise<number> {
+async function writeStacks(
+  ctx: MutationCtx,
+  ranges: RangeKey[],
+  version: number,
+  includeOverview = true,
+): Promise<number> {
   const accounts = await ctx.db.query('accounts').take(80);
   const accountIds = accounts.map((row) => row.sourceId);
   const lookup = snapshotLookup(ctx);
@@ -318,7 +341,7 @@ async function writeStacks(ctx: MutationCtx, ranges: RangeKey[], version: number
   const asOf = ends.maxAsOf ?? todayInTimeZone();
   let wrote = 0;
   const windows: Array<{ range: RangeKey; from?: string; to?: string }> = [
-    { range: 'All' },
+    ...(includeOverview ? [{ range: 'All' as RangeKey }] : []),
     ...ranges.map((range) => {
       const window = rangeWindow(range, asOf, ends.firstAsOf);
       return { range, from: window.from, to: window.to };
@@ -441,12 +464,15 @@ async function writeAccount(
   return wrote;
 }
 
-async function writeSeriesScope(
-  ctx: MutationCtx,
-  scope: string,
-  ranges: RangeKey[],
-  version: number,
-): Promise<number> {
+type SeriesLive = {
+  hasSource: boolean;
+  freshness: RollupFreshness;
+  asOf: string | null;
+  grain: 'day' | 'week' | 'month';
+  points: SeriesPoint[];
+};
+
+async function loadSeriesRange(ctx: DbCtx, scope: string, range: RangeKey): Promise<SeriesLive> {
   const first = await ctx.db
     .query('series')
     .withIndex('by_scope_date', (q) => q.eq('scope', scope))
@@ -457,47 +483,60 @@ async function writeSeriesScope(
     .withIndex('by_scope_date', (q) => q.eq('scope', scope))
     .order('desc')
     .take(1);
-  if (!last[0]) return 0;
+  const grain = seriesGrainForRange(range);
+  if (!last[0]) {
+    return { hasSource: false, freshness: 'raw', asOf: null, grain, points: [] };
+  }
   const asOf = last[0].date;
+  const window = rangeWindow(range, asOf, first[0]?.date ?? null);
+  const state = await loadRollupStateView(ctx);
+  const rollupRows = await loadRollupRange(ctx, grain, 'series', scope, window.from, window.to, 2000);
+  const hasCoverage = rollupCoversRange({
+    rows: rollupRows,
+    from: window.from,
+    to: window.to,
+    grain,
+  });
+  const freshness = readerMode({ state, hasCoverage, asOf });
+  let points: SeriesPoint[];
+  if (freshness !== 'raw') {
+    points = rollupRows.map((row) => seriesPointFromDoc(row));
+  } else {
+    const prior = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope).lt('date', window.from))
+      .order('desc')
+      .take(1);
+    const inside = await ctx.db
+      .query('series')
+      .withIndex('by_scope_date', (q) => q.eq('scope', scope).gte('date', window.from).lte('date', window.to))
+      .take(2000);
+    const raw = [...prior, ...inside].map((row) => seriesPointFromDoc(row));
+    points =
+      grain === 'day'
+        ? raw.filter((point) => point.asOf >= window.from && point.asOf <= window.to)
+        : coarseSeries(raw, grain, window.from, window.to);
+  }
+  return { hasSource: true, freshness, asOf, grain, points };
+}
+
+async function writeSeriesScope(
+  ctx: MutationCtx,
+  scope: string,
+  ranges: RangeKey[],
+  version: number,
+): Promise<number> {
   let wrote = 0;
   for (const range of ranges) {
-    const grain = seriesGrainForRange(range);
-    const window = rangeWindow(range, asOf, first[0]?.date ?? null);
-    const state = await loadRollupStateView(ctx);
-    const rollupRows = await loadRollupRange(ctx, grain, 'series', scope, window.from, window.to, 2000);
-    const hasCoverage = rollupCoversRange({
-      rows: rollupRows,
-      from: window.from,
-      to: window.to,
-      grain,
-    });
-    const freshness = readerMode({ state, hasCoverage, asOf });
-    let points: SeriesPoint[];
-    if (freshness !== 'raw') {
-      points = rollupRows.map((row) => seriesPointFromDoc(row));
-    } else {
-      const prior = await ctx.db
-        .query('series')
-        .withIndex('by_scope_date', (q) => q.eq('scope', scope).lt('date', window.from))
-        .order('desc')
-        .take(1);
-      const inside = await ctx.db
-        .query('series')
-        .withIndex('by_scope_date', (q) => q.eq('scope', scope).gte('date', window.from).lte('date', window.to))
-        .take(2000);
-      const raw = [...prior, ...inside].map((row) => seriesPointFromDoc(row));
-      points =
-        grain === 'day'
-          ? raw.filter((point) => point.asOf >= window.from && point.asOf <= window.to)
-          : coarseSeries(raw, grain, window.from, window.to);
-    }
+    const live = await loadSeriesRange(ctx, scope, range);
+    if (!live.hasSource || live.asOf == null) return wrote;
     const twrWindow = twrWindowForRange(range);
     const storedTwr = twrWindow ? await latestReturnForWindow(ctx, scope, twrWindow) : null;
     const storedSp500 = twrWindow ? await latestReturnForWindow(ctx, sp500ReturnScope(scope), twrWindow) : null;
     const payload: ServeSeriesRange = {
-      grain,
-      points: encodeSeriesPoints(points),
-      twr: headerForSeries(storedTwr, points, twrWindow, (point) => point.value),
+      grain: live.grain,
+      points: encodeSeriesPoints(live.points),
+      twr: headerForSeries(storedTwr, live.points, twrWindow, (point) => point.value),
       sp500Twr: headerFromStoredSp500(storedSp500),
     };
     await upsertServe(ctx, {
@@ -505,9 +544,9 @@ async function writeSeriesScope(
       scopeId: scope,
       range,
       version,
-      asOf,
-      grain,
-      payload: { ...payload, scope, rollup: freshness },
+      asOf: live.asOf,
+      grain: live.grain,
+      payload: { ...payload, scope, rollup: live.freshness },
     });
     wrote += 1;
   }
@@ -609,12 +648,22 @@ export const writeAffected = internalMutation({
       return { done: false, wrote, step: 'page' };
     }
     if (cursor.step === 'sparks') {
-      const wrote = await writeSparks(ctx, ranges, version);
+      const range = ranges[cursor.index];
+      const wrote = range ? await writeSparks(ctx, [range], version) : 0;
+      if (cursor.index + 1 < ranges.length) {
+        await schedule({ step: 'sparks', index: cursor.index + 1, from });
+        return { done: false, wrote, step: 'sparks' };
+      }
       await schedule({ step: 'stack', index: 0, from });
       return { done: false, wrote, step: 'sparks' };
     }
     if (cursor.step === 'stack') {
-      const wrote = await writeStacks(ctx, ranges, version);
+      const range = ranges[cursor.index];
+      const wrote = range ? await writeStacks(ctx, [range], version, cursor.index === 0) : 0;
+      if (cursor.index + 1 < ranges.length) {
+        await schedule({ step: 'stack', index: cursor.index + 1, from });
+        return { done: false, wrote, step: 'stack' };
+      }
       await schedule({ step: 'accounts', index: 0, from });
       return { done: false, wrote, step: 'stack' };
     }
@@ -683,45 +732,222 @@ export const recomputeFrom = internalMutation({
   },
 });
 
+const serveCheckPairValidator = v.object({
+  kind: v.string(),
+  scopeId: v.string(),
+  range: v.string(),
+  ok: v.boolean(),
+  reason: v.string(),
+  storedLen: v.union(v.number(), v.null()),
+  liveLen: v.union(v.number(), v.null()),
+  firstDiffIndex: v.union(v.number(), v.null()),
+  storedAt: v.union(v.string(), v.null()),
+  liveAt: v.union(v.string(), v.null()),
+  storedValue: v.union(v.number(), v.null()),
+  liveValue: v.union(v.number(), v.null()),
+  serveVersion: v.union(v.number(), v.null()),
+  serveUpdatedAt: v.union(v.number(), v.null()),
+  serveAsOf: v.union(v.string(), v.null()),
+  liveFreshness: v.union(v.string(), v.null()),
+});
+
+function serializeCheckPair(pair: ServeCheckPair) {
+  return {
+    kind: pair.kind,
+    scopeId: pair.scopeId,
+    range: pair.range,
+    ok: pair.ok,
+    reason: pair.reason,
+    storedLen: pair.storedLen ?? null,
+    liveLen: pair.liveLen ?? null,
+    firstDiffIndex: pair.firstDiffIndex ?? null,
+    storedAt: pair.storedAt ?? null,
+    liveAt: pair.liveAt ?? null,
+    storedValue: pair.storedValue ?? null,
+    liveValue: pair.liveValue ?? null,
+    serveVersion: pair.serveVersion ?? null,
+    serveUpdatedAt: pair.serveUpdatedAt ?? null,
+    serveAsOf: pair.serveAsOf ?? null,
+    liveFreshness: pair.liveFreshness ?? null,
+  };
+}
+
+async function countServeByKind(ctx: DbCtx): Promise<Record<ServeKind, number>> {
+  const rows = await ctx.db.query('finance_serve').take(1000);
+  const counts: Record<ServeKind, number> = {
+    page: 0,
+    account: 0,
+    sparklines: 0,
+    stack: 0,
+    series: 0,
+  };
+  for (const row of rows) counts[row.kind] += 1;
+  return counts;
+}
+
+async function seriesSourceExists(ctx: DbCtx, scope = 'total'): Promise<boolean> {
+  const last = await ctx.db
+    .query('series')
+    .withIndex('by_scope_date', (q) => q.eq('scope', scope))
+    .order('desc')
+    .take(1);
+  return last.length > 0;
+}
+
+/** Counts + rollup watermark so we can tell if writeAffected is still running. */
+export const status = internalQuery({
+  args: {},
+  returns: v.object({
+    rollup: v.object({
+      status: v.union(v.string(), v.null()),
+      version: v.number(),
+      rebuiltThrough: v.union(v.string(), v.null()),
+      dirtyFrom: v.union(v.string(), v.null()),
+    }),
+    serve: v.object({
+      page: v.number(),
+      series: v.number(),
+      sparklines: v.number(),
+      stack: v.number(),
+      account: v.number(),
+    }),
+    seriesSource: v.boolean(),
+  }),
+  handler: async (ctx) => {
+    const state = await loadRollupStateView(ctx);
+    const serve = await countServeByKind(ctx);
+    return {
+      rollup: {
+        status: state?.status ?? null,
+        version: state?.version ?? 0,
+        rebuiltThrough: state?.rebuiltThrough ?? null,
+        dirtyFrom: state?.dirtyFrom ?? null,
+      },
+      serve: {
+        page: serve.page,
+        series: serve.series,
+        sparklines: serve.sparklines,
+        stack: serve.stack,
+        account: serve.account,
+      },
+      seriesSource: await seriesSourceExists(ctx),
+    };
+  },
+});
+
 export const checkConsistency = internalQuery({
   args: { sample: v.optional(v.number()), kind: v.optional(v.string()), scopeId: v.optional(v.string()) },
   returns: v.object({
+    ok: v.boolean(),
+    diagnosis: v.string(),
     checked: v.number(),
     matched: v.number(),
-    mismatches: v.array(v.object({ kind: v.string(), scopeId: v.string(), range: v.string(), ok: v.boolean() })),
+    skipped: v.number(),
+    rollupStatus: v.union(v.string(), v.null()),
+    rollupVersion: v.number(),
+    rebuiltThrough: v.union(v.string(), v.null()),
+    dirtyFrom: v.union(v.string(), v.null()),
+    serveCounts: v.object({
+      page: v.number(),
+      series: v.number(),
+      sparklines: v.number(),
+      stack: v.number(),
+      account: v.number(),
+    }),
+    seriesSource: v.boolean(),
+    pairs: v.array(serveCheckPairValidator),
+    mismatches: v.array(serveCheckPairValidator),
   }),
   handler: async (ctx, args) => {
     const sample = Math.min(Math.max(args.sample ?? 8, 1), 24);
     const kinds = (args.kind ? [args.kind] : ['page', 'series']) as ServeKind[];
-    const mismatches: Array<{ kind: string; scopeId: string; range: string; ok: boolean }> = [];
-    let checked = 0;
+    const state = await loadRollupStateView(ctx);
+    const serveCounts = await countServeByKind(ctx);
+    const seriesSource = await seriesSourceExists(ctx, args.scopeId ?? 'total');
+    const pairs: ReturnType<typeof serializeCheckPair>[] = [];
     let matched = 0;
+    let skipped = 0;
     for (const kind of kinds) {
       const scopeId = args.scopeId ?? (kind === 'page' ? SERVE_PAGE_SCOPE : 'total');
       for (const range of RANGE_KEYS.slice(0, Math.ceil(sample / kinds.length))) {
         const stored = await loadServePayload<ServePageRange & ServeSeriesRange>(ctx, kind, scopeId, range);
-        checked += 1;
-        if (!stored) {
-          mismatches.push({ kind, scopeId, range, ok: false });
-          continue;
-        }
-        if (kind === 'page') {
-          const live = await loadPageRange(ctx, range);
-          const liveTotals = live ? encodePoints(live.model.points).totals : [];
-          const ok = live != null && sameNumbers(stored.payload.points.totals, liveTotals);
-          if (ok) matched += 1;
-          else mismatches.push({ kind, scopeId, range, ok: false });
-        } else {
-          const decoded = decodeSeriesPoints(stored.payload.points);
-          const ok = decoded.length === stored.payload.points.dates.length;
-          if (ok) matched += 1;
-          else mismatches.push({ kind, scopeId, range, ok: false });
-        }
+        const pair =
+          kind === 'page'
+            ? await checkPagePair(ctx, range, stored)
+            : await checkSeriesPair(ctx, scopeId, range, stored);
+        const serialized = serializeCheckPair(pair);
+        pairs.push(serialized);
+        if (pair.ok && pair.reason === 'no_source') skipped += 1;
+        else if (pair.ok) matched += 1;
       }
     }
-    return { checked, matched, mismatches };
+    const diagnosis = diagnosisFromPairs(pairs);
+    return {
+      ok: diagnosis === 'ok',
+      diagnosis,
+      checked: pairs.length,
+      matched,
+      skipped,
+      rollupStatus: state?.status ?? null,
+      rollupVersion: state?.version ?? 0,
+      rebuiltThrough: state?.rebuiltThrough ?? null,
+      dirtyFrom: state?.dirtyFrom ?? null,
+      serveCounts,
+      seriesSource,
+      pairs,
+      mismatches: pairs.filter((pair) => !pair.ok),
+    };
   },
 });
+
+async function checkPagePair(
+  ctx: DbCtx,
+  range: RangeKey,
+  stored: { row: Doc<'finance_serve'>; payload: ServePageRange } | null,
+) {
+  const live = await loadPageRange(ctx, range);
+  return classifyServeCheck({
+    kind: 'page',
+    scopeId: SERVE_PAGE_SCOPE,
+    range,
+    hasServe: stored != null,
+    hasSource: live.hasAccounts,
+    liveAvailable: live.model != null,
+    liveFreshness: live.freshness,
+    storedValues: stored?.payload.points.totals,
+    liveValues: live.model ? encodePoints(live.model.points).totals : undefined,
+    storedDates: stored?.payload.points.dates,
+    liveDates: live.model ? encodePoints(live.model.points).dates : undefined,
+    serveVersion: stored?.row.version,
+    serveUpdatedAt: stored?.row.updatedAt,
+    serveAsOf: stored?.row.asOf,
+  });
+}
+
+async function checkSeriesPair(
+  ctx: DbCtx,
+  scopeId: string,
+  range: RangeKey,
+  stored: { row: Doc<'finance_serve'>; payload: ServeSeriesRange } | null,
+) {
+  const live = await loadSeriesRange(ctx, scopeId, range);
+  return classifyServeCheck({
+    kind: 'series',
+    scopeId,
+    range,
+    hasServe: stored != null,
+    hasSource: live.hasSource,
+    liveAvailable: live.hasSource,
+    liveFreshness: live.freshness,
+    storedValues: stored?.payload.points.value,
+    liveValues: live.points.map((point) => point.value),
+    storedDates: stored?.payload.points.dates,
+    liveDates: live.points.map((point) => point.asOf),
+    serveVersion: stored?.row.version,
+    serveUpdatedAt: stored?.row.updatedAt,
+    serveAsOf: stored?.row.asOf,
+  });
+}
 
 export function expandPagePayload(
   row: Doc<'finance_serve'>,
