@@ -134,6 +134,6 @@ describe('finance.v1 series hash', () => {
   it('checksums with the same bucketHash method as flows/returns', async () => {
     const hash = await financeContentHash('series', SERIES);
     expect(hash).toHaveLength(64);
-    expect(await bucketHash([hash])).toBe(hash);
+    expect(await bucketHash([hash, 'aa'])).toBe(await bucketHash(['aa', hash]));
   });
 });
