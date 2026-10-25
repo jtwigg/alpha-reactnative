@@ -19,6 +19,12 @@ on:
       - 'packages/server/convex/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/eas-update.yml'
+  pull_request:
+    paths:
+      - 'packages/reactnative/**'
+      - 'packages/server/convex/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/eas-update.yml'
   workflow_dispatch:
     inputs:
       channel:
@@ -35,8 +41,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  crash-guard:
+    name: Crash-guard screens
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Render screens against a dead Convex backend
+        run: pnpm --filter @rn-monorepo/reactnative test:crash-guard
+
   update:
     name: Publish OTA update
+    needs: crash-guard
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

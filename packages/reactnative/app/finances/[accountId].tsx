@@ -48,6 +48,7 @@ import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
 import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
 import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
+import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { LinkNotFound } from '@/components/link-not-found';
 import { useCachedValue } from '@/lib/finance-cache';
 import { seriesFromPack, type SeriesPack } from '@/lib/finance-packs';
@@ -64,6 +65,14 @@ import { signedAmount, type RangeKey } from '../../../server/convex/finance/seri
 const PAGE_SIZE = 25;
 
 export default function AccountDetailScreen() {
+  return (
+    <QueryErrorBoundary surface="account">
+      <AccountDetailGate />
+    </QueryErrorBoundary>
+  );
+}
+
+function AccountDetailGate() {
   const params = useLocalSearchParams<{ accountId?: string; range?: string }>();
   const sourceId = parseAccountId(params.accountId);
   const rangeFromUrl = parseRange(params.range);

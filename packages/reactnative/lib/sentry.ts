@@ -39,70 +39,90 @@ function isSensitiveEvent(event: Sentry.Event): boolean {
 }
 
 export function initSentry() {
-  if (Sentry.getClient()) return;
+  try {
+    if (Sentry.getClient()) return;
 
-  Sentry.init({
-    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || DEFAULT_SENTRY_DSN,
-    environment: Platform.OS,
-    enableNative: Platform.OS !== 'web',
-    enableLogs: true,
-    sendDefaultPii: false,
-    tracesSampleRate: 0,
-    replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: 0,
-    enableCaptureFailedRequests: false,
-    beforeSend(event) {
-      stripRequestBody(event);
-      if (event.extra) event.extra = scrubSensitive(event.extra) as typeof event.extra;
-      if (event.contexts) event.contexts = scrubSensitive(event.contexts) as typeof event.contexts;
-      if (isSensitiveEvent(event)) {
-        if (event.request) {
-          delete event.request.query_string;
-          delete event.request.data;
+    Sentry.init({
+      dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || DEFAULT_SENTRY_DSN,
+      environment: Platform.OS,
+      enableNative: Platform.OS !== 'web',
+      enableLogs: true,
+      sendDefaultPii: false,
+      tracesSampleRate: 0,
+      replaysSessionSampleRate: 0,
+      replaysOnErrorSampleRate: 0,
+      enableCaptureFailedRequests: false,
+      beforeSend(event) {
+        stripRequestBody(event);
+        if (event.extra) event.extra = scrubSensitive(event.extra) as typeof event.extra;
+        if (event.contexts) event.contexts = scrubSensitive(event.contexts) as typeof event.contexts;
+        if (isSensitiveEvent(event)) {
+          if (event.request) {
+            delete event.request.query_string;
+            delete event.request.data;
+          }
+          event.extra = undefined;
         }
-        event.extra = undefined;
-      }
-      if (event.message) event.message = redactCurrencyText(event.message);
-      return event;
-    },
-    beforeBreadcrumb(breadcrumb) {
-      const haystack = `${breadcrumb.message ?? ''} ${breadcrumb.category ?? ''} ${JSON.stringify(breadcrumb.data ?? {})}`;
-      if (isSensitiveSurface(haystack)) {
-        breadcrumb.data = undefined;
-        if (breadcrumb.message) breadcrumb.message = redactCurrencyText(breadcrumb.message);
-      }
-      if (breadcrumb.data) {
-        breadcrumb.data = scrubSensitive(breadcrumb.data) as typeof breadcrumb.data;
-      }
-      return breadcrumb;
-    },
-    beforeSendLog(log) {
-      if (log.attributes) {
-        log.attributes = scrubSensitive(log.attributes) as typeof log.attributes;
-      }
-      if (typeof log.message === 'string') {
-        log.message = redactCurrencyText(log.message);
-      }
-      return log;
-    },
-  });
+        if (event.message) event.message = redactCurrencyText(event.message);
+        return event;
+      },
+      beforeBreadcrumb(breadcrumb) {
+        const haystack = `${breadcrumb.message ?? ''} ${breadcrumb.category ?? ''} ${JSON.stringify(breadcrumb.data ?? {})}`;
+        if (isSensitiveSurface(haystack)) {
+          breadcrumb.data = undefined;
+          if (breadcrumb.message) breadcrumb.message = redactCurrencyText(breadcrumb.message);
+        }
+        if (breadcrumb.data) {
+          breadcrumb.data = scrubSensitive(breadcrumb.data) as typeof breadcrumb.data;
+        }
+        return breadcrumb;
+      },
+      beforeSendLog(log) {
+        if (log.attributes) {
+          log.attributes = scrubSensitive(log.attributes) as typeof log.attributes;
+        }
+        if (typeof log.message === 'string') {
+          log.message = redactCurrencyText(log.message);
+        }
+        return log;
+      },
+    });
+  } catch {
+    /* A network failure talking to Sentry must not crash launch. */
+  }
 }
 
 export function logAuth(message: string, data?: Record<string, unknown>) {
-  const attrs = primitiveAttrs(data);
-  Sentry.addBreadcrumb({
-    category: 'auth',
-    level: 'info',
-    message,
-    data: attrs,
-  });
-  Sentry.logger.info(message, attrs);
+  try {
+    const attrs = primitiveAttrs(data);
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      level: 'info',
+      message,
+      data: attrs,
+    });
+    Sentry.logger?.info?.(message, attrs);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function captureAuthException(error: unknown, context?: Record<string, unknown>) {
-  Sentry.captureException(error, {
-    extra: primitiveAttrs(context),
-  });
+  try {
+    Sentry.captureException(error, {
+      extra: primitiveAttrs(context),
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+export function wrapRoot<T extends (...args: never[]) => unknown>(component: T): T {
+  try {
+    return Sentry.wrap(component) as T;
+  } catch {
+    return component;
+  }
 }
 
 /** Query-string keys only — never values (OAuth codes, nonces, emails). */

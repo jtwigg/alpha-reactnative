@@ -18,6 +18,7 @@
     "update:preview": "bash ./scripts/eas-update.sh preview",
     "update:production": "bash ./scripts/eas-update.sh production",
     "check:native": "node ./scripts/check-native.mjs",
+    "test:crash-guard": "jest --config jest.config.js --runInBand",
     "lint": "expo lint"
   },
   "dependencies": {
@@ -56,9 +57,13 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "jest": "^29.7.0",
+    "jest-expo": "~54.0.18",
     "typescript": "~5.9.2"
   },
   "private": true
