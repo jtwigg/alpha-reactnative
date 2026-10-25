@@ -36,6 +36,10 @@ const config = typeof define === 'function' ? define({ config: {} }) : define;
 const vercel = JSON.parse(readFileSync(join(rnRoot, '../../vercel.json'), 'utf8'));
 const aasa = JSON.parse(readFileSync(join(rnRoot, 'public/.well-known/apple-app-site-association'), 'utf8'));
 const assetlinks = JSON.parse(readFileSync(join(rnRoot, 'public/.well-known/assetlinks.json'), 'utf8'));
+const aasaJson = JSON.parse(
+  readFileSync(join(rnRoot, 'public/well-known/apple-app-site-association.json'), 'utf8'),
+);
+const assetlinksJson = JSON.parse(readFileSync(join(rnRoot, 'public/well-known/assetlinks.json'), 'utf8'));
 
 describe('app link parsers', () => {
   it('accepts calendar dates and rejects impossible days', () => {
@@ -123,11 +127,29 @@ describe('well-known association files', () => {
     expect(assetlinks[0]._todo).toMatch(/SHA256/);
   });
 
-  it('does not rewrite /.well-known and sets JSON content-type', () => {
-    const rewrite = vercel.rewrites[0].source as string;
-    expect(rewrite).toContain('well-known');
+  it('keeps visible JSON copies for the Vercel rewrite destinations', () => {
+    expect(aasaJson).toEqual(aasa);
+    expect(assetlinksJson).toEqual(assetlinks);
+  });
+
+  it('rewrites spec well-known URLs onto the JSON copies without a redirect', () => {
+    expect(vercel.rewrites).toEqual(
+      expect.arrayContaining([
+        {
+          source: '/.well-known/apple-app-site-association',
+          destination: '/well-known/apple-app-site-association.json',
+        },
+        {
+          source: '/.well-known/assetlinks.json',
+          destination: '/well-known/assetlinks.json',
+        },
+      ]),
+    );
+    const spa = vercel.rewrites[vercel.rewrites.length - 1].source as string;
+    expect(spa).toContain('\\.well-known');
+    expect(spa).toContain('well-known');
     const aasaHeader = vercel.headers.find((row: { source: string }) =>
-      row.source.includes('apple-app-site-association'),
+      row.source === '/.well-known/apple-app-site-association',
     );
     expect(aasaHeader.headers).toEqual([{ key: 'Content-Type', value: 'application/json' }]);
   });
