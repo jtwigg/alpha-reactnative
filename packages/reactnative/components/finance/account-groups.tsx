@@ -1,4 +1,6 @@
 import { useRouter, type Href } from 'expo-router';
+
+import { accountPath } from '@/lib/app-links';
 import { Fragment, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
@@ -29,8 +31,7 @@ import type {
 } from '../../../server/convex/finance/accountModel';
 
 export function accountHref(sourceId: string, demo: boolean): Href {
-  const base = `/finances/account/${encodeURIComponent(sourceId)}`;
-  return (demo ? `${base}?demo=1` : base) as Href;
+  return accountPath(sourceId, { demo }) as Href;
 }
 
 export type ChangeMode = 'own' | 'weighted';

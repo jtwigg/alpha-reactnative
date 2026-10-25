@@ -44,6 +44,7 @@ export function nativeConfigFields(config) {
     ios: {
       bundleIdentifier: config.ios?.bundleIdentifier,
       supportsTablet: config.ios?.supportsTablet,
+      associatedDomains: config.ios?.associatedDomains,
       infoPlist: config.ios?.infoPlist,
     },
     android: {
@@ -51,6 +52,7 @@ export function nativeConfigFields(config) {
       permissions: config.android?.permissions,
       adaptiveIcon: config.android?.adaptiveIcon,
       edgeToEdgeEnabled: config.android?.edgeToEdgeEnabled,
+      intentFilters: config.android?.intentFilters,
     },
   };
 }

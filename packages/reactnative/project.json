@@ -14,7 +14,7 @@
     "export:web": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "expo export --platform web",
+        "command": "node ./scripts/write-app-links.mjs && expo export --platform web && node ./scripts/write-app-links.mjs --out dist",
         "cwd": "packages/reactnative"
       }
     },

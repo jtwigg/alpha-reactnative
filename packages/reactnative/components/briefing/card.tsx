@@ -53,6 +53,7 @@ export function BriefingCard({
   deckName,
   compact,
   send,
+  highlighted,
 }: {
   item: PriorityItem | GlanceItem;
   date: string;
@@ -60,6 +61,7 @@ export function BriefingCard({
   deckName: 'Personal' | 'Crankcase';
   compact?: boolean;
   send: SendFeedback;
+  highlighted?: boolean;
 }) {
   const priority = 'rank' in item ? item : null;
   const [reaction, setReaction] = useState<'remember' | 'stop' | null>(null);
@@ -194,9 +196,10 @@ export function BriefingCard({
 
   return (
     <Animated.View
-      style={[styles.card, { transform: [{ translateX: translate }] }]}
+      style={[styles.card, highlighted && styles.cardOn, { transform: [{ translateX: translate }] }]}
       {...pan.panHandlers}
       accessibilityLabel={`Briefing item ${briefingItemId(date, account, item.threadId)}`}
+      accessibilityState={{ selected: Boolean(highlighted) }}
     >
       {priority ? (
         <View style={styles.meta}>
@@ -286,6 +289,7 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 6,
   },
+  cardOn: { borderColor: ORANGE, backgroundColor: SOFT, borderWidth: 2 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rank: {
     width: 24,

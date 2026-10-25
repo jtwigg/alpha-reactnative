@@ -1,10 +1,11 @@
 import { useQuery } from 'convex/react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 
 import { IncompleteDepositBadge } from '@/components/finance/twr-chart';
 import { Card, FText, SectionHeader, TABULAR, useFinancePalette } from '@/components/finance/ui';
 import { api } from '@/lib/api';
+import { accountPath } from '@/lib/app-links';
 import { formatCoverageDate, formatUsdSigned } from '@/lib/finance-coverage';
 
 type FlowRow = {
@@ -67,7 +68,7 @@ export function TwrCard({
             ? flow.counterpart.accountId
             : flow.counterpartAccountId;
     if (!target) return;
-    router.push(`/finances/account/${encodeURIComponent(target)}`);
+    router.push(accountPath(target) as Href);
   };
 
   return (

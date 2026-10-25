@@ -1,5 +1,6 @@
 import { useAction, useQuery } from 'convex/react';
-import { useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,7 +13,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BriefingCard } from '@/components/briefing/card';
+import { LinkNotFound } from '@/components/link-not-found';
 import { api } from '@/lib/api';
+import { briefingsPath, findBriefingItem, parseBriefingDate, parseBriefingItemRef } from '@/lib/app-links';
 import { formatBriefingDate } from '@/lib/briefing-gesture';
 import { isClerkConfigured } from '@/lib/convex';
 import { useRefreshSpinner } from '@/lib/use-refresh';
@@ -26,32 +29,64 @@ const BORDER = '#e5e7eb';
 const SOFT = '#fff7ed';
 const MAX = 720;
 
-export default function BriefingsScreen() {
+export function BriefingsScreen() {
   if (!isClerkConfigured()) return null;
   return <BriefingsPage />;
 }
 
 function BriefingsPage() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ date?: string; itemId?: string }>();
+  const dateParam = typeof params.date === 'string' ? params.date : null;
+  const itemParam = typeof params.itemId === 'string' ? params.itemId : null;
+  const parsedDate = dateParam ? parseBriefingDate(dateParam) : null;
+  const dateMalformed = Boolean(dateParam && !parsedDate);
+  const itemRef = itemParam ? parseBriefingItemRef(itemParam, parsedDate) : null;
+  const itemMalformed = Boolean(itemParam && !itemRef);
+
   const allowed = useQuery(api.briefings.queries.isAllowed);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const dates = useQuery(api.briefings.queries.listDates, allowed ? { refreshNonce } : 'skip');
-  const [date, setDate] = useState<string | null>(null);
-  const [tab, setTab] = useState<BriefingAccount>('personal');
+  const [pickedDate, setPickedDate] = useState<string | null>(parsedDate);
+  const [tab, setTab] = useState<BriefingAccount>(itemRef?.account ?? 'personal');
+  const date = parsedDate ?? pickedDate;
+  const dateMissing = Boolean(dates && parsedDate && !dates.some((row) => row.date === parsedDate));
   const day = useQuery(
     api.briefings.queries.getDay,
-    allowed && date ? { date, refreshNonce } : 'skip',
+    allowed && date && !dateMalformed && !dateMissing ? { date, refreshNonce } : 'skip',
   );
   const send = useAction(api.briefings.feedback.send);
+  const match = day && itemRef ? findBriefingItem(day, itemRef) : null;
+  const itemMissing = Boolean(day && itemRef && !match);
+  const scrollRef = useRef<ScrollView>(null);
+  const highlightY = useRef(0);
 
   useEffect(() => {
+    if (itemRef?.account) setTab(itemRef.account);
+  }, [itemRef?.account]);
+
+  useEffect(() => {
+    if (match) setTab(match.account);
+  }, [match]);
+
+  useEffect(() => {
+    if (parsedDate) {
+      setPickedDate(parsedDate);
+      return;
+    }
     if (!dates?.length) return;
-    if (!date || !dates.some((row) => row.date === date)) setDate(dates[0].date);
-  }, [date, dates]);
+    if (!pickedDate || !dates.some((row) => row.date === pickedDate)) setPickedDate(dates[0].date);
+  }, [parsedDate, pickedDate, dates]);
 
   const { refreshing, onRefresh } = useRefreshSpinner(
-    allowed === false || (dates !== undefined && (!date || day !== undefined)),
+    allowed === false || (dates !== undefined && (!date || dateMissing || day !== undefined)),
     () => setRefreshNonce((nonce) => nonce + 1),
   );
+
+  const openDate = (next: string) => {
+    setPickedDate(next);
+    router.replace(briefingsPath(next) as Href);
+  };
 
   if (allowed === undefined) {
     return (
@@ -70,13 +105,37 @@ function BriefingsPage() {
     );
   }
 
+  if (dateMalformed || itemMalformed) {
+    return (
+      <LinkNotFound
+        title="Link not found"
+        body="That briefing link is not a date or item id Alpha recognizes."
+        href="/briefings"
+        label="Back to Briefings"
+      />
+    );
+  }
+
+  if (dateMissing) {
+    return (
+      <LinkNotFound
+        title="Briefing not found"
+        body="No briefing exists for that date."
+        href="/briefings"
+        label="Back to Briefings"
+      />
+    );
+  }
+
   const section: AccountBriefing | null = day ? day[tab] : null;
   const selected = dates?.find((row) => row.date === date);
+  const highlightId = match?.item.threadId ?? null;
 
   return (
     <View style={styles.page}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
@@ -85,6 +144,13 @@ function BriefingsPage() {
             <Text style={styles.title}>Briefings</Text>
             <Text style={styles.sub}>Daily email brief · Personal and Crankcase</Text>
 
+            {itemMissing ? (
+              <View style={styles.missing} accessibilityRole="alert">
+                <Text style={styles.missingTitle}>Item not found</Text>
+                <Text style={styles.missingBody}>That item id is not in this briefing.</Text>
+              </View>
+            ) : null}
+
             {dates && dates.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dates}>
                 {dates.map((row) => {
@@ -92,7 +158,7 @@ function BriefingsPage() {
                   return (
                     <Pressable
                       key={row.date}
-                      onPress={() => setDate(row.date)}
+                      onPress={() => openDate(row.date)}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                       accessibilityLabel={`Briefing ${row.date}`}
@@ -152,14 +218,24 @@ function BriefingsPage() {
                 ) : (
                   <View style={styles.list}>
                     {section.priorities.map((item) => (
-                      <BriefingCard
+                      <View
                         key={item.threadId}
-                        item={item}
-                        date={date!}
-                        account={tab}
-                        deckName={section.deckName}
-                        send={send}
-                      />
+                        onLayout={(event) => {
+                          if (item.threadId === highlightId) {
+                            highlightY.current = event.nativeEvent.layout.y;
+                            scrollRef.current?.scrollTo({ y: Math.max(0, highlightY.current - 24), animated: true });
+                          }
+                        }}
+                      >
+                        <BriefingCard
+                          item={item}
+                          date={date!}
+                          account={tab}
+                          deckName={section.deckName}
+                          send={send}
+                          highlighted={item.threadId === highlightId}
+                        />
+                      </View>
                     ))}
                   </View>
                 )}
@@ -172,15 +248,25 @@ function BriefingsPage() {
                 ) : (
                   <View style={styles.list}>
                     {section.glance.map((item) => (
-                      <BriefingCard
+                      <View
                         key={item.threadId}
-                        item={item}
-                        date={date!}
-                        account={tab}
-                        deckName={section.deckName}
-                        compact
-                        send={send}
-                      />
+                        onLayout={(event) => {
+                          if (item.threadId === highlightId) {
+                            highlightY.current = event.nativeEvent.layout.y;
+                            scrollRef.current?.scrollTo({ y: Math.max(0, highlightY.current - 24), animated: true });
+                          }
+                        }}
+                      >
+                        <BriefingCard
+                          item={item}
+                          date={date!}
+                          account={tab}
+                          deckName={section.deckName}
+                          compact
+                          send={send}
+                          highlighted={item.threadId === highlightId}
+                        />
+                      </View>
                     ))}
                   </View>
                 )}
@@ -215,6 +301,16 @@ const styles = StyleSheet.create({
   title: { color: TEXT, fontSize: 28, fontWeight: '700', letterSpacing: -0.5 },
   sub: { color: MUTED, fontSize: 14 },
   muted: { color: MUTED, textAlign: 'center' },
+  missing: {
+    borderWidth: 1,
+    borderColor: '#fdba74',
+    backgroundColor: SOFT,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  missingTitle: { color: ORANGE, fontWeight: '700' },
+  missingBody: { color: MUTED, fontSize: 14 },
   dates: { gap: 8, paddingVertical: 4 },
   dateChip: {
     borderWidth: 1,
