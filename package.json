@@ -11,7 +11,8 @@
     "export:web": "nx run reactnative:export:web",
     "update:preview": "nx run reactnative:update:preview",
     "update:production": "nx run reactnative:update:production",
-    "ios:testflight": "nx run reactnative:ios:testflight"
+    "ios:testflight": "nx run reactnative:ios:testflight",
+    "check:native": "node packages/reactnative/scripts/check-native.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@parcel/watcher", "esbuild", "nx"],

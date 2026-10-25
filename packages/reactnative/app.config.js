@@ -1,7 +1,13 @@
+const fs = require('fs');
+const path = require('path');
+
 const bundleIdentifier = process.env.IOS_BUNDLE_IDENTIFIER ?? 'com.twigg.alpha';
 const androidPackage = process.env.ANDROID_PACKAGE ?? 'com.example.johnsapp';
 // Filled by `eas init` / `eas update:configure`, or set EAS_PROJECT_ID.
 const projectId = process.env.EAS_PROJECT_ID ?? '45f0cfd7-2b50-4deb-b537-b5e44f76b937';
+
+const appVersionSrc = fs.readFileSync(path.join(__dirname, 'lib/app-version.ts'), 'utf8');
+const jsOtaBuild = Number(/export const JS_OTA_BUILD = (\d+)/.exec(appVersionSrc)?.[1] ?? 0);
 
 module.exports = ({ config }) => ({
   ...config,
@@ -83,6 +89,7 @@ module.exports = ({ config }) => ({
     eas: {
       projectId,
     },
+    jsOtaBuild,
   },
   owner: process.env.EXPO_OWNER ?? 'asdf989',
 });

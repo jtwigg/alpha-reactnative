@@ -9,6 +9,7 @@
  */
 
 import type * as access from "../access.js";
+import type * as app_release from "../app/release.js";
 import type * as briefings_feedback from "../briefings/feedback.js";
 import type * as briefings_gateway from "../briefings/gateway.js";
 import type * as briefings_ingest from "../briefings/ingest.js";
@@ -35,6 +36,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   access: typeof access;
+  "app/release": typeof app_release;
   "briefings/feedback": typeof briefings_feedback;
   "briefings/gateway": typeof briefings_gateway;
   "briefings/ingest": typeof briefings_ingest;
