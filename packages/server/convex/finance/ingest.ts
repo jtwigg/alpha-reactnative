@@ -35,6 +35,7 @@ import {
   selectBatchWinner,
   snapshotRank,
 } from './lib';
+import { touchRollups } from './rollupJobs';
 import {
   BATCH_CAP,
   DELETE_ROW_BATCH,
@@ -212,6 +213,7 @@ export const upsertAccounts = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
+    const accountDiries: Array<{ accountId: string; from: string }> = [];
     const lastWins = markBatchWinners(
       items,
       (item) => item.sourceId,
@@ -240,7 +242,21 @@ export const upsertAccounts = internalMutation({
       } else {
         await ctx.db.insert('accounts', doc);
       }
+      const classChanged = Boolean(existing && existing.class !== item.class);
+      const coverageChanged = Boolean(
+        existing && (existing.coverageStart ?? '') !== (item.coverageStart ?? ''),
+      );
+      if (classChanged || coverageChanged) {
+        const first = await ctx.db
+          .query('balance_snapshots')
+          .withIndex('by_account_asOf', (q) => q.eq('accountId', item.sourceId))
+          .order('asc')
+          .take(1);
+        const from = first[0]?.asOf ?? item.coverageStart;
+        if (from) accountDiries.push({ accountId: item.sourceId, from });
+      }
     }
+    await touchRollups(ctx, accountDiries);
     return counts;
   },
 });
@@ -257,6 +273,7 @@ export const upsertSnapshots = internalMutation({
       (item) => `${item.accountId}|${item.asOf}`,
       (item) => snapshotRank(item.source),
     );
+    const snapshotDiries: Array<{ accountId: string; from: string }> = [];
     const seen = new Map<
       string,
       { _id?: Id<'balance_snapshots'>; source: SnapshotSource; contentHash: string }
@@ -303,7 +320,9 @@ export const upsertSnapshots = internalMutation({
         const id = await ctx.db.insert('balance_snapshots', doc);
         seen.set(key, { _id: id, source: item.source, contentHash });
       }
+      snapshotDiries.push({ accountId: item.accountId, from: item.asOf });
     }
+    await touchRollups(ctx, snapshotDiries);
     return counts;
   },
 });
@@ -366,6 +385,7 @@ export const upsertTransactions = internalMutation({
     const batchIds = new Set(items.map((item) => item.sourceId));
     const claimed = new Set<string>(batchIds);
     const replacements: PendingReplacement[] = [];
+    const txnDiries: Array<{ accountId: string; from: string }> = [];
     for (let i = 0; i < items.length; i += 1) {
       const { pendingTransactionId, ...item } = items[i];
       parseIsoDate(item.date);
@@ -387,6 +407,10 @@ export const upsertTransactions = internalMutation({
           await ctx.db.replace(existing._id, doc);
         } else {
           await ctx.db.insert('transactions', doc);
+        }
+        txnDiries.push({ accountId: item.accountId, from: item.date });
+        if (existing && existing.date < item.date) {
+          txnDiries.push({ accountId: item.accountId, from: existing.date });
         }
       }
 
@@ -413,6 +437,13 @@ export const upsertTransactions = internalMutation({
         details: { replacements },
       });
     }
+    for (const row of replacements) {
+      txnDiries.push({ accountId: row.accountId, from: items.find((item) => item.sourceId === row.postedId)?.date ?? items[0]?.date });
+    }
+    await touchRollups(
+      ctx,
+      txnDiries.filter((row) => row.from),
+    );
     const byLink = replacements.filter((r) => r.match === 'pending_transaction_id').length;
     return {
       ...counts,
@@ -461,6 +492,10 @@ export const deleteTransactions = internalMutation({
       count: deletedRows.length,
       details: { deleted: deletedRows, notFound },
     });
+    await touchRollups(
+      ctx,
+      deletedRows.map((row) => ({ accountId: row.accountId, from: row.date })),
+    );
 
     return {
       requested: ids.length,
@@ -479,6 +514,7 @@ export const upsertHoldings = internalMutation({
     assertBatchSize(items.length, BATCH_CAP);
     const counts = emptyUpsertCounts();
     const now = Date.now();
+    const holdingDiries: Array<{ accountId: string; from: string }> = [];
     const lastWins = markBatchWinners(
       items,
       (item) => `${item.accountId}|${item.symbol}|${item.asOf}`,
@@ -511,7 +547,9 @@ export const upsertHoldings = internalMutation({
       } else {
         await ctx.db.insert('holdings', doc);
       }
+      holdingDiries.push({ accountId: item.accountId, from: item.asOf });
     }
+    await touchRollups(ctx, holdingDiries);
     return counts;
   },
 });
@@ -755,6 +793,9 @@ export const fillGaps = internalMutation({
     if (counts.continueFrom == null) {
       counts.continueFrom = windowContinue;
     }
+    if (counts.inserted + counts.updated + counts.deleted > 0) {
+      await touchRollups(ctx, [{ accountId, from }]);
+    }
     return counts;
   },
 });
@@ -852,6 +893,7 @@ export const deleteAccounts = internalMutation({
     const session = emptyDeleteCounts();
     let writes = 0;
     const remainingIds: string[] = [];
+    const deleteDiries: Array<{ accountId: string; from: string }> = [];
 
     for (let i = 0; i < ids.length; i += 1) {
       const accountId = ids[i];
@@ -859,6 +901,16 @@ export const deleteAccounts = internalMutation({
         remainingIds.push(...ids.slice(i));
         break;
       }
+
+      const firstSnap = await ctx.db
+        .query('balance_snapshots')
+        .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+        .order('asc')
+        .take(1);
+      deleteDiries.push({
+        accountId,
+        from: firstSnap[0]?.asOf ?? '1970-01-01',
+      });
 
       session.snapshots += await deleteIndexedBatch(
         ctx,
@@ -920,6 +972,8 @@ export const deleteAccounts = internalMutation({
         writes += 1;
       }
     }
+
+    await touchRollups(ctx, deleteDiries);
 
     const counts = addDeleteCounts(args.counts ?? emptyDeleteCounts(), session);
     const shouldContinue = remainingIds.length > 0;

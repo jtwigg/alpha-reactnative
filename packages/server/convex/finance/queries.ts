@@ -7,6 +7,7 @@ import {
   RANGE_KEYS,
   buildNetWorthModel,
   chartDates,
+  grainForRange,
   loadAccountEnds,
   loadChartSnapshots,
   rangeWindow,
@@ -14,6 +15,14 @@ import {
   type SeriesSnapshot,
   type SnapshotLookup,
 } from './series';
+import {
+  TOTAL_SCOPE_ID,
+  chartPointsFromTotals,
+  modelFromRollupPoints,
+  readerMode,
+  rollupCoversRange,
+} from './rollups';
+import { loadRollupRange, loadRollupStateView } from './rollupJobs';
 import {
   CONVEX_QUERY_READ_BUDGET,
   accountDocValidator,
@@ -196,10 +205,50 @@ export const page = query({
     }
     const accounts = await ctx.db.query('accounts').take(80);
     const accountIds = accounts.map((row) => row.sourceId);
+    const seriesAccounts = accounts.map((row) => ({
+      sourceId: row.sourceId,
+      name: row.name,
+      class: row.class,
+      provider: row.provider,
+      currentBalance: row.currentBalance,
+      currency: row.currency,
+      syncedAt: row.syncedAt,
+      coverageStart: row.coverageStart,
+    }));
     const lookup = snapshotLookup(ctx);
     const ends = await loadAccountEnds(lookup, accountIds);
     const asOf = args.asOf ?? ends.maxAsOf ?? todayInTimeZone();
     const window = rangeWindow(range, asOf, ends.firstAsOf);
+    const grain = grainForRange(range);
+    const state = await loadRollupStateView(ctx);
+    const rollupRows = await loadRollupRange(
+      ctx,
+      grain,
+      'total',
+      TOTAL_SCOPE_ID,
+      window.from,
+      window.to,
+      2000,
+    );
+    const hasCoverage = rollupCoversRange({
+      rows: rollupRows,
+      from: window.from,
+      to: window.to,
+      grain,
+    });
+    const freshness = readerMode({ state, hasCoverage, asOf });
+    if (freshness !== 'raw') {
+      return modelFromRollupPoints({
+        accounts: seriesAccounts,
+        firsts: ends.firstByAccount,
+        lasts: ends.lastByAccount,
+        points: chartPointsFromTotals(rollupRows),
+        range,
+        asOf,
+        grain,
+        rollup: freshness,
+      });
+    }
     const dates = chartDates(range, window.from, window.to);
     const chart = await loadChartSnapshots(
       lookup,
@@ -209,16 +258,7 @@ export const page = query({
       ends,
     );
     return buildNetWorthModel({
-      accounts: accounts.map((row) => ({
-        sourceId: row.sourceId,
-        name: row.name,
-        class: row.class,
-        provider: row.provider,
-        currentBalance: row.currentBalance,
-        currency: row.currency,
-        syncedAt: row.syncedAt,
-        coverageStart: row.coverageStart,
-      })),
+      accounts: seriesAccounts,
       snapshots: chart.snapshots,
       range,
       asOf,

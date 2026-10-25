@@ -179,6 +179,40 @@ export default defineSchema({
     .index('by_flowId', ['flowId'])
     .index('by_account_date', ['accountId', 'date']),
 
+  /**
+   * Materialized net-worth layers. One row per (grain, scopeKind, scopeId, asOf).
+   * Day rows are the source of truth; week/month are last-day-in-bucket.
+   */
+  finance_rollups: defineTable({
+    grain: v.union(v.literal('day'), v.literal('week'), v.literal('month')),
+    scopeKind: v.union(
+      v.literal('account'),
+      v.literal('class'),
+      v.literal('group'),
+      v.literal('total'),
+      v.literal('bench'),
+    ),
+    scopeId: v.string(),
+    asOf: v.string(),
+    value: v.number(),
+    interpolated: v.boolean(),
+    byClass: v.optional(v.record(v.string(), v.number())),
+    version: v.number(),
+  })
+    .index('by_grain_scope_asOf', ['grain', 'scopeKind', 'scopeId', 'asOf'])
+    .index('by_grain_kind_asOf', ['grain', 'scopeKind', 'asOf']),
+
+  /** Watermark for finance_rollups. One row keyed `global`. */
+  finance_rollup_state: defineTable({
+    key: v.string(),
+    dirtyFrom: v.optional(v.string()),
+    rebuiltThrough: v.optional(v.string()),
+    version: v.number(),
+    status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding')),
+    cursor: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
+
   /** Precomputed time-weighted returns. Key is scope+window+asOf. Finance writes only. */
   returns: defineTable({
     scope: v.string(),

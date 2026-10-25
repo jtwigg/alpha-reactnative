@@ -182,3 +182,51 @@ export function eachMonth(fromMonth: string, toMonth: string): string[] {
   }
   return out;
 }
+
+/** Monday (UTC) of the ISO week that contains `iso`. */
+export function weekStart(iso: string): string {
+  const date = parseIsoDate(iso);
+  const dow = date.getUTCDay();
+  const offset = dow === 0 ? -6 : 1 - dow;
+  return addDays(iso, offset);
+}
+
+/** Sunday (UTC) of the ISO week that contains `iso`. */
+export function weekEnd(iso: string): string {
+  return addDays(weekStart(iso), 6);
+}
+
+/**
+ * Canonical month-end dates in `[from, to]`, always including `from` and `to`
+ * so a chart has endpoints even when the window starts mid-month.
+ */
+export function eachMonthEnd(from: string, to: string): string[] {
+  parseIsoDate(from);
+  parseIsoDate(to);
+  if (to < from) return [];
+  const out: string[] = [from];
+  for (const month of eachMonth(from, to)) {
+    const end = monthEnd(month);
+    if (end > from && end < to) out.push(end);
+  }
+  if (out[out.length - 1] !== to) out.push(to);
+  return out;
+}
+
+/**
+ * Canonical ISO week-end (Sunday) dates in `[from, to]`, always including
+ * `from` and `to`.
+ */
+export function eachWeekEnd(from: string, to: string): string[] {
+  parseIsoDate(from);
+  parseIsoDate(to);
+  if (to < from) return [];
+  const out: string[] = [from];
+  let end = weekEnd(from);
+  while (end < to) {
+    if (end > from) out.push(end);
+    end = addDays(end, 7);
+  }
+  if (out[out.length - 1] !== to) out.push(to);
+  return out;
+}
