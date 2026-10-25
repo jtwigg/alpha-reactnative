@@ -47,11 +47,37 @@ export function pickUpdatePrompt(args: {
   return null;
 }
 
-export function updatePromptLabel(prompt: UpdatePrompt, busy = false): string | null {
+export function otaBuildFromManifest(manifest: unknown): number | null {
+  if (!manifest || typeof manifest !== 'object') return null;
+  const extra = (manifest as { extra?: unknown }).extra;
+  const direct = otaBuildFromExtra(extra);
+  if (direct != null) return direct;
+  if (extra && typeof extra === 'object') {
+    const expoClient = (extra as { expoClient?: { extra?: unknown } }).expoClient;
+    return otaBuildFromExtra(expoClient?.extra);
+  }
+  return null;
+}
+
+export function updateBannerCopy(
+  prompt: UpdatePrompt,
+  opts: { availableOta?: number | null; busy?: boolean } = {},
+): string | null {
   if (!prompt) return null;
-  if (prompt.kind === 'native') return 'New build available';
-  if (busy) return 'Updating…';
-  return prompt.pending ? 'Restart to update' : 'Update available';
+  if (prompt.kind === 'native') return 'New build available, open TestFlight';
+  if (opts.busy) return 'Downloading update…';
+  const n = opts.availableOta;
+  if (n != null && Number.isFinite(n)) return `Update available: ota ${n}, tap to update & restart`;
+  return 'Update available, tap to update & restart';
+}
+
+/** @deprecated Use updateBannerCopy. Kept for older tests. */
+export function updatePromptLabel(
+  prompt: UpdatePrompt,
+  busy = false,
+  availableOta?: number | null,
+): string | null {
+  return updateBannerCopy(prompt, { busy, availableOta });
 }
 
 export function testflightOpenUrls(storedUrl?: string | null): string[] {
