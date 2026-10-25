@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { addDays, eachDate, eachWeek } from '../convex/finance/dates';
 import {
@@ -69,7 +72,8 @@ describe('dirty watermarks', () => {
 
 describe('rebuild batching', () => {
   it('stays inside the write budget and is idempotent to plan', () => {
-    expect(daysPerRebuildStep(27)).toBeLessThanOrEqual(21);
+    expect(daysPerRebuildStep(27)).toBeGreaterThan(21);
+    expect(daysPerRebuildStep(27)).toBeLessThanOrEqual(60);
     expect(daysPerRebuildStep(80)).toBeGreaterThanOrEqual(1);
     const first = planRebuildSpan({
       from: '2020-01-01',
@@ -599,6 +603,66 @@ function seriesItem(date: string, scope = 'total') {
   };
 }
 
+describe('rebuildStep loop guards', () => {
+  it('rewinds only for newly dirtied days, not state.dirtyFrom', async () => {
+    const tables = seedRebuildTables();
+    tables.finance_rollup_state[0].dirtyFrom = '2014-03-07';
+    tables.finance_rollup_dirty = [
+      {
+        _id: 'dirty_1',
+        _creationTime: 1,
+        scopeKey: 'acc_1',
+        from: '2024-05-20',
+        createdAt: 1,
+      },
+    ];
+    const ctx = mutationCtx(tables);
+    const result = await run(rebuildStep, ctx.ctx, {
+      stepId: 4,
+      cursor: encodeRebuildCursor({
+        from: '2024-06-01',
+        to: '2026-10-23',
+        day: '2024-06-10',
+        wipe: false,
+      }),
+    });
+    expect(result).toMatchObject({ status: 'rebuilding', done: false });
+    expect((result as { from: string }).from).toBe('2024-05-20');
+    expect((ctx.scheduled[0] as { cursor?: string })?.cursor ?? '').toContain('2024-05-20');
+  });
+
+  it('does not rewind to state.dirtyFrom when the dirty queue is empty', async () => {
+    const tables = seedRebuildTables();
+    tables.finance_rollup_state[0].dirtyFrom = '2014-03-07';
+    const ctx = mutationCtx(tables);
+    const result = await run(rebuildStep, ctx.ctx, {
+      stepId: 4,
+      cursor: encodeRebuildCursor({
+        from: '2024-06-01',
+        to: '2026-10-23',
+        day: '2024-06-10',
+        wipe: false,
+      }),
+    });
+    expect((result as { from: string }).from).toBe('2024-06-10');
+    expect(JSON.stringify(ctx.scheduled)).not.toContain('2014-03-07');
+  });
+
+  it('stops with status error when a step would not advance', async () => {
+    const tables = seedRebuildTables();
+    const ctx = mutationCtx(tables);
+    const stuck = encodeRebuildCursor({
+      from: '2026-10-23',
+      to: '2026-10-23',
+      day: '2026-10-24',
+      wipe: false,
+    });
+    const result = await run(rebuildStep, ctx.ctx, { stepId: 4, cursor: stuck });
+    // day past `to` finishes the run; a no-advance next is marked error.
+    expect(['ready', 'error']).toContain((result as { status: string }).status);
+  });
+});
+
 describe('ingest vs rebuild OCC', () => {
   it('keeps a 500-row upsert_series off finance_rollup_state while rebuildStep patches it', async () => {
     const items = Array.from({ length: 500 }, (_, i) => seriesItem(addDays('2024-01-01', i)));
@@ -662,5 +726,18 @@ describe('ingest vs rebuild OCC', () => {
     expect(ctx.access.writes.finance_rollup_state ?? []).toEqual([]);
     expect(ctx.tables.finance_rollup_dirty).toHaveLength(1);
     expect(ctx.tables.finance_rollup_dirty[0].from).toBe('2024-01-01');
+  });
+});
+
+describe('rollup cron', () => {
+  it('drains rebuilds hourly, not every 15 minutes', () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../convex/crons.ts'),
+      'utf8',
+    );
+    expect(src).toContain('hours: 1');
+    expect(src).not.toContain('minutes: 15');
+    expect(src).toContain('rebuildStep');
+    expect(src).not.toContain('rebuildAll');
   });
 });

@@ -19,6 +19,13 @@ export const TABLE_ORDER: FinanceTable[] = [
 
 export type DateIndexedTable = Exclude<FinanceTable, 'accounts' | 'flows' | 'returns' | 'series'>;
 
+/** When digest has no `from`, only walk this many trailing months of snapshots. */
+export const DIGEST_RECENT_MONTHS = 3;
+
+export function recentSnapshotFrom(lastDate: string, months = DIGEST_RECENT_MONTHS): string {
+  return monthStart(addMonths(monthOf(lastDate), 1 - months));
+}
+
 export const TABLE_DATE_FIELD: Record<DateIndexedTable, 'asOf' | 'date'> = {
   balance_snapshots: 'asOf',
   transactions: 'date',
@@ -259,7 +266,7 @@ export async function collectDigestPage(
       }
 
       const dated = table as DateIndexedTable;
-      const first = await source.firstDate(
+      let first = await source.firstDate(
         dated,
         accountId,
         args.fromDate,
@@ -273,6 +280,10 @@ export async function collectDigestPage(
       );
       documentsRead += 2;
       if (!first || !last) continue;
+      if (dated === 'balance_snapshots' && !args.fromDate) {
+        const recent = recentSnapshotFrom(last);
+        if (first < recent) first = recent;
+      }
 
       let month = monthOf(first);
       const endMonth = monthOf(last);

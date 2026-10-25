@@ -17,6 +17,7 @@ import {
   decodeExportCursor,
   applyExportCursor,
   exportIndexStart,
+  recentSnapshotFrom,
   TABLE_ORDER,
   type DateIndexedTable,
   type DigestCursor,
@@ -175,8 +176,14 @@ function convexDigestSource(ctx: QueryCtx): DigestSource {
         contentHash: row.contentHash,
       };
     },
-    firstDate: (table, accountId, fromDate, toDate) =>
-      firstLastDate(ctx, table, accountId, fromDate, toDate, 'asc'),
+    firstDate: async (table, accountId, fromDate, toDate) => {
+      if (table === 'balance_snapshots' && !fromDate) {
+        const last = await firstLastDate(ctx, table, accountId, undefined, toDate, 'desc');
+        if (!last) return null;
+        fromDate = recentSnapshotFrom(last);
+      }
+      return firstLastDate(ctx, table, accountId, fromDate, toDate, 'asc');
+    },
     lastDate: (table, accountId, fromDate, toDate) =>
       firstLastDate(ctx, table, accountId, fromDate, toDate, 'desc'),
     rowsInMonth: (table, accountId, month) =>

@@ -617,10 +617,15 @@ export const rebuildStep = internalMutation({
     }
 
     const pending = await peekDirty(ctx);
-    if (state.status === 'ready' && !state.dirtyFrom && !state.cursor && pending.ids.length === 0) {
+    if (
+      (state.status === 'ready' || state.status === 'error') &&
+      !state.dirtyFrom &&
+      !state.cursor &&
+      pending.ids.length === 0
+    ) {
       return {
         done: true,
-        status: 'ready' as const,
+        status: state.status,
         wrote: 0,
         from: null,
         to: null,
@@ -630,8 +635,17 @@ export const rebuildStep = internalMutation({
 
     const dirtyFrom = pending.earliest ? mergeDirtyFrom(state.dirtyFrom, pending.earliest) : (state.dirtyFrom ?? null);
     let cursor = decodeRebuildCursor(args.cursor) ?? decodeRebuildCursor(state.cursor);
-    if (!cursor) {
-      const from = dirtyFrom ?? (await earliestSnapshotDate(ctx)) ?? todayInTimeZone();
+    // Incremental runs never walk from the earliest snapshot (2014). Only rebuildAll sets that.
+    if (state.status === 'error' && pending.earliest) {
+      const to = (await latestSnapshotDate(ctx)) ?? todayInTimeZone();
+      cursor = {
+        from: pending.earliest,
+        to: pending.earliest > to ? pending.earliest : to,
+        day: pending.earliest,
+        wipe: false,
+      };
+    } else if (!cursor) {
+      const from = dirtyFrom ?? todayInTimeZone();
       const to = (await latestSnapshotDate(ctx)) ?? todayInTimeZone();
       cursor = {
         from,
@@ -639,14 +653,19 @@ export const rebuildStep = internalMutation({
         day: from,
         wipe: state.status === 'pending' && !state.rebuiltThrough,
       };
-    } else if (dirtyFrom && dirtyFrom < cursor.day && !cursor.wipe) {
-      cursor = { ...cursor, from: dirtyFrom, day: dirtyFrom };
+    } else if (pending.earliest && pending.earliest < cursor.day && !cursor.wipe) {
+      // Rewind only for newly dirtied days; state.dirtyFrom is already covered by this run.
+      cursor = {
+        ...cursor,
+        from: pending.earliest < cursor.from ? pending.earliest : cursor.from,
+        day: pending.earliest,
+      };
     }
     if (pending.ids.length > 0) await deleteDirty(ctx, pending.ids);
 
     const runId = args.stepId ?? state.version + 1;
     const schedule = (next: RebuildCursor) =>
-      ctx.scheduler.runAfter(0, internal.finance.rollupJobs.rebuildStep, {
+      ctx.scheduler.runAfter(2000, internal.finance.rollupJobs.rebuildStep, {
         stepId: runId,
         cursor: encodeRebuildCursor(next),
       });
@@ -696,6 +715,18 @@ export const rebuildStep = internalMutation({
     });
     const wrote = span.start <= span.end ? await rebuildSpan(ctx, span.start, span.end, state.version) : 0;
 
+    if (span.next && span.next <= cursor.day) {
+      await patchState({ status: 'error', cursor: encodeRebuildCursor(cursor), dirtyFrom: dirtyFrom ?? undefined });
+      console.error('rollup rebuild made no progress; stopping', cursor.day);
+      return {
+        done: true,
+        status: 'error' as const,
+        wrote,
+        from: cursor.from,
+        to: cursor.to,
+        rebuiltThrough: state.rebuiltThrough ?? null,
+      };
+    }
     if (span.next) {
       const next: RebuildCursor = { ...cursor, day: span.next, wipe: false };
       const persist = shouldPatchRebuildState({
@@ -773,7 +804,7 @@ export const rebuildStep = internalMutation({
   },
 });
 
-/** Wipe + rematerialize every grain from the earliest snapshot forward. */
+/** Manual full rebuild from the earliest snapshot. Never called by cron or ingest. */
 export const rebuildAll = internalMutation({
   args: {},
   returns: rebuildAllResultValidator,

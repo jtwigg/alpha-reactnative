@@ -10,7 +10,7 @@ export const FILL_GAPS_WRITE_CAP = 800;
 export const FILL_GAPS_READ_CAP = 800;
 /** Documents a digest/export query may read before returning a cursor. */
 export const CONVEX_QUERY_READ_BUDGET = 3200;
-export const ROLLUP_WRITE_BUDGET = 700;
+export const ROLLUP_WRITE_BUDGET = 1600;
 export const ROLLUP_DELETE_BATCH = 400;
 export const DELETE_ACCOUNT_IDS_MAX = 50;
 export const DELETE_ROW_BATCH = 200;
@@ -564,7 +564,7 @@ export const pageResultValidator = v.object({
 
 export const rebuildStepResultValidator = v.object({
   done: v.boolean(),
-  status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding')),
+  status: v.union(v.literal('ready'), v.literal('pending'), v.literal('rebuilding'), v.literal('error')),
   wrote: v.number(),
   from: v.union(v.string(), v.null()),
   to: v.union(v.string(), v.null()),

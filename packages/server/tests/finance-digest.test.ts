@@ -5,9 +5,11 @@ import {
   applyExportCursor,
   collectDigestPage,
   collectSeriesDigestPage,
+  DIGEST_RECENT_MONTHS,
   fillGapsWindow,
   memoryDigestSource,
   memorySeriesDigestSource,
+  recentSnapshotFrom,
   rowsInDateRange,
   takeThenFilter,
   type DigestCursor,
@@ -100,6 +102,8 @@ describe('digest pagination for a 4613-row account', () => {
       const page = await collectDigestPage(source, {
         tables: ['balance_snapshots'],
         accountId: ACCOUNT,
+        fromDate: START,
+        toDate: END,
         cursor,
         limit: 20,
         readBudget: CONVEX_QUERY_READ_BUDGET,
@@ -122,6 +126,23 @@ describe('digest pagination for a 4613-row account', () => {
     let total = 0;
     for (const count of seen.values()) total += count;
     expect(total).toBe(4613);
+  });
+
+  it('without from, walks only recent snapshot months via the account index', async () => {
+    const page = await collectDigestPage(source, {
+      tables: ['balance_snapshots'],
+      accountId: ACCOUNT,
+      cursor: null,
+      limit: 20,
+      readBudget: CONVEX_QUERY_READ_BUDGET,
+      hash: bucketHash,
+    });
+    const recentFrom = recentSnapshotFrom(END);
+    expect(page.isDone).toBe(true);
+    expect(page.buckets.length).toBeLessThanOrEqual(DIGEST_RECENT_MONTHS);
+    expect(page.buckets.every((bucket) => bucket.month >= recentFrom.slice(0, 7))).toBe(true);
+    expect(page.buckets.some((bucket) => bucket.month === END.slice(0, 7))).toBe(true);
+    expect(page.buckets.some((bucket) => bucket.month === '2014-03')).toBe(false);
   });
 });
 

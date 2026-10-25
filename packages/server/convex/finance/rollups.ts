@@ -30,7 +30,7 @@ export type { RollupFreshness, RollupGrain };
 export const ROLLUP_SCOPE_KINDS = ['account', 'class', 'group', 'total', 'bench', 'series'] as const;
 export type RollupScopeKind = (typeof ROLLUP_SCOPE_KINDS)[number];
 
-export const ROLLUP_STATUSES = ['ready', 'pending', 'rebuilding'] as const;
+export const ROLLUP_STATUSES = ['ready', 'pending', 'rebuilding', 'error'] as const;
 export type RollupStatus = (typeof ROLLUP_STATUSES)[number];
 
 export const ROLLUP_FRESHNESS = ['live', 'stale', 'raw'] as const;
@@ -39,7 +39,8 @@ export const GLOBAL_ROLLUP_KEY = 'global';
 export const TOTAL_SCOPE_ID = 'net';
 export const BENCH_SCOPE_ID = 'SPX';
 
-export const ROLLUP_WRITE_BUDGET = 700;
+export const ROLLUP_WRITE_BUDGET = 1600;
+export const ROLLUP_STEP_DAY_CAP = 60;
 export const ROLLUP_DELETE_BATCH = 400;
 export const ROLLUP_CONSISTENCY_SAMPLE = 16;
 export const ROLLUP_CONSISTENCY_EPS = 0.02;
@@ -146,7 +147,7 @@ export function earliestDirty(dirties: DirtyTouch[]): string | null {
  */
 export function daysPerRebuildStep(accountCount: number, writeBudget = ROLLUP_WRITE_BUDGET): number {
   const perDay = Math.max(accountCount, 1) + 12;
-  return Math.max(1, Math.min(21, Math.floor(writeBudget / perDay)));
+  return Math.max(1, Math.min(ROLLUP_STEP_DAY_CAP, Math.floor(writeBudget / perDay)));
 }
 
 export function planRebuildSpan(args: {
