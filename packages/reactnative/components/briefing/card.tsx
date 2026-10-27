@@ -24,7 +24,9 @@ import {
 } from '@/lib/briefing-gesture';
 import { briefingItemId } from '../../../server/convex/briefings/payload';
 import type { GlanceItem, PriorityItem } from '../../../server/convex/briefings/payload';
+import { formatReceivedAt } from '../../../server/convex/briefings/receivedAt';
 
+import { FText } from '@/components/finance/ui';
 import { LIGHT } from '@/lib/app-theme';
 
 const ORANGE = LIGHT.accent;
@@ -191,6 +193,8 @@ export function BriefingCard({
     );
   }
 
+  const receivedLabel = formatReceivedAt(item.receivedAt);
+
   const open = () => {
     const url = threadOpenUrl(item.webUrl, item.mobileUrl, Platform.OS);
     void Linking.openURL(url).catch(() => undefined);
@@ -211,7 +215,14 @@ export function BriefingCard({
           <Text style={styles.deadline}>{priority.deadline}</Text>
         </View>
       ) : null}
-      <Text style={styles.who}>{item.sender}</Text>
+      <View style={styles.whoRow}>
+        <Text style={styles.who}>{item.sender}</Text>
+        {receivedLabel ? (
+          <FText variant="caption" tone="muted" style={styles.when}>
+            {receivedLabel}
+          </FText>
+        ) : null}
+      </View>
       <Text style={styles.gist}>{item.gist}</Text>
       {priority ? (
         <View style={styles.todo}>
@@ -303,7 +314,9 @@ const styles = StyleSheet.create({
   },
   rankText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   deadline: { color: DEADLINE, fontSize: 13, fontWeight: '600' },
-  who: { color: TEXT, fontSize: 15, fontWeight: '700' },
+  whoRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+  who: { color: TEXT, fontSize: 15, fontWeight: '700', flexShrink: 1 },
+  when: { flexShrink: 0 },
   gist: { color: TEXT, fontSize: 15, lineHeight: 20 },
   todo: { backgroundColor: SOFT, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
   todoText: { color: TEXT, fontSize: 14, lineHeight: 19 },

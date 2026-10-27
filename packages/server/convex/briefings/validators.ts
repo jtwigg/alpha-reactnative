@@ -9,6 +9,7 @@ export const glanceItemValidator = v.object({
   gist: v.string(),
   webUrl: v.string(),
   mobileUrl: v.string(),
+  receivedAt: v.optional(v.number()),
 });
 
 export const priorityItemValidator = v.object({
@@ -20,6 +21,7 @@ export const priorityItemValidator = v.object({
   todo: v.string(),
   webUrl: v.string(),
   mobileUrl: v.string(),
+  receivedAt: v.optional(v.number()),
 });
 
 export const restValidator = v.object({

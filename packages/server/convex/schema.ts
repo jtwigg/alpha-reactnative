@@ -145,6 +145,7 @@ export default defineSchema({
         todo: v.string(),
         webUrl: v.string(),
         mobileUrl: v.string(),
+        receivedAt: v.optional(v.number()),
       }),
     ),
     glance: v.array(
@@ -154,6 +155,7 @@ export default defineSchema({
         gist: v.string(),
         webUrl: v.string(),
         mobileUrl: v.string(),
+        receivedAt: v.optional(v.number()),
       }),
     ),
     rest: v.object({
