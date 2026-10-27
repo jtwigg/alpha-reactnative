@@ -13,6 +13,14 @@ export const SERVE_STACK_SCOPE = 'overview';
 export const SERVE_ACCOUNT_BATCH = 4;
 export const SERVE_SERIES_BATCH = 2;
 
+export function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** posh-mink-581 live topology (2026-10-25): 27 accounts, first coverage 2014-03-07. */
 export const LIVE_ACCOUNT_COUNT = 27;
 export const LIVE_FIRST_AS_OF = '2014-03-07';

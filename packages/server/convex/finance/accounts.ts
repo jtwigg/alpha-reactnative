@@ -34,7 +34,15 @@ import {
 import { grainDates, valuesFromAccountRollups } from './rollups';
 import { loadRollupRange, loadRollupStateView } from './rollupJobs';
 import { loadServePayload } from './serveJobs';
-import { SERVE_SPARK_SCOPE, SERVE_STACK_SCOPE, decodePoints, liteSnapshot, type ColumnarPoints } from './serve';
+import {
+  SERVE_SPARK_SCOPE,
+  SERVE_STACK_SCOPE,
+  decodePoints,
+  finiteNumber,
+  finiteOrNull,
+  liteSnapshot,
+  type ColumnarPoints,
+} from './serve';
 import {
   CONVEX_QUERY_READ_BUDGET,
   chartPointValidator,
@@ -493,19 +501,19 @@ export const detail = query({
             mask: (payload.mask as string | null) ?? null,
             type: (payload.type as string) ?? '',
             subtype: (payload.subtype as string | null) ?? null,
-            currentBalance: (payload.currentBalance as number) ?? 0,
-            availableBalance: (payload.availableBalance as number | null) ?? null,
+            currentBalance: finiteNumber(payload.currentBalance),
+            availableBalance: finiteOrNull(payload.availableBalance),
             currency: (payload.currency as string) ?? 'USD',
-            syncedAt: (payload.syncedAt as number) ?? 0,
-            updatedAt: (payload.updatedAt as number) ?? 0,
+            syncedAt: finiteNumber(payload.syncedAt),
+            updatedAt: finiteNumber(payload.updatedAt),
             coverageStart: (payload.coverageStart as string | null) ?? null,
             latestSnapshot: liteSnapshot(payload.latestSnapshot),
             history: {
               range,
               asOf: served.row.asOf,
               points,
-              change: (payload.change as number) ?? 0,
-              changePct: (payload.changePct as number | null) ?? null,
+              change: finiteNumber(payload.change),
+              changePct: finiteOrNull(payload.changePct),
               firstAsOf: (payload.firstAsOf as string | null) ?? null,
             },
           };

@@ -1,5 +1,5 @@
 import { RANGE_KEYS, type RangeKey } from '../../server/convex/finance/series';
-import { pageFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
+import { pageFromPack, seriesFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
 
 /** Default chart range on the Finances overview and every account page. */
 export const DEFAULT_CHART_RANGE: RangeKey = '1M';
@@ -184,4 +184,92 @@ export function shouldFetchAccountRange(args: {
   if (args.range !== args.selected && !args.background) return false;
   if (args.cached && !args.refreshing) return false;
   return true;
+}
+
+/** Do not fire the live series query until seriesPack has settled. */
+export function seriesLiveQueryArgs(args: {
+  live: boolean;
+  pack: SeriesPack | null | undefined;
+  scope: string;
+  range: RangeKey;
+  refreshNonce: number;
+}): { scope: string; range: RangeKey; refreshNonce: number } | 'skip' {
+  if (!args.live) return 'skip';
+  if (args.pack === undefined) return 'skip';
+  if (args.pack && seriesFromPack(args.pack, args.range)) return 'skip';
+  return { scope: args.scope, range: args.range, refreshNonce: args.refreshNonce };
+}
+
+type PackAccount = {
+  sourceId?: unknown;
+  name?: unknown;
+  class?: unknown;
+  provider?: unknown;
+  currentBalance?: unknown;
+  latestSnapshot?: { asOf?: unknown; balance?: unknown; source?: unknown } | null;
+};
+
+/** Header-only account row from the already-loaded overview pack so the page is not a black spinner. */
+export function accountShellFromCache(
+  cache: FinanceCacheSnapshot,
+  sourceId: string,
+  range: RangeKey,
+): {
+  sourceId: string;
+  name: string;
+  institution: string;
+  typeLabel: string;
+  provider: string;
+  connectionId: string | null;
+  class: string;
+  mask: string | null;
+  type: string;
+  subtype: string | null;
+  currentBalance: number;
+  availableBalance: number | null;
+  currency: string;
+  syncedAt: number;
+  updatedAt: number;
+  coverageStart: string | null;
+  latestSnapshot: { asOf: string; balance: number; source: 'observed' } | null;
+  history: {
+    range: RangeKey;
+    asOf: string;
+    points: [];
+    change: number;
+    changePct: null;
+    firstAsOf: null;
+  };
+} | null {
+  const overview = overviewForRange(cache, DEFAULT_CHART_RANGE) as { accounts?: PackAccount[] } | undefined;
+  const packed = Array.isArray(cache.pagePack?.accounts) ? (cache.pagePack?.accounts as PackAccount[]) : [];
+  const listed = Array.isArray(overview?.accounts) ? overview.accounts : [];
+  const row = [...listed, ...packed].find((item) => item && item.sourceId === sourceId);
+  if (!row || typeof row.name !== 'string') return null;
+  const snap = row.latestSnapshot;
+  const asOf = typeof snap?.asOf === 'string' ? snap.asOf : '';
+  const balance = typeof row.currentBalance === 'number' ? row.currentBalance : 0;
+  return {
+    sourceId,
+    name: row.name,
+    institution: typeof row.provider === 'string' ? row.provider : '',
+    typeLabel: typeof row.class === 'string' ? row.class : '',
+    provider: typeof row.provider === 'string' ? row.provider : '',
+    connectionId: null,
+    class: typeof row.class === 'string' ? row.class : 'other',
+    mask: null,
+    type: '',
+    subtype: null,
+    currentBalance: balance,
+    availableBalance: null,
+    currency: 'USD',
+    syncedAt: 0,
+    updatedAt: 0,
+    coverageStart: null,
+    latestSnapshot:
+      asOf && typeof snap?.balance === 'number'
+        ? { asOf, balance: snap.balance, source: 'observed' }
+        : null,
+    history: { range, asOf, points: [], change: 0, changePct: null, firstAsOf: null },
+  };
 }

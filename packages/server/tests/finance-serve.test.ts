@@ -22,6 +22,8 @@ import {
   SERVE_SERIES_BATCH,
   serveQueryCost,
   sameNumbers,
+  finiteNumber,
+  finiteOrNull,
 } from '../convex/finance/serve';
 import { RANGE_KEYS, rangeWindow, type ChartPoint } from '../convex/finance/series';
 import { pageFromPack, seriesFromPack, sparksFromPack } from '../../../packages/reactnative/lib/finance-packs';
@@ -255,6 +257,15 @@ describe('rangesOverlapping dirty-from-forward', () => {
     });
     expect(contained).toEqual(['All']);
     expect(rangesOverlapping(LIVE_FIRST_AS_OF, LIVE_AS_OF, LIVE_FIRST_AS_OF)).not.toEqual(contained);
+  });
+});
+
+describe('serve payload numbers', () => {
+  it('drops NaN/Infinity so Convex validators accept serve docs', () => {
+    expect(finiteNumber(Number.NaN)).toBe(0);
+    expect(finiteNumber(Number.POSITIVE_INFINITY, 3)).toBe(3);
+    expect(finiteOrNull(Number.NaN)).toBeNull();
+    expect(finiteOrNull(1.25)).toBe(1.25);
   });
 });
 

@@ -116,10 +116,11 @@ export async function findServe(
   scopeId: string,
   range: string,
 ): Promise<Doc<'finance_serve'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('finance_serve')
     .withIndex('by_kind_scope_range', (q) => q.eq('kind', kind).eq('scopeId', scopeId).eq('range', range))
-    .unique();
+    .take(1);
+  return rows[0] ?? null;
 }
 
 export async function loadServePayload<T>(
