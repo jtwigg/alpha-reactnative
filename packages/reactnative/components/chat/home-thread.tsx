@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/lib/api';
+import { useAppPalette } from '@/lib/app-theme';
 import { GROK_BOT_AGENT_URL, openGrokBot } from '@/lib/grok-bot';
 
 type ThreadMessage = {
@@ -63,6 +64,7 @@ export function HomeThread({
   askMissing?: boolean;
   ready?: boolean;
 }) {
+  const palette = useAppPalette();
   const rows = useMemo(() => messages, [messages]);
   const listRef = useRef<FlatList<ThreadMessage>>(null);
   const highlightIndex = highlightAskId ? rows.findIndex((row) => row.messageId === highlightAskId) : -1;
@@ -74,20 +76,22 @@ export function HomeThread({
   return (
     <View style={styles.wrap}>
       <View style={styles.toolbar}>
-        <Text style={styles.kicker}>Assistant</Text>
+        <Text style={[styles.kicker, { color: palette.muted }]}>Assistant</Text>
         <Pressable
           onPress={onOpenGrok}
           accessibilityRole="button"
           accessibilityLabel="Open in Grok Bot"
           accessibilityHint={GROK_BOT_AGENT_URL}
           hitSlop={8}>
-          <Text style={styles.grok}>Open in Grok Bot</Text>
+          <Text style={[styles.grok, { color: palette.accent }]}>Open in Grok Bot</Text>
         </Pressable>
       </View>
 
       {askMissing || unknownAsk ? (
-        <View style={styles.missing} accessibilityRole="alert">
-          <Text style={styles.missingText}>Ask not found</Text>
+        <View
+          style={[styles.missing, { backgroundColor: palette.accentSoft, borderColor: palette.accent }]}
+          accessibilityRole="alert">
+          <Text style={[styles.missingText, { color: palette.accent }]}>Ask not found</Text>
         </View>
       ) : null}
 
@@ -99,18 +103,24 @@ export function HomeThread({
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
         onScrollToIndexFailed={() => undefined}
-        ListEmptyComponent={<Text style={styles.empty}>Ask anything. Replies land here live.</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, { color: palette.muted }]}>Ask anything. Replies land here live.</Text>}
         renderItem={({ item }) => (
           <View style={[styles.row, item.role === 'user' ? styles.rowUser : styles.rowAsst]}>
             <View
               style={[
                 styles.bubble,
-                item.role === 'user' ? styles.bubbleUser : styles.bubbleAsst,
-                item.messageId === highlightAskId && styles.bubbleOn,
+                item.role === 'user' ? { backgroundColor: palette.text } : { backgroundColor: palette.chip },
+                item.messageId === highlightAskId && { borderWidth: 2, borderColor: palette.accent },
               ]}
               accessibilityState={{ selected: item.messageId === highlightAskId }}
             >
-              <Text style={[styles.body, item.role === 'user' ? styles.bodyUser : styles.bodyAsst]}>{item.text}</Text>
+              <Text
+                style={[
+                  styles.body,
+                  { color: item.role === 'user' ? palette.card : palette.text },
+                ]}>
+                {item.text}
+              </Text>
               {item.role === 'user' && item.status === 'error' ? (
                 <Text style={styles.error}>Could not reach Assistant.</Text>
               ) : null}
@@ -120,9 +130,9 @@ export function HomeThread({
         ListFooterComponent={
           pending ? (
             <View style={[styles.row, styles.rowAsst]}>
-              <View style={[styles.bubble, styles.bubbleAsst, styles.thinking]}>
-                <ActivityIndicator size="small" color="#6b7280" />
-                <Text style={styles.thinkingText}>Thinking…</Text>
+              <View style={[styles.bubble, { backgroundColor: palette.chip }, styles.thinking]}>
+                <ActivityIndicator size="small" color={palette.muted} />
+                <Text style={[styles.thinkingText, { color: palette.muted }]}>Thinking…</Text>
               </View>
             </View>
           ) : null
@@ -142,33 +152,26 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 8,
   },
-  kicker: { fontSize: 13, fontWeight: '600', letterSpacing: 0.4, color: '#6b7280', textTransform: 'uppercase' },
-  grok: { fontSize: 14, fontWeight: '600', color: '#0a7ea4' },
+  kicker: { fontSize: 13, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
+  grok: { fontSize: 14, fontWeight: '600' },
   list: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingBottom: 12, gap: 8, flexGrow: 1, justifyContent: 'flex-end' },
-  empty: { fontSize: 15, lineHeight: 22, color: '#6b7280', paddingHorizontal: 8, paddingVertical: 24 },
+  empty: { fontSize: 15, lineHeight: 22, paddingHorizontal: 8, paddingVertical: 24 },
   row: { maxWidth: '86%', marginVertical: 2 },
   rowUser: { alignSelf: 'flex-end' },
   rowAsst: { alignSelf: 'flex-start' },
   bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
-  bubbleUser: { backgroundColor: '#11181C' },
-  bubbleAsst: { backgroundColor: '#ecece8' },
   body: { fontSize: 16, lineHeight: 22 },
-  bodyUser: { color: '#fff' },
-  bodyAsst: { color: '#11181C' },
   error: { marginTop: 6, fontSize: 13, color: '#fca5a5' },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 },
-  thinkingText: { fontSize: 15, color: '#6b7280' },
-  bubbleOn: { borderWidth: 2, borderColor: '#c2410c' },
+  thinkingText: { fontSize: 15 },
   missing: {
     marginHorizontal: 20,
     marginBottom: 8,
     borderRadius: 10,
-    backgroundColor: '#fff7ed',
     borderWidth: 1,
-    borderColor: '#fdba74',
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  missingText: { color: '#c2410c', fontWeight: '700', fontSize: 14 },
+  missingText: { fontWeight: '700', fontSize: 14 },
 });

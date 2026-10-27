@@ -25,12 +25,14 @@ import {
 import { briefingItemId } from '../../../server/convex/briefings/payload';
 import type { GlanceItem, PriorityItem } from '../../../server/convex/briefings/payload';
 
-const ORANGE = '#c2410c';
-const MUTED = '#6b7280';
-const BORDER = '#e5e7eb';
-const TEXT = '#1f2430';
-const SOFT = '#fff7ed';
-const DEADLINE = '#92400e';
+import { LIGHT } from '@/lib/app-theme';
+
+const ORANGE = LIGHT.accent;
+const MUTED = LIGHT.muted;
+const BORDER = LIGHT.border;
+const TEXT = LIGHT.text;
+const SOFT = LIGHT.accentSoft;
+const DEADLINE = LIGHT.negative;
 
 export type FeedbackArgs = {
   deck: string;

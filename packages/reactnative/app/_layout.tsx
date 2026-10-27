@@ -12,6 +12,7 @@ import 'react-native-reanimated';
 
 import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { DARK, LIGHT } from '@/lib/app-theme';
 import { initSentry, wrapRoot } from '@/lib/sentry';
 import { AppProviders } from '@/providers/app-providers';
 
@@ -21,6 +22,23 @@ export const unstable_settings = {
   anchor: '(tabs)',
 };
 
+function navigationTheme(scheme: 'light' | 'dark' | null | undefined) {
+  const palette = scheme === 'dark' ? DARK : LIGHT;
+  const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: palette.accent,
+      background: palette.page,
+      card: palette.card,
+      text: palette.text,
+      border: palette.border,
+      notification: palette.accent,
+    },
+  };
+}
+
 export function RootLayout() {
   const colorScheme = useColorScheme();
 
@@ -28,7 +46,7 @@ export function RootLayout() {
     <QueryErrorBoundary showVersion surface="root">
       <AppProviders>
         <QueryErrorBoundary showVersion surface="app">
-          <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <ThemeProvider value={navigationTheme(colorScheme)}>
             <Stack>
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />

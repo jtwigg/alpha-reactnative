@@ -19,16 +19,16 @@ import { api } from '@/lib/api';
 import { briefingsPath, findBriefingItem, parseBriefingDate, parseBriefingItemRef } from '@/lib/app-links';
 import { formatBriefingDate } from '@/lib/briefing-gesture';
 import { isClerkConfigured } from '@/lib/convex';
+import { LIGHT, MAX_CONTENT_WIDTH, useAppPalette } from '@/lib/app-theme';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { restLine, type AccountBriefing, type BriefingAccount } from '../../../server/convex/briefings/payload';
 
-const PAGE = '#f7f7f4';
-const TEXT = '#1f2430';
-const MUTED = '#6b7280';
-const ORANGE = '#c2410c';
-const BORDER = '#e5e7eb';
-const SOFT = '#fff7ed';
-const MAX = 720;
+const PAGE = LIGHT.page;
+const TEXT = LIGHT.text;
+const MUTED = LIGHT.muted;
+const ACCENT = LIGHT.accent;
+const BORDER = LIGHT.border;
+const SOFT = LIGHT.accentSoft;
 
 export function BriefingsScreen() {
   if (!isClerkConfigured()) return null;
@@ -40,6 +40,7 @@ export function BriefingsScreen() {
 }
 
 function BriefingsPage() {
+  const palette = useAppPalette();
   const router = useRouter();
   const params = useLocalSearchParams<{ date?: string; itemId?: string }>();
   const dateParam = typeof params.date === 'string' ? params.date : null;
@@ -96,7 +97,7 @@ function BriefingsPage() {
   if (allowed === undefined) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={ORANGE} />
+        <ActivityIndicator size="large" color={palette.accent} />
       </View>
     );
   }
@@ -137,7 +138,7 @@ function BriefingsPage() {
   const highlightId = match?.item.threadId ?? null;
 
   return (
-    <View style={styles.page}>
+    <View style={[styles.page, { backgroundColor: palette.page }]}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <ScrollView
           ref={scrollRef}
@@ -209,7 +210,7 @@ function BriefingsPage() {
             ) : null}
 
             {date && !day ? (
-              <ActivityIndicator color={ORANGE} />
+              <ActivityIndicator color={palette.accent} />
             ) : section ? (
               <View style={styles.pane}>
                 <Text style={styles.headline}>{section.headline}</Text>
@@ -301,7 +302,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: PAGE, gap: 8 },
   scroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 56 },
-  column: { width: '100%', maxWidth: MAX, alignSelf: 'center', gap: 14 },
+      column: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, alignSelf: 'center', gap: 14 },
   kicker: { color: MUTED, fontSize: 11, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase' },
   title: { color: TEXT, fontSize: 28, fontWeight: '700', letterSpacing: -0.5 },
   sub: { color: MUTED, fontSize: 14 },
@@ -314,7 +315,7 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 4,
   },
-  missingTitle: { color: ORANGE, fontWeight: '700' },
+  missingTitle: { color: ACCENT, fontWeight: '700' },
   missingBody: { color: MUTED, fontSize: 14 },
   dates: { gap: 8, paddingVertical: 4 },
   dateChip: {
@@ -327,10 +328,10 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  dateChipOn: { backgroundColor: SOFT, borderColor: ORANGE },
+  dateChipOn: { backgroundColor: SOFT, borderColor: ACCENT },
   dateChipDay: { color: TEXT, fontWeight: '700', fontSize: 13 },
   dateChipMeta: { color: MUTED, fontSize: 11 },
-  dateChipOnText: { color: ORANGE },
+  dateChipOnText: { color: ACCENT },
   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: BORDER },
   tab: {
     flex: 1,
@@ -342,15 +343,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 3,
     borderBottomColor: 'transparent',
   },
-  tabOn: { borderBottomColor: ORANGE },
+  tabOn: { borderBottomColor: ACCENT },
   tabLabel: { color: MUTED, fontSize: 15, fontWeight: '600' },
-  tabLabelOn: { color: ORANGE },
+  tabLabelOn: { color: ACCENT },
   badge: { backgroundColor: BORDER, borderRadius: 999, minWidth: 22, paddingHorizontal: 6, paddingVertical: 2 },
-  badgeOn: { backgroundColor: ORANGE },
+  badgeOn: { backgroundColor: ACCENT },
   badgeText: { color: MUTED, fontSize: 12, fontWeight: '700', textAlign: 'center' },
   badgeTextOn: { color: '#fff' },
   pane: { gap: 12 },
-  headline: { color: ORANGE, fontSize: 17, fontWeight: '700' },
+  headline: { color: ACCENT, fontSize: 17, fontWeight: '700' },
   lede: { color: MUTED, fontSize: 14 },
   h2: {
     color: MUTED,

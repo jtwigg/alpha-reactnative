@@ -4,8 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useAppPalette } from '@/lib/app-theme';
 
 export function AccessDenied() {
+  const palette = useAppPalette();
   const { user } = useUser();
   const { signOut } = useClerk();
   const { isSignedIn } = useAuth();
@@ -22,8 +24,8 @@ export function AccessDenied() {
             {email ? ` as ${email}` : ''}, but that account cannot load any data.
           </ThemedText>
           {isSignedIn ? (
-            <Pressable style={styles.button} onPress={() => signOut()}>
-              <Text style={styles.buttonText}>Sign out</Text>
+            <Pressable style={[styles.button, { borderColor: palette.accent }]} onPress={() => signOut()}>
+              <Text style={[styles.buttonText, { color: palette.accent }]}>Sign out</Text>
             </Pressable>
           ) : null}
         </View>
@@ -39,10 +41,9 @@ const styles = StyleSheet.create({
   button: {
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: '#0a7ea4',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  buttonText: { color: '#0a7ea4', fontWeight: '600' },
+  buttonText: { fontWeight: '600' },
 });
