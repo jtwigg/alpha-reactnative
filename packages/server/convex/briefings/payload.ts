@@ -1,4 +1,5 @@
 import { parseIsoDate } from '../finance/dates';
+import { parseReceivedAt } from './receivedAt';
 
 export const BRIEFING_ACCOUNTS = ['personal', 'crankcase'] as const;
 export type BriefingAccount = (typeof BRIEFING_ACCOUNTS)[number];
@@ -21,6 +22,8 @@ export type GlanceItem = {
   gist: string;
   webUrl: string;
   mobileUrl: string;
+  /** Email received time, epoch ms. Omitted when the supplier did not send it. */
+  receivedAt?: number;
 };
 
 export type PriorityItem = GlanceItem & {
@@ -120,6 +123,7 @@ function parseGlance(raw: unknown, path: string, errors: ParseError[]): GlanceIt
     errors.push({ path, message: 'must be an object' });
     return { threadId: '', sender: '', gist: '', webUrl: '', mobileUrl: '' };
   }
+  const receivedAt = parseReceivedAt(raw.receivedAt);
   const threadId = str(raw.threadId, `${path}.threadId`, errors, 40);
   if (threadId && !THREAD_ID.test(threadId)) {
     errors.push({ path: `${path}.threadId`, message: 'must be 6–24 hex characters' });
@@ -138,6 +142,7 @@ function parseGlance(raw: unknown, path: string, errors: ParseError[]): GlanceIt
     gist: str(raw.gist, `${path}.gist`, errors, 300),
     webUrl,
     mobileUrl,
+    ...(receivedAt != null ? { receivedAt } : {}),
   };
 }
 
