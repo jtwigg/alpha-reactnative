@@ -4,6 +4,7 @@ import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
 import { useCallback, useMemo, useRef, type ReactNode } from 'react';
 
 import { SentryAuthObserver } from '@/components/auth/sentry-auth-observer';
+import { FinancePrefetchProvider } from '@/providers/finance-prefetch';
 import {
   CONVEX_TOKEN_TIMEOUT_MS,
   getConvexAccessToken,
@@ -79,7 +80,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   if (!isClerkConfigured()) {
     return (
       <ConvexProviderWithAuth client={convex} useAuth={useUnauthenticatedConvexAuth}>
-        {children}
+        <FinancePrefetchProvider>{children}</FinancePrefetchProvider>
       </ConvexProviderWithAuth>
     );
   }
@@ -88,7 +89,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
       <ConvexProviderWithAuth client={convex} useAuth={useConvexAuthFromClerk}>
         <SentryAuthObserver />
-        {children}
+        <FinancePrefetchProvider>{children}</FinancePrefetchProvider>
       </ConvexProviderWithAuth>
     </ClerkProvider>
   );

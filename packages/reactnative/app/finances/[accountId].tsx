@@ -46,18 +46,25 @@ import { useFinanceAccess } from '@/hooks/use-finance-access';
 import { accountPath, parseAccountId, parseRange, signInPath } from '@/lib/app-links';
 import { api } from '@/lib/api';
 import { useChartColors } from '@/lib/finance-colors';
-import { RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { RANGE_SUFFIX } from '@/lib/range-support';
 import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
 import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { LinkNotFound } from '@/components/link-not-found';
 import { useCachedValue } from '@/lib/finance-cache';
 import { seriesFromPack, type SeriesPack } from '@/lib/finance-packs';
+import {
+  DEFAULT_CHART_RANGE,
+  shouldFetchAccountRange,
+  writeAccountDetail,
+  writeSeriesPack,
+} from '@/lib/finance-prefetch';
+import { useFinancePrefetch } from '@/providers/finance-prefetch';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { useFinanceDemo } from '@/lib/finance-demo';
 import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountDetail, demoFlows, demoHoldings, demoTransactions, demoTwr } from '@/lib/finance-fixtures';
 import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
-import { groupKeyForClass, trimHistoryToRange } from '../../../server/convex/finance/accountModel';
+import { groupKeyForClass } from '../../../server/convex/finance/accountModel';
 import { accountScope } from '../../../server/convex/finance/twrModel';
 import { flowAdjustedOverlay } from '../../../server/convex/finance/seriesModel';
 import { signedAmount, type RangeKey } from '../../../server/convex/finance/series';
@@ -147,55 +154,62 @@ function AccountDetailBody({
   const colors = useChartColors();
   const { width } = useWindowDimensions();
   const router = useRouter();
-  const [range, setRange] = useState<RangeKey>(initialRange ?? '1Y');
+  const prefetch = useFinancePrefetch();
+  const [range, setRange] = useState<RangeKey>(initialRange ?? DEFAULT_CHART_RANGE);
   const changeRange = (next: RangeKey) => {
     setRange(next);
     router.setParams({ range: next });
   };
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [background, setBackground] = useState(false);
   const { timeWeighted, setTimeWeighted, showSp500, setShowSp500 } = useChartMode();
   const scope = accountScope(sourceId);
+  const { refreshing, onRefresh } = useRefreshSpinner(!live || prefetch.readAccount(sourceId, range) !== undefined, () => {
+    prefetch.refresh();
+    setRefreshNonce((nonce) => nonce + 1);
+  });
 
-  const [visited, setVisited] = useState<Set<RangeKey>>(() => new Set(['All', range]));
-  useEffect(() => {
-    setVisited((current) => {
-      if (current.has(range)) return current;
-      const next = new Set(current);
-      next.add(range);
-      return next;
+  const want = (next: RangeKey) =>
+    shouldFetchAccountRange({
+      live,
+      range: next,
+      selected: range,
+      cached: prefetch.readAccount(sourceId, next) !== undefined,
+      background,
+      refreshing,
     });
-  }, [range]);
-  const liveDetail = useQuery(
-    api.finance.accounts.detail,
-    live ? { sourceId, range: 'All', refreshNonce } : 'skip',
-  );
   const detail1M = useQuery(
     api.finance.accounts.detail,
-    live && visited.has('1M') ? { sourceId, range: '1M', refreshNonce } : 'skip',
+    want('1M') ? { sourceId, range: '1M', refreshNonce } : 'skip',
   );
   const detail3M = useQuery(
     api.finance.accounts.detail,
-    live && visited.has('3M') ? { sourceId, range: '3M', refreshNonce } : 'skip',
+    want('3M') ? { sourceId, range: '3M', refreshNonce } : 'skip',
   );
   const detailYtd = useQuery(
     api.finance.accounts.detail,
-    live && visited.has('YTD') ? { sourceId, range: 'YTD', refreshNonce } : 'skip',
+    want('YTD') ? { sourceId, range: 'YTD', refreshNonce } : 'skip',
   );
   const detail1Y = useQuery(
     api.finance.accounts.detail,
-    live && visited.has('1Y') ? { sourceId, range: '1Y', refreshNonce } : 'skip',
+    want('1Y') ? { sourceId, range: '1Y', refreshNonce } : 'skip',
   );
   const detail5Y = useQuery(
     api.finance.accounts.detail,
-    live && visited.has('5Y') ? { sourceId, range: '5Y', refreshNonce } : 'skip',
+    want('5Y') ? { sourceId, range: '5Y', refreshNonce } : 'skip',
   );
-  const fineDetail = useQuery(
+  const detailAll = useQuery(
     api.finance.accounts.detail,
-    live && isDailyRange(range) ? { sourceId, range, refreshNonce } : 'skip',
+    want('All') ? { sourceId, range: 'All', refreshNonce } : 'skip',
   );
-  const liveSeriesPack = useQuery(api.finance.queries.seriesPack, live ? { scope, refreshNonce } : 'skip');
-  const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${scope}`, liveSeriesPack ?? undefined);
+  const cachedSeries = prefetch.seriesPack(scope);
+  const liveSeriesPack = useQuery(
+    api.finance.queries.seriesPack,
+    live && !cachedSeries ? { scope, refreshNonce } : 'skip',
+  );
+  const diskSeries = useCachedValue<SeriesPack>(`finance.seriesPack.${scope}`, liveSeriesPack ?? undefined);
+  const seriesPack = cachedSeries ?? diskSeries;
   const packedSeriesEarly = seriesPack ? seriesFromPack(seriesPack, range) : null;
   const liveSeries = useQuery(
     api.finance.queries.series,
@@ -206,7 +220,7 @@ function AccountDetailBody({
   const demoSeriesModel = useMemo(() => (live ? undefined : demoTwr(scope, range)), [live, range, scope]);
   const flowMarks = useMemo(() => {
     const rows = live ? (liveFlows ?? []) : demoFlows(sourceId);
-    return rows.map((flow) => ({
+    return rows.map((flow: { flowId: string; date: string; amount: number }) => ({
       flowId: flow.flowId,
       date: flow.date,
       amount: flow.amount,
@@ -217,30 +231,53 @@ function AccountDetailBody({
       },
     }));
   }, [live, liveFlows, router, sourceId]);
-  const [held, setHeld] = useState(liveDetail);
-  useEffect(() => {
-    if (liveDetail !== undefined) setHeld(liveDetail);
-  }, [liveDetail]);
   const { scrollEnabled, ScrollLockProvider } = useScrollLockRoot();
-  const { refreshing, onRefresh } = useRefreshSpinner(!live || liveDetail !== undefined, () =>
-    setRefreshNonce((nonce) => nonce + 1),
-  );
   useEffect(() => setScrubIndex(null), [range]);
 
+  useEffect(() => {
+    if (detail1M !== undefined) writeAccountDetail(prefetch.cache, sourceId, '1M', detail1M);
+  }, [detail1M, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (detail3M !== undefined) writeAccountDetail(prefetch.cache, sourceId, '3M', detail3M);
+  }, [detail3M, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (detailYtd !== undefined) writeAccountDetail(prefetch.cache, sourceId, 'YTD', detailYtd);
+  }, [detailYtd, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (detail1Y !== undefined) writeAccountDetail(prefetch.cache, sourceId, '1Y', detail1Y);
+  }, [detail1Y, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (detail5Y !== undefined) writeAccountDetail(prefetch.cache, sourceId, '5Y', detail5Y);
+  }, [detail5Y, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (detailAll !== undefined) writeAccountDetail(prefetch.cache, sourceId, 'All', detailAll);
+  }, [detailAll, prefetch.cache, sourceId]);
+  useEffect(() => {
+    if (liveSeriesPack) writeSeriesPack(prefetch.cache, scope, liveSeriesPack);
+  }, [liveSeriesPack, prefetch.cache, scope]);
+  useEffect(() => {
+    if (!live || background) return;
+    const haveSelected = prefetch.readAccount(sourceId, range) !== undefined;
+    const haveLive =
+      detail1M !== undefined ||
+      detail3M !== undefined ||
+      detailYtd !== undefined ||
+      detail1Y !== undefined ||
+      detail5Y !== undefined ||
+      detailAll !== undefined;
+    if (haveSelected || haveLive) setBackground(true);
+  }, [background, detail1M, detail3M, detailAll, detailYtd, detail1Y, detail5Y, live, prefetch, range, sourceId]);
+
+  const liveHit = { '1M': detail1M, '3M': detail3M, YTD: detailYtd, '1Y': detail1Y, '5Y': detail5Y, All: detailAll }[
+    range
+  ];
   const detail = useMemo(() => {
-    if (!live) {
-      const demo = demoAccountDetail(sourceId, 'All');
-      if (!demo) return demo;
-      return { ...demo, history: trimHistoryToRange(demo.history, range) };
-    }
-    const byRange = { '1M': detail1M, '3M': detail3M, YTD: detailYtd, '1Y': detail1Y, '5Y': detail5Y, All: liveDetail };
-    const hit = byRange[range];
-    if (hit && hit.history.range === range) return hit;
-    const source = liveDetail ?? held;
-    if (source === undefined || source === null) return source;
-    if (fineDetail && fineDetail.history.range === range) return fineDetail;
-    return { ...source, history: trimHistoryToRange(source.history, range) };
-  }, [detail1M, detail1Y, detail3M, detail5Y, detailYtd, fineDetail, held, live, liveDetail, range, sourceId]);
+    if (!live) return demoAccountDetail(sourceId, range);
+    const cached = prefetch.readAccount<typeof liveHit>(sourceId, range);
+    const hit = cached ?? liveHit;
+    if (hit && hit !== null && hit.history.range !== range) return undefined;
+    return hit;
+  }, [live, liveHit, prefetch, range, sourceId]);
 
   if (detail === undefined) {
     return (
@@ -364,8 +401,8 @@ function AccountDetailBody({
                   color={color}
                   height={width >= 720 ? 260 : 210}
                   invert={shown < 0}
-                  spanFrom={live ? (liveDetail ?? held)?.history.points[0]?.asOf : detail.history.points[0]?.asOf}
-                  spanTo={live ? (liveDetail ?? held)?.history.asOf : detail.history.asOf}
+                  spanFrom={detail.history.points[0]?.asOf}
+                  spanTo={detail.history.asOf}
                   flowAdjusted={
                     hasSeries
                       ? {

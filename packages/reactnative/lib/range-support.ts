@@ -19,9 +19,8 @@ export const RANGE_LABEL: Record<RangeKey, string> = {
 };
 
 /**
- * Live queries always load All (monthly rollups). Range pills trim that series
- * on the client so switches are instant. A second subscription for any finer
- * grain (1M/3M/YTD daily, 1Y weekly) upgrades resolution in the background.
+ * Each range is served at its own grain (1M/3M/YTD daily, 1Y weekly,
+ * 5Y/All monthly). Do not downsample a coarser series to fake a finer one.
  */
 export function isDailyRange(range: RangeKey): boolean {
   return grainForRange(range) !== grainForRange('All');

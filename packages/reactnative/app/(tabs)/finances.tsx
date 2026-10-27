@@ -43,23 +43,34 @@ import { isFinanceDemoFlag, useFinanceDemo } from '@/lib/finance-demo';
 import { useChartMode } from '@/lib/chart-mode';
 import { demoAccountList, demoAccountSparklines, demoFlows, demoNetWorthPage, demoTwr } from '@/lib/finance-fixtures';
 import { usePersistedChoice } from '@/lib/prefs';
-import { RANGE_LABEL, RANGE_SUFFIX, isDailyRange } from '@/lib/range-support';
+import { RANGE_LABEL, RANGE_SUFFIX } from '@/lib/range-support';
 import { FinanceErrorBoundary } from '@/components/finance/error-boundary';
 import { useCachedValue } from '@/lib/finance-cache';
 import { pageFromPack, seriesFromPack, sparksFromPack, type PagePack, type SeriesPack } from '@/lib/finance-packs';
+import {
+  DEFAULT_CHART_RANGE,
+  overviewPageArgs,
+  pagePackQueryArgs,
+  seriesPackQueryArgs,
+  writePageRange,
+  writePagePack,
+  writeSeriesPack,
+} from '@/lib/finance-prefetch';
+import { useFinancePrefetch } from '@/providers/finance-prefetch';
 import { useRefreshSpinner } from '@/lib/use-refresh';
 import { BENCHMARKS } from '../../../server/convex/finance/benchmarks';
 import {
   ACCOUNT_GROUPS,
   groupChartPoints,
   groupKeyForClass,
-  trimSparklinesToRange,
   type AccountGroupKey,
 } from '../../../server/convex/finance/accountModel';
 import { flowAdjustedOverlay } from '../../../server/convex/finance/seriesModel';
-import { modelsForRanges, type RangeKey } from '../../../server/convex/finance/series';
+import { type RangeKey } from '../../../server/convex/finance/series';
 
 type ChartGroup = 'all' | AccountGroupKey;
+type OverviewPage = NonNullable<ReturnType<typeof pageFromPack>>;
+type SparkSource = NonNullable<ReturnType<typeof sparksFromPack>>;
 const WIDE_MIN_WIDTH = 720;
 
 export default function FinancesScreen() {
@@ -78,45 +89,61 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   const palette = useFinancePalette();
   const colors = useChartColors();
   const { width: screenWidth } = useWindowDimensions();
-  const [range, setRange] = useState<RangeKey>('All');
+  const prefetch = useFinancePrefetch();
+  const [range, setRange] = useState<RangeKey>(DEFAULT_CHART_RANGE);
   const [rangeGen, setRangeGen] = useState(0);
   const [changeMode, setChangeMode] = usePersistedChoice<ChangeMode>('finance.changeMode', CHANGE_MODES, 'own');
   const { timeWeighted, setTimeWeighted, showSp500, setShowSp500, twrAll, setTwrAll } = useChartMode();
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const bumpRefresh = () => {
+    prefetch.refresh();
+    setRefreshNonce((nonce) => nonce + 1);
+  };
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [chartGroup, setChartGroup] = useState<ChartGroup>('all');
   const [groupScrub, setGroupScrub] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const chartY = useRef(0);
-  const allowed = useQuery(api.finance.queries.isAllowed, demo && !isClerkConfigured() ? 'skip' : undefined);
-  const livePack = useQuery(api.finance.queries.pagePack, allowed ? { refreshNonce } : 'skip');
-  const pack = useCachedValue<PagePack>(`finance.pagePack`, livePack ?? undefined);
+  const liveAllowed = useQuery(
+    api.finance.queries.isAllowed,
+    demo && !isClerkConfigured() ? 'skip' : prefetch.allowed !== undefined ? 'skip' : undefined,
+  );
+  const allowed = prefetch.allowed ?? liveAllowed;
+  const livePack = useQuery(
+    api.finance.queries.pagePack,
+    pagePackQueryArgs({ allowed: Boolean(allowed), cache: prefetch.cache, refreshNonce }),
+  );
+  const cachedPack = useCachedValue<PagePack>(`finance.pagePack`, livePack ?? undefined);
+  const pack = prefetch.pagePack ?? cachedPack;
   const packed = pack ? pageFromPack(pack, range) : null;
-  const needFallback = Boolean(allowed && packed == null);
   const live = useQuery(
     api.finance.queries.page,
-    needFallback ? { range: 'All', refreshNonce } : 'skip',
-  );
-  const fine = useQuery(
-    api.finance.queries.page,
-    needFallback && isDailyRange(range) ? { range, refreshNonce } : 'skip',
+    overviewPageArgs({ allowed: Boolean(allowed), range, cache: prefetch.cache, refreshNonce }),
   );
   const liveAccounts = useQuery(api.finance.accounts.list, allowed ? { refreshNonce } : 'skip');
-  const [held, setHeld] = useState(live);
-  const [heldAccounts, setHeldAccounts] = useState(liveAccounts);
+  const heldAccounts = useCachedValue('finance.accountsList', liveAccounts ?? undefined);
   const packedSparks = pack ? sparksFromPack(pack, range) : null;
   const liveSparks = useQuery(
     api.finance.accounts.sparklines,
     allowed && packedSparks == null ? { range, refreshNonce } : 'skip',
   );
-  const [heldSparks, setHeldSparks] = useState(liveSparks);
+  const heldSparks = useCachedValue(`finance.sparks.${range}`, liveSparks ?? undefined);
   const twrScope = twrAll ? 'total' : 'reliable_subset';
   const router = useRouter();
   const liveSeriesPack = useQuery(
     api.finance.queries.seriesPack,
-    allowed ? { scope: twrScope, refreshNonce } : 'skip',
+    seriesPackQueryArgs({
+      allowed: Boolean(allowed),
+      scope: twrScope,
+      cache: prefetch.cache,
+      refreshNonce,
+    }),
   );
-  const seriesPack = useCachedValue<SeriesPack>(`finance.seriesPack.${twrScope}`, liveSeriesPack ?? undefined);
+  const cachedSeriesPack = useCachedValue<SeriesPack>(
+    `finance.seriesPack.${twrScope}`,
+    liveSeriesPack ?? undefined,
+  );
+  const seriesPack = prefetch.seriesPack(twrScope) ?? cachedSeriesPack;
   const packedSeries = seriesPack ? seriesFromPack(seriesPack, range) : null;
   const liveSeries = useQuery(
     api.finance.queries.series,
@@ -133,61 +160,42 @@ function NetWorthPage({ demo }: { demo: boolean }) {
   );
 
   useEffect(() => {
-    if (live) setHeld(live);
-  }, [live]);
+    if (live !== undefined) writePageRange(prefetch.cache, range, live);
+  }, [live, prefetch.cache, range]);
   useEffect(() => {
-    if (liveAccounts) setHeldAccounts(liveAccounts);
-  }, [liveAccounts]);
-
+    if (livePack) writePagePack(prefetch.cache, livePack);
+  }, [livePack, prefetch.cache]);
   useEffect(() => {
-    if (liveSparks) setHeldSparks(liveSparks);
-  }, [liveSparks]);
+    if (liveSeriesPack) writeSeriesPack(prefetch.cache, twrScope, liveSeriesPack);
+  }, [liveSeriesPack, prefetch.cache, twrScope]);
 
   const { scrollEnabled, ScrollLockProvider } = useScrollLockRoot();
+  const cachedOverview = prefetch.overview(range) as OverviewPage | undefined;
+  const exactLive =
+    live && (live as { range?: RangeKey }).range === range ? (live as OverviewPage) : undefined;
+  const full: OverviewPage | undefined = packed ?? cachedOverview ?? exactLive;
   const { refreshing, onRefresh } = useRefreshSpinner(
-    !allowed || (live !== undefined && liveAccounts !== undefined),
-    () => setRefreshNonce((nonce) => nonce + 1),
+    !allowed || full != null || live !== undefined,
+    bumpRefresh,
   );
 
-  const full = packed ?? live ?? held;
-  const hasLive = Boolean(allowed && full && Array.isArray(full.accounts) && full.accounts.length > 0);
-  const byRange = useMemo(() => (full && !packed ? modelsForRanges(full) : null), [full, packed]);
-  const demoByRange = useMemo(() => (demo ? modelsForRanges(demoNetWorthPage('All')) : null), [demo]);
-  const data = useMemo(() => {
-    if (packed) return packed;
-    if (hasLive) {
-      if (fine && fine.range === range) return fine;
-      return byRange?.[range] ?? full;
-    }
-    if (demo) return demoByRange?.[range] ?? demoNetWorthPage(range);
-    return full;
-  }, [byRange, demo, demoByRange, fine, full, hasLive, packed, range]);
+  const hasLive = Boolean(full && Array.isArray(full.accounts) && full.accounts.length > 0);
+  const data: OverviewPage | undefined = packed ?? cachedOverview ?? exactLive ?? (demo ? demoNetWorthPage(range) : undefined);
   const accountList = hasLive
     ? (liveAccounts ?? heldAccounts)
     : demo
       ? demoAccountList()
       : (liveAccounts ?? heldAccounts);
-  const sparkAccounts = useMemo(
-    () => accountList?.groups.flatMap((group) => group.accounts) ?? [],
-    [accountList],
-  );
   const trends = useMemo<AccountTrends>(() => {
-    const sparks = (() => {
-      if (packedSparks) return packedSparks;
-      if (hasLive || !demo) {
-        const source = liveSparks ?? heldSparks;
-        if (!source) return undefined;
-        return source.range === range ? source : trimSparklinesToRange(source, range, sparkAccounts);
-      }
-      return trimSparklinesToRange(demoAccountSparklines('All'), range, sparkAccounts);
-    })();
+    const sparks: SparkSource | undefined = packedSparks
+      ?? ((hasLive || !demo ? liveSparks ?? heldSparks : demoAccountSparklines(range)) as SparkSource | undefined);
     return {
       rows: sparks ? new Map(sparks.rows.map((row) => [row.sourceId, row])) : undefined,
       groups: sparks?.groups ? new Map(sparks.groups.map((row) => [row.key, row])) : undefined,
       rangeLabel: RANGE_SUFFIX[range],
       mode: changeMode,
     };
-  }, [changeMode, demo, hasLive, heldSparks, liveSparks, packedSparks, range, sparkAccounts]);
+  }, [changeMode, demo, hasLive, heldSparks, liveSparks, packedSparks, range]);
   const pickRange = (next: RangeKey) => {
     setRange(next);
     setRangeGen((gen) => gen + 1);
@@ -225,7 +233,7 @@ function NetWorthPage({ demo }: { demo: boolean }) {
     const rows = hasLive
       ? (liveFlows ?? [])
       : ['acc_brokerage', 'acc_ira', 'acc_roth', 'acc_401k'].flatMap((id) => demoFlows(id));
-    return rows.map((flow) => ({
+    return rows.map((flow: { flowId: string; date: string; amount: number }) => ({
       flowId: flow.flowId,
       date: flow.date,
       amount: flow.amount,
@@ -236,14 +244,6 @@ function NetWorthPage({ demo }: { demo: boolean }) {
       },
     }));
   }, [hasLive, liveFlows, router]);
-
-  if (!demo && allowed === undefined && !held) {
-    return (
-      <View style={[styles.centered, { backgroundColor: palette.page }]}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
 
   if (!demo && allowed === false) {
     return (
@@ -366,8 +366,8 @@ function NetWorthPage({ demo }: { demo: boolean }) {
                         color={lineColor}
                         height={screenWidth >= WIDE_MIN_WIDTH ? 280 : 230}
                         invert={activeGroup === 'liability'}
-                        spanFrom={full?.points[0]?.asOf}
-                        spanTo={full?.asOf}
+                        spanFrom={data.points[0]?.asOf}
+                        spanTo={data.asOf}
                         flowAdjusted={
                           hasSeries && activeGroup === 'all'
                             ? {
