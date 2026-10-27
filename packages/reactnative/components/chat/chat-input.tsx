@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useWhisper } from '@/hooks/use-whisper';
+import { useAppPalette } from '@/lib/app-theme';
 
 type Props = {
   onSend: (text: string) => void;
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export function ChatInput({ onSend, isLoading }: Props) {
+  const palette = useAppPalette();
   const [text, setText] = useState('');
   const { startRecording, stopRecording, isRecording, isTranscribing, isAvailable: micAvailable } = useWhisper();
 
@@ -29,7 +31,7 @@ export function ChatInput({ onSend, isLoading }: Props) {
     if (isRecording) {
       const transcript = await stopRecording();
       if (transcript) {
-        setText(prev => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
+        setText((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
       }
     } else {
       await startRecording();
@@ -39,13 +41,16 @@ export function ChatInput({ onSend, isLoading }: Props) {
   const busy = isLoading || isTranscribing;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: palette.page, borderTopColor: palette.border }]}>
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          { borderColor: palette.border, backgroundColor: palette.card, color: palette.text },
+        ]}
         value={text}
         onChangeText={setText}
         placeholder={isRecording ? 'Listening...' : 'Message...'}
-        placeholderTextColor="#999"
+        placeholderTextColor={palette.subtle}
         multiline
         maxLength={4000}
         editable={!isRecording}
@@ -53,26 +58,26 @@ export function ChatInput({ onSend, isLoading }: Props) {
       />
       {micAvailable && (
         <Pressable
-          style={[styles.iconButton, isRecording && styles.iconButtonActive]}
+          style={[styles.iconButton, { backgroundColor: isRecording ? palette.negative : palette.muted }]}
           onPress={handleMic}
           disabled={busy}
         >
           {isTranscribing ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={palette.card} />
           ) : (
-            <Ionicons name={isRecording ? 'stop' : 'mic'} size={20} color="#fff" />
+            <Ionicons name={isRecording ? 'stop' : 'mic'} size={20} color={palette.card} />
           )}
         </Pressable>
       )}
       <Pressable
-        style={[styles.iconButton, styles.sendButton, (!text.trim() || busy) && styles.disabled]}
+        style={[styles.iconButton, { backgroundColor: palette.accent }, (!text.trim() || busy) && styles.disabled]}
         onPress={handleSend}
         disabled={!text.trim() || busy}
       >
         {isLoading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={palette.card} />
         ) : (
-          <Ionicons name="send" size={18} color="#fff" />
+          <Ionicons name="send" size={18} color={palette.card} />
         )}
       </Pressable>
     </View>
@@ -86,8 +91,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#e5e7eb',
-    backgroundColor: '#f7f7f4',
     gap: 8,
   },
   input: {
@@ -95,26 +98,17 @@ const styles = StyleSheet.create({
     minHeight: 40,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 16,
-    backgroundColor: '#fff',
   },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#666',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  iconButtonActive: {
-    backgroundColor: '#e53935',
-  },
-  sendButton: {
-    backgroundColor: '#0a7ea4',
   },
   disabled: {
     opacity: 0.4,

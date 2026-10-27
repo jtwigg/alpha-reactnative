@@ -12,6 +12,7 @@ import {
   updateBannerCopy,
   type UpdatePrompt,
 } from '@/lib/app-update';
+import { useAppPalette } from '@/lib/app-theme';
 import { jsVersionLabel } from '@/lib/app-version';
 import { currentNativeBuildVersion } from '@/lib/native-build';
 
@@ -27,8 +28,9 @@ class SoftQueryBoundary extends Component<{ children: ReactNode; fallback: React
 
 /** Small muted stamp. Always visible under the header — not behind the composer. */
 export function VersionLabel({ label = jsVersionLabel() }: { label?: string }) {
+  const palette = useAppPalette();
   return (
-    <Text accessibilityRole="text" accessibilityLabel={label} style={styles.label}>
+    <Text accessibilityRole="text" accessibilityLabel={label} style={[styles.label, { color: palette.muted }]}>
       {label}
     </Text>
   );
@@ -45,15 +47,19 @@ export function UpdateBannerView({
   onDismiss: () => void;
   busy?: boolean;
 }) {
+  const palette = useAppPalette();
   return (
-    <View style={styles.banner} accessibilityRole="alert" accessibilityLabel={text}>
+    <View
+      style={[styles.banner, { backgroundColor: palette.text }]}
+      accessibilityRole="alert"
+      accessibilityLabel={text}>
       <Pressable
         onPress={onPress}
         disabled={busy}
         accessibilityRole="button"
         accessibilityLabel={text}
         style={({ pressed }) => [styles.bannerTap, pressed && styles.pressed]}>
-        <Text style={styles.bannerText}>{text}</Text>
+        <Text style={[styles.bannerText, { color: palette.card }]}>{text}</Text>
       </Pressable>
       <Pressable
         onPress={onDismiss}
@@ -61,7 +67,7 @@ export function UpdateBannerView({
         accessibilityLabel="Dismiss update banner"
         hitSlop={8}
         style={styles.dismiss}>
-        <Text style={styles.dismissText}>Dismiss</Text>
+        <Text style={[styles.dismissText, { color: palette.muted }]}>Dismiss</Text>
       </Pressable>
     </View>
   );
@@ -166,7 +172,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     fontSize: 13,
     lineHeight: 18,
-    color: '#6b7280',
   },
   banner: {
     marginHorizontal: 16,
@@ -175,14 +180,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: '#11181C',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   bannerTap: { flex: 1 },
-  bannerText: { color: '#fff', fontSize: 14, lineHeight: 19, fontWeight: '600' },
+  bannerText: { fontSize: 14, lineHeight: 19, fontWeight: '600' },
   dismiss: { paddingHorizontal: 4, paddingVertical: 2 },
-  dismissText: { color: '#cbd5e1', fontSize: 13, fontWeight: '600' },
+  dismissText: { fontSize: 13, fontWeight: '600' },
   pressed: { opacity: 0.75 },
 });

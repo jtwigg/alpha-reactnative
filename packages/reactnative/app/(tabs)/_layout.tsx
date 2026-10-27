@@ -9,8 +9,7 @@ import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { HapticTab } from '@/components/haptic-tab';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppPalette } from '@/lib/app-theme';
 import { useStoreUser } from '@/hooks/use-store-user';
 import { currentAppPath, signInPath } from '@/lib/app-links';
 import { isClerkConfigured } from '@/lib/convex';
@@ -67,12 +66,17 @@ function ClerkProtectedTabs() {
 }
 
 function AppTabs() {
-  const colorScheme = useColorScheme();
+  const palette = useAppPalette();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: palette.accent,
+        tabBarInactiveTintColor: palette.muted,
+        tabBarStyle: {
+          backgroundColor: palette.card,
+          borderTopColor: palette.border,
+        },
         headerShown: false,
         tabBarButton: HapticTab,
       }}>

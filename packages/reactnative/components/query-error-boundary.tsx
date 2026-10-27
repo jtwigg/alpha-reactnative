@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { VersionLabel } from '@/components/home-update-chrome';
+import { LIGHT } from '@/lib/app-theme';
 import { Sentry } from '@/lib/sentry';
 
 type Props = {
@@ -76,20 +77,20 @@ export class QueryErrorBoundary extends Component<Props, State> {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#f7f7f4' },
+  page: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: LIGHT.page },
   compact: {
     marginHorizontal: 16,
     marginVertical: 8,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: '#fff7ed',
+    backgroundColor: LIGHT.negativeSoft,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#fdba74',
+    borderColor: LIGHT.negative,
     gap: 8,
   },
-  title: { fontSize: 18, fontWeight: '700', color: '#1f2430', textAlign: 'center' },
-  compactTitle: { fontSize: 15, fontWeight: '700', color: '#c2410c' },
+  title: { fontSize: 18, fontWeight: '700', color: LIGHT.text, textAlign: 'center' },
+  compactTitle: { fontSize: 15, fontWeight: '700', color: LIGHT.negative },
   retry: { alignSelf: 'flex-start' },
-  retryText: { fontSize: 15, fontWeight: '600', color: '#0a7ea4' },
+  retryText: { fontSize: 15, fontWeight: '600', color: LIGHT.accent },
 });

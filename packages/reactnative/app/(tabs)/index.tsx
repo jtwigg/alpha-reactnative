@@ -1,12 +1,11 @@
-import { useAuth, useClerk, useUser } from '@clerk/expo';
-import { useConvexAuth, useQuery } from 'convex/react';
+import { useAuth, useClerk } from '@clerk/expo';
+import { useConvexAuth } from 'convex/react';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,42 +13,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 
 import { ChatInput } from '@/components/chat/chat-input';
-import { HomeBriefing } from '@/components/chat/home-briefing';
 import { HomeThread, useHomeChat } from '@/components/chat/home-thread';
+import { FText } from '@/components/finance/ui';
+import { HomeBriefingBanner, HomeFinanceBanner } from '@/components/home-banners';
 import { HomeUpdateBannerHost, VersionLabel } from '@/components/home-update-chrome';
 import { QueryErrorBoundary } from '@/components/query-error-boundary';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { api } from '@/lib/api';
-import { parseAskId } from '@/lib/app-links';
 import { isClerkConfigured } from '@/lib/convex';
+import { parseAskId } from '@/lib/app-links';
+import { useAppPalette } from '@/lib/app-theme';
 
 export default function HomeScreen() {
+  const palette = useAppPalette();
   if (!isClerkConfigured()) {
     return (
-      <ThemedView style={styles.page}>
+      <View style={[styles.page, { backgroundColor: palette.page }]}>
         <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
           <HomeUpdateBannerHost />
-          <View style={styles.header}>
-            <ThemedText type="title">Home</ThemedText>
-          </View>
           <VersionLabel />
           <View style={styles.flex} />
         </SafeAreaView>
-      </ThemedView>
+      </View>
     );
   }
   return <SignedInHome />;
-}
-
-function HomeGreeting() {
-  const { isAuthenticated } = useConvexAuth();
-  const me = useQuery(api.users.current, isAuthenticated ? {} : 'skip');
-  return (
-    <ThemedText type="title" style={styles.hello}>
-      {me ? `Hello, ${me.name}` : 'Home'}
-    </ThemedText>
-  );
 }
 
 function HomeChatSection({
@@ -86,18 +72,21 @@ function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: strin
   const askMalformed = Boolean(askParam && !askId);
   return (
     <View style={styles.flex}>
+      <QueryErrorBoundary compact surface="home-briefing">
+        <HomeBriefingBanner ready={ready} />
+      </QueryErrorBoundary>
+      <QueryErrorBoundary compact surface="home-finance">
+        <HomeFinanceBanner ready={ready} />
+      </QueryErrorBoundary>
       <QueryErrorBoundary compact surface="home-thread">
         <HomeChatSection ready={ready} onToast={onToast} askId={askId} askMalformed={askMalformed} />
-      </QueryErrorBoundary>
-      <QueryErrorBoundary compact surface="home-briefing">
-        <HomeBriefing ready={ready} />
       </QueryErrorBoundary>
     </View>
   );
 }
 
 function SignedInHome() {
-  const { user } = useUser();
+  const palette = useAppPalette();
   const { signOut } = useClerk();
   const { isSignedIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -109,79 +98,58 @@ function SignedInHome() {
   };
 
   return (
-    <ThemedView style={styles.page}>
+    <View style={[styles.page, { backgroundColor: palette.page }]}>
       <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}>
           <HomeUpdateBannerHost />
-          <View style={styles.header}>
-            <View style={styles.headerText}>
-              <Text style={styles.kicker}>Home</Text>
-              <QueryErrorBoundary
-                surface="home-greeting"
-                fallback={
-                  <ThemedText type="title" style={styles.hello}>
-                    Home
-                  </ThemedText>
-                }>
-                <HomeGreeting />
-              </QueryErrorBoundary>
-              <ThemedText style={styles.muted}>
-                {user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? 'Signed in'}
-              </ThemedText>
-            </View>
+          <View style={styles.meta}>
+            <VersionLabel />
             {isSignedIn ? (
-              <Pressable style={styles.signOut} onPress={() => void signOut()} accessibilityRole="button">
-                <Text style={styles.signOutText}>Sign out</Text>
+              <Pressable
+                onPress={() => void signOut()}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+                hitSlop={8}
+                style={styles.signOut}>
+                <FText variant="caption" tone="accent">
+                  Sign out
+                </FText>
               </Pressable>
             ) : null}
           </View>
-          <VersionLabel />
 
-          {toast ? <Text style={styles.toast}>{toast}</Text> : null}
+          {toast ? (
+            <FText variant="callout" style={[styles.toast, { backgroundColor: palette.text, color: palette.card }]}>
+              {toast}
+            </FText>
+          ) : null}
 
           <HomeBody ready={isAuthenticated} onToast={showToast} />
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: '#f7f7f4' },
+  page: { flex: 1 },
   flex: { flex: 1 },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 4,
+  meta: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
+    paddingRight: 16,
   },
-  headerText: { flex: 1, gap: 2 },
-  kicker: { fontSize: 12, fontWeight: '600', letterSpacing: 0.5, color: '#6b7280', textTransform: 'uppercase' },
-  hello: { fontSize: 28, lineHeight: 32 },
-  muted: { opacity: 0.65, fontSize: 14 },
-  signOut: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#d1d5db',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    backgroundColor: '#fff',
-  },
-  signOutText: { color: '#11181C', fontWeight: '600', fontSize: 13 },
+  signOut: { paddingVertical: 4, paddingHorizontal: 4 },
   toast: {
-    marginHorizontal: 20,
+    marginHorizontal: 16,
     marginBottom: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: '#11181C',
-    color: '#fff',
     overflow: 'hidden',
     textAlign: 'center',
     fontWeight: '600',
