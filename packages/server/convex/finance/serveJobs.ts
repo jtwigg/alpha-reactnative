@@ -50,7 +50,9 @@ import {
 import { todayInTimeZone } from './dates';
 import type { TwrWindow } from './twrModel';
 import {
+  SERVE_ACCOUNT_BATCH,
   SERVE_PAGE_SCOPE,
+  SERVE_SERIES_BATCH,
   SERVE_SPARK_SCOPE,
   SERVE_STACK_SCOPE,
   classifyServeCheck,
@@ -114,10 +116,11 @@ export async function findServe(
   scopeId: string,
   range: string,
 ): Promise<Doc<'finance_serve'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('finance_serve')
     .withIndex('by_kind_scope_range', (q) => q.eq('kind', kind).eq('scopeId', scopeId).eq('range', range))
-    .unique();
+    .take(1);
+  return rows[0] ?? null;
 }
 
 export async function loadServePayload<T>(
@@ -615,13 +618,22 @@ export const writeAffected = internalMutation({
     );
     const asOf = ends.maxAsOf ?? todayInTimeZone();
     const from = args.from ?? ends.firstAsOf ?? asOf;
-    const ranges = args.scopeId && args.scopeKind
-      ? [...RANGE_KEYS]
-      : rangesOverlapping(from, asOf, ends.firstAsOf ?? from);
+    // Omit `from` (recomputeAll) or a single-scope rewrite → every RANGE_KEY.
+    // A dirty-from date still uses interval overlap so a full rebuild that
+    // passes first coverage (2014-03-07) writes 1M/3M/YTD/1Y/5Y, not only All.
+    const ranges =
+      args.scopeId && args.scopeKind
+        ? [...RANGE_KEYS]
+        : args.from == null
+          ? [...RANGE_KEYS]
+          : rangesOverlapping(from, asOf, ends.firstAsOf ?? from);
     const cursor = decodeCursor(args.cursor) ?? { step: 'page' as const, index: 0, from };
     const schedule = (next: WriteCursor) =>
       ctx.scheduler.runAfter(0, internal.finance.serveJobs.writeAffected, {
-        from: next.from,
+        // Keep omitted `from` omitted so continuations stay on the full
+        // RANGE_KEYS path. Do not substitute firstAsOf — that used to drop
+        // every short range after the first scheduled step.
+        from: args.from,
         cursor: encodeCursor(next),
         scopeKind: args.scopeKind,
         scopeId: args.scopeId,
@@ -646,7 +658,12 @@ export const writeAffected = internalMutation({
     }
 
     if (cursor.step === 'page') {
-      const wrote = await writePages(ctx, ranges, version);
+      const range = ranges[cursor.index];
+      const wrote = range ? await writePages(ctx, [range], version) : 0;
+      if (cursor.index + 1 < ranges.length) {
+        await schedule({ step: 'page', index: cursor.index + 1, from });
+        return { done: false, wrote, step: 'page' };
+      }
       await schedule({ step: 'sparks', index: 0, from });
       return { done: false, wrote, step: 'page' };
     }
@@ -671,22 +688,22 @@ export const writeAffected = internalMutation({
       return { done: false, wrote, step: 'stack' };
     }
     if (cursor.step === 'accounts') {
-      const batch = accounts.slice(cursor.index, cursor.index + 8);
+      const batch = accounts.slice(cursor.index, cursor.index + SERVE_ACCOUNT_BATCH);
       let wrote = 0;
       for (const account of batch) wrote += await writeAccount(ctx, account.sourceId, ranges, version);
-      if (cursor.index + 8 < accounts.length) {
-        await schedule({ step: 'accounts', index: cursor.index + 8, from });
+      if (cursor.index + SERVE_ACCOUNT_BATCH < accounts.length) {
+        await schedule({ step: 'accounts', index: cursor.index + SERVE_ACCOUNT_BATCH, from });
         return { done: false, wrote, step: 'accounts' };
       }
       await schedule({ step: 'series', index: 0, from });
       return { done: false, wrote, step: 'accounts' };
     }
     const scopes = await listSeriesScopes(ctx);
-    const batch = scopes.slice(cursor.index, cursor.index + 4);
+    const batch = scopes.slice(cursor.index, cursor.index + SERVE_SERIES_BATCH);
     let wrote = 0;
     for (const scope of batch) wrote += await writeSeriesScope(ctx, scope, ranges, version);
-    if (cursor.index + 4 < scopes.length) {
-      await schedule({ step: 'series', index: cursor.index + 4, from });
+    if (cursor.index + SERVE_SERIES_BATCH < scopes.length) {
+      await schedule({ step: 'series', index: cursor.index + SERVE_SERIES_BATCH, from });
       return { done: false, wrote, step: 'series' };
     }
     return { done: true, wrote, step: 'series' };

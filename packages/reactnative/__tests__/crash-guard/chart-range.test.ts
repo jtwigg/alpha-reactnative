@@ -10,8 +10,10 @@ import {
   pagePackQueryArgs,
   prefetchPlan,
   resetSharedFinanceCache,
+  accountShellFromCache,
   shouldFetchAccountRange,
   shouldRefetchOnTabSwitch,
+  seriesLiveQueryArgs,
   wouldShowLoading,
   writePage1M,
   writePagePack,
@@ -100,6 +102,35 @@ describe('finance chart range defaults and cache', () => {
         backgroundStarted: true,
       }),
     ).toEqual({ primary: false, background: false });
+  });
+
+  it('does not keep the account page spinning on a history.range mismatch', () => {
+    const account = readFileSync(join(root, 'app/finances/[accountId].tsx'), 'utf8');
+    expect(account).not.toContain('hit.history.range !== range');
+    expect(account).toContain('accountShellFromCache');
+    expect(account).toContain('Loading account');
+    expect(account).toContain('seriesLiveQueryArgs');
+  });
+
+  it('builds a header shell from the cached overview so account pages are not a black spinner', () => {
+    const cache = emptyFinanceCache();
+    expect(accountShellFromCache(cache, 'acc_1', '1M')).toBeNull();
+    writePage1M(cache, {
+      range: '1M',
+      accounts: [{ sourceId: 'acc_1', name: 'Brokerage', class: 'investments', currentBalance: 10 }],
+    });
+    const shell = accountShellFromCache(cache, 'acc_1', '1M');
+    expect(shell?.name).toBe('Brokerage');
+    expect(shell?.history.points).toEqual([]);
+  });
+
+  it('skips the live series query until seriesPack has settled', () => {
+    expect(
+      seriesLiveQueryArgs({ live: true, pack: undefined, scope: 'account:a', range: '1M', refreshNonce: 0 }),
+    ).toBe('skip');
+    expect(
+      seriesLiveQueryArgs({ live: true, pack: null, scope: 'account:a', range: '1M', refreshNonce: 1 }),
+    ).toEqual({ scope: 'account:a', range: '1M', refreshNonce: 1 });
   });
 
   it('fetches an account range only when it is selected or in the one background wave', () => {

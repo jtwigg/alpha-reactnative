@@ -9,6 +9,18 @@ export const SERVE_PAGE_SCOPE = 'net';
 export const SERVE_SPARK_SCOPE = 'all';
 export const SERVE_STACK_SCOPE = 'overview';
 
+/** Per-mutation caps for writeAffected. Continuations are a finite cursor, not a loop. */
+export const SERVE_ACCOUNT_BATCH = 4;
+export const SERVE_SERIES_BATCH = 2;
+
+export function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** posh-mink-581 live topology (2026-10-25): 27 accounts, first coverage 2014-03-07. */
 export const LIVE_ACCOUNT_COUNT = 27;
 export const LIVE_FIRST_AS_OF = '2014-03-07';
@@ -470,6 +482,16 @@ export function diagnosisFromPairs(
   return 'mixed';
 }
 
+/**
+ * Ranges whose window overlaps [from, asOf]. Dirty-from means data from that
+ * date forward is stale, so a full rebuild (`from` = first coverage) must
+ * include 1M/3M/YTD/1Y/5Y — not only All. The old `window.from <= from`
+ * check kept only windows that contain the dirty date, which drops every
+ * short range when `from` is 2014-03-07.
+ */
 export function rangesOverlapping(from: string, asOf: string, firstAsOf: string): RangeKey[] {
-  return RANGE_KEYS.filter((range) => rangeWindow(range, asOf, firstAsOf).from <= from || range === 'All');
+  return RANGE_KEYS.filter((range) => {
+    const window = rangeWindow(range, asOf, firstAsOf);
+    return window.from <= asOf && window.to >= from;
+  });
 }
