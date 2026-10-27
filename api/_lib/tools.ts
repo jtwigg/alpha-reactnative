@@ -441,7 +441,7 @@ export function registerFinanceTools(
     {
       title: 'Recompute charts from a date',
       description:
-        'John-only. Dirty-from rewrite: recompute serve docs whose range window includes `from`. Same as `npx convex run finance/serveJobs:recomputeFrom`.',
+        'John-only. Dirty-from rewrite: recompute serve docs whose range window overlaps [from, asOf] (data from that date forward). Same as `npx convex run finance/serveJobs:recomputeFrom`.',
       inputSchema: recomputeChartsFromSchema,
     },
     call('recompute_charts_from'),

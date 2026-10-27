@@ -12,13 +12,18 @@ import {
   encodePoints,
   encodeSeriesPoints,
   liteSnapshot,
+  LIVE_AS_OF,
+  LIVE_FIRST_AS_OF,
   payloadBytes,
   rangePointCount,
+  rangesOverlapping,
   sanitizePageAccounts,
+  SERVE_ACCOUNT_BATCH,
+  SERVE_SERIES_BATCH,
   serveQueryCost,
   sameNumbers,
 } from '../convex/finance/serve';
-import { RANGE_KEYS, type ChartPoint } from '../convex/finance/series';
+import { RANGE_KEYS, rangeWindow, type ChartPoint } from '../convex/finance/series';
 import { pageFromPack, seriesFromPack, sparksFromPack } from '../../../packages/reactnative/lib/finance-packs';
 
 const AS_OF = '2026-10-24';
@@ -231,6 +236,44 @@ describe('posh-mink-581 query cost model (27 accounts, 2014-03-07 → 2026-10-24
     expect(ytd?.before.sparkDocs).toBeGreaterThan(7000);
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({ measure: 'finance.serve.posh-mink-581', rows }, null, 2));
+  });
+});
+
+describe('rangesOverlapping dirty-from-forward', () => {
+  it('includes 1M/3M/YTD/1Y/5Y after a full rebuild from first coverage', () => {
+    expect(rangesOverlapping(LIVE_FIRST_AS_OF, LIVE_AS_OF, LIVE_FIRST_AS_OF)).toEqual([...RANGE_KEYS]);
+  });
+
+  it('includes short ranges when only recent days are dirty', () => {
+    expect(rangesOverlapping('2026-10-20', LIVE_AS_OF, LIVE_FIRST_AS_OF)).toEqual([...RANGE_KEYS]);
+  });
+
+  it('does not treat window.contains(from) as the dirty rule', () => {
+    const contained = RANGE_KEYS.filter((range) => {
+      const { from } = rangeWindow(range, LIVE_AS_OF, LIVE_FIRST_AS_OF);
+      return from <= LIVE_FIRST_AS_OF || range === 'All';
+    });
+    expect(contained).toEqual(['All']);
+    expect(rangesOverlapping(LIVE_FIRST_AS_OF, LIVE_AS_OF, LIVE_FIRST_AS_OF)).not.toEqual(contained);
+  });
+});
+
+describe('writeAffected step caps', () => {
+  it('keeps per-step account/series batches small', () => {
+    expect(SERVE_ACCOUNT_BATCH).toBeLessThanOrEqual(4);
+    expect(SERVE_SERIES_BATCH).toBeLessThanOrEqual(2);
+  });
+
+  it('recomputeAll omits from so the chain cannot collapse to All', () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../convex/finance/serveJobs.ts'),
+      'utf8',
+    );
+    expect(src).toContain('internal.finance.serveJobs.writeAffected, {}');
+    expect(src).toContain('from: args.from');
+    expect(src).toMatch(/args\.from == null/);
+    expect(src).toContain('SERVE_ACCOUNT_BATCH');
+    expect(src).toContain('cursor.index + 1 < ranges.length');
   });
 });
 
