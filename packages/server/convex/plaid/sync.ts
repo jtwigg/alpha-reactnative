@@ -17,6 +17,7 @@ import {
   mapTransaction,
   newBudget,
   noProgress,
+  summarizeAccounts,
   type PlaidAccount,
   type PlaidHolding,
   type PlaidSecurity,
@@ -281,6 +282,7 @@ async function syncItem(
         lastSyncedAt: now,
         consecutiveFailures: 0,
         lastError: null,
+        accounts: summarizeAccounts(accounts),
       }),
     );
   } else {
@@ -291,6 +293,7 @@ async function syncItem(
         lastSyncedAt: now,
         consecutiveFailures: 0,
         lastError: null,
+        accounts: summarizeAccounts(accounts),
       }),
     );
   }

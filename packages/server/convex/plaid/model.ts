@@ -237,3 +237,22 @@ export function noProgress(args: {
   const empty = args.added + args.modified + args.removed === 0;
   return empty || args.prevCursor === args.nextCursor;
 }
+
+export type AccountSummary = {
+  accountId: string;
+  name: string;
+  mask?: string;
+  type: string;
+  subtype?: string;
+};
+
+/** Display-only account list stored on the item; never includes balances. */
+export function summarizeAccounts(accounts: PlaidAccount[]): AccountSummary[] {
+  return accounts.map((a) => ({
+    accountId: a.account_id,
+    name: a.official_name?.trim() || a.name,
+    ...(a.mask ? { mask: a.mask } : {}),
+    type: a.type,
+    ...(a.subtype ? { subtype: a.subtype } : {}),
+  }));
+}

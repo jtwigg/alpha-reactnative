@@ -356,6 +356,18 @@ export default defineSchema({
     consecutiveFailures: v.number(),
     lastError: v.optional(v.string()),
     lastSyncedAt: v.optional(v.number()),
+    /** Display-only account list (no balances), refreshed at link and on every sync, shadow or live. */
+    accounts: v.optional(
+      v.array(
+        v.object({
+          accountId: v.string(),
+          name: v.string(),
+          mask: v.optional(v.string()),
+          type: v.string(),
+          subtype: v.optional(v.string()),
+        }),
+      ),
+    ),
     createdAt: v.number(),
   })
     .index('by_plaidItemId', ['plaidItemId'])

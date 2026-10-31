@@ -2,6 +2,14 @@ import { internalMutation, internalQuery, query } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAllowedIdentity } from '../allowlist';
 
+const accountSummary = v.object({
+  accountId: v.string(),
+  name: v.string(),
+  mask: v.optional(v.string()),
+  type: v.string(),
+  subtype: v.optional(v.string()),
+});
+
 const itemStatus = v.union(v.literal('active'), v.literal('needs_relink'), v.literal('paused'));
 
 /** Client-safe view of linked institutions. Never includes tokens or cursors. */
@@ -22,6 +30,7 @@ export const listConnections = query({
         live: item.live,
         lastSyncedAt: item.lastSyncedAt ?? null,
         lastError: item.lastError ?? null,
+        accounts: item.accounts ?? [],
       })),
       openDeletionProposals: proposals.length,
     };
@@ -57,6 +66,7 @@ export const insertItem = internalMutation({
     institutionId: v.optional(v.string()),
     institutionName: v.optional(v.string()),
     encryptedAccessToken: v.string(),
+    accounts: v.optional(v.array(accountSummary)),
   },
   handler: async (ctx, args) => {
     const dup = await ctx.db
@@ -83,6 +93,7 @@ export const patchItem = internalMutation({
     consecutiveFailures: v.optional(v.number()),
     lastError: v.optional(v.union(v.string(), v.null())),
     lastSyncedAt: v.optional(v.number()),
+    accounts: v.optional(v.array(accountSummary)),
   },
   handler: async (ctx, { plaidItemId, lastError, ...rest }) => {
     const item = await ctx.db
@@ -125,5 +136,27 @@ export const ensureAccountMap = internalMutation({
         .first();
       if (!existing) await ctx.db.insert('plaid_account_map', entry);
     }
+  },
+});
+
+/**
+ * Removes the item and its account map. Finance rows already written (accounts,
+ * snapshots, transactions) are left alone: disconnecting stops syncing, it does
+ * not delete history.
+ */
+export const deleteItem = internalMutation({
+  args: { plaidItemId: v.string() },
+  handler: async (ctx, { plaidItemId }) => {
+    const item = await ctx.db
+      .query('plaid_items')
+      .withIndex('by_plaidItemId', (q) => q.eq('plaidItemId', plaidItemId))
+      .first();
+    if (item) await ctx.db.delete(item._id);
+    const mapped = await ctx.db
+      .query('plaid_account_map')
+      .withIndex('by_plaidItemId', (q) => q.eq('plaidItemId', plaidItemId))
+      .collect();
+    for (const row of mapped) await ctx.db.delete(row._id);
+    return { removed: Boolean(item), mapRows: mapped.length };
   },
 });

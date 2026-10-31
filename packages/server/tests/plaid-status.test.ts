@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  accountLabel,
+  errorLabel,
   lastSyncedLabel,
   plaidBannerLabel,
   plaidStatusLabel,
@@ -13,6 +15,7 @@ const item = (over: Partial<PlaidConnection> = {}): PlaidConnection => ({
   live: false,
   lastSyncedAt: null,
   lastError: null,
+  accounts: [],
   ...over,
 });
 
@@ -50,5 +53,18 @@ describe('plaid labels', () => {
     expect(lastSyncedLabel(now - 30 * 60_000, now)).toBe('Synced just now');
     expect(lastSyncedLabel(now - 5 * 3_600_000, now)).toBe('Synced 5h ago');
     expect(lastSyncedLabel(now - 72 * 3_600_000, now)).toBe('Synced 3d ago');
+  });
+});
+
+describe('plaid account and error labels', () => {
+  it('formats accounts with an optional mask', () => {
+    expect(accountLabel({ name: 'Checking', mask: '1234' })).toBe('Checking ••1234');
+    expect(accountLabel({ name: 'Brokerage' })).toBe('Brokerage');
+  });
+
+  it('explains stored error codes', () => {
+    expect(errorLabel(null)).toBeNull();
+    expect(errorLabel('ITEM_LOGIN_REQUIRED')).toContain('Relink');
+    expect(errorLabel('RATE_LIMIT')).toBe('Last sync failed (RATE_LIMIT).');
   });
 });

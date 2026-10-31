@@ -1,5 +1,13 @@
 export type PlaidItemStatus = 'active' | 'needs_relink' | 'paused';
 
+export type PlaidAccountSummary = {
+  accountId: string;
+  name: string;
+  mask?: string;
+  type: string;
+  subtype?: string;
+};
+
 export type PlaidConnection = {
   plaidItemId: string;
   institutionName: string;
@@ -7,6 +15,7 @@ export type PlaidConnection = {
   live: boolean;
   lastSyncedAt: number | null;
   lastError: string | null;
+  accounts: PlaidAccountSummary[];
 };
 
 export type PlaidOverview = {
@@ -52,3 +61,23 @@ export function lastSyncedLabel(at: number | null, now: number = Date.now()): st
   if (hours < 48) return `Synced ${hours}h ago`;
   return `Synced ${Math.floor(hours / 24)}d ago`;
 }
+
+/** "Checking ••1234", or just the name when Plaid gave no mask. */
+export function accountLabel(account: Pick<PlaidAccountSummary, 'name' | 'mask'>): string {
+  return account.mask ? `${account.name} ••${account.mask}` : account.name;
+}
+
+/** Plain-language reason for a stored sync error code. */
+export function errorLabel(code: string | null): string | null {
+  if (!code) return null;
+  if (code === 'ITEM_LOGIN_REQUIRED') return 'Sign-in expired. Relink to resume syncing.';
+  if (code === 'sync_failed') return 'Last sync failed. It will retry on the next run.';
+  return `Last sync failed (${code}).`;
+}
+
+export const STATUS_HELP: Array<{ label: string; body: string }> = [
+  { label: 'Shadow mode', body: 'Plaid is fetching data but nothing is written to your finances yet.' },
+  { label: 'Syncing', body: 'Balances, transactions and holdings update once a day.' },
+  { label: 'Needs relink', body: 'The bank asked you to sign in again. Tap Relink; history is kept.' },
+  { label: 'Paused', body: 'Three syncs in a row failed, so syncing stopped. Relink to try again.' },
+];

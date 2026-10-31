@@ -2,8 +2,9 @@ import { action } from '../_generated/server';
 import { internal } from '../_generated/api';
 import { v } from 'convex/values';
 import { requireAllowedIdentity } from '../allowlist';
-import { plaidPost } from './client';
+import { PlaidError, plaidPost } from './client';
 import { decryptToken, encryptToken } from './crypto';
+import { summarizeAccounts, type PlaidAccount } from './model';
 
 /** Must match an Allowed redirect URI in the Plaid dashboard. */
 function redirectUri(): string {
@@ -95,11 +96,17 @@ export const exchangePublicToken = action({
       institutionName = inst?.institution.name ?? null;
     }
 
+    // Best effort: show the account list immediately; the daily sync refreshes it.
+    const accountsRes = await plaidPost<{ accounts: PlaidAccount[] }>('/accounts/get', {
+      access_token: exchanged.access_token,
+    }).catch(() => null);
+
     await ctx.runMutation(internal.plaid.store.insertItem, {
       plaidItemId: exchanged.item_id,
       ...(institutionId ? { institutionId } : {}),
       ...(institutionName ? { institutionName } : {}),
       encryptedAccessToken: await encryptToken(exchanged.access_token, process.env.PLAID_TOKEN_KEY),
+      ...(accountsRes ? { accounts: summarizeAccounts(accountsRes.accounts) } : {}),
     });
     return { plaidItemId: exchanged.item_id, institutionName };
   },
@@ -116,5 +123,29 @@ export const markRelinked = action({
       consecutiveFailures: 0,
       lastError: null,
     });
+  },
+});
+
+/**
+ * Disconnects an institution: tells Plaid to drop the item, then deletes the
+ * stored token. Existing finance history stays. On Plaid's Trial plan a removed
+ * item still counts against the 10-item limit.
+ */
+export const removeConnection = action({
+  args: { plaidItemId: v.string() },
+  handler: async (ctx, { plaidItemId }): Promise<{ removed: boolean }> => {
+    await requireAllowedIdentity(ctx);
+    const item = await ctx.runQuery(internal.plaid.store.getItem, { plaidItemId });
+    if (!item) return { removed: false };
+    const accessToken = await decryptToken(item.encryptedAccessToken, process.env.PLAID_TOKEN_KEY);
+    try {
+      await plaidPost('/item/remove', { access_token: accessToken });
+    } catch (error) {
+      // Already gone on Plaid's side is fine; anything else must not orphan a live item.
+      const code = error instanceof PlaidError ? error.errorCode : undefined;
+      if (code !== 'ITEM_NOT_FOUND') throw error;
+    }
+    await ctx.runMutation(internal.plaid.store.deleteItem, { plaidItemId });
+    return { removed: true };
   },
 });
