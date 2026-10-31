@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { CARD_CHROME, useAppPalette } from '@/lib/app-theme';
 import { formatUsd, formatUsdSigned } from '@/lib/finance-coverage';
 import { DEFAULT_CHART_RANGE, overviewPageArgs } from '@/lib/finance-prefetch';
+import { plaidBannerLabel, type PlaidOverview } from '@/lib/plaid-status';
 import { useFinancePrefetch } from '@/providers/finance-prefetch';
 
 export function briefingItemCount(row: {
@@ -105,6 +106,37 @@ export function HomeFinanceBanner({ ready }: { ready: boolean }) {
         <FText variant="headline" style={styles.tabular}>
           {line}
         </FText>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Shown only when a bank needs relinking or deletions await review. */
+export function HomePlaidBanner({ ready }: { ready: boolean }) {
+  const palette = useAppPalette();
+  const router = useRouter();
+  const allowed = useQuery(api.finance.queries.isAllowed, ready ? {} : 'skip');
+  const overview = useQuery(api.plaid.store.listConnections, ready && allowed ? {} : 'skip') as
+    | PlaidOverview
+    | undefined;
+  const label = plaidBannerLabel(overview);
+  if (!label) return null;
+  return (
+    <Pressable
+      onPress={() => router.push('/connections' as Href)}
+      accessibilityRole="button"
+      accessibilityLabel="Open Connections"
+      style={({ pressed }) => [
+        CARD_CHROME,
+        styles.banner,
+        { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow },
+        pressed && { backgroundColor: palette.pressed },
+      ]}>
+      <View style={styles.row}>
+        <FText variant="eyebrow" tone="muted">
+          Connections
+        </FText>
+        <FText variant="headline">{label}</FText>
       </View>
     </Pressable>
   );

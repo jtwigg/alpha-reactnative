@@ -23,7 +23,7 @@ if (!bundleId || !androidPackage) {
 }
 
 const appId = `${spec.appleTeamId}.${bundleId}`;
-const paths = ['/', '/home', '/briefings', '/briefings/*', '/finances', '/finances/*'];
+const paths = ['/', '/home', '/briefings', '/briefings/*', '/finances', '/finances/*', '/plaid-oauth'];
 const fingerprints = Array.isArray(spec.androidSha256CertFingerprints) ? spec.androidSha256CertFingerprints : [];
 
 const aasa = {

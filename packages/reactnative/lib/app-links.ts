@@ -17,6 +17,7 @@ export const APP_LINK_PATHS = [
   '/briefings/*',
   '/finances',
   '/finances/*',
+  '/plaid-oauth',
 ] as const;
 
 export type BriefingItemRef = {

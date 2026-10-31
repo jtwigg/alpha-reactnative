@@ -52,6 +52,8 @@ export function RootLayout() {
               <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />
               <Stack.Screen name="sign-up" options={{ headerShown: false, title: 'Sign up' }} />
               <Stack.Screen name="sso-callback" options={{ headerShown: false, title: 'Signing in' }} />
+              <Stack.Screen name="connections" options={{ title: 'Connections' }} />
+              <Stack.Screen name="plaid-oauth" options={{ headerShown: false }} />
             </Stack>
             <StatusBar style="auto" />
           </ThemeProvider>
