@@ -1,9 +1,9 @@
 {
   "buildNumber": "3",
-  "runtimeVersion": "1.0.0",
+  "runtimeVersion": "1.1.0",
   "method": "expo-fingerprint",
-  "hash": "a36f2a32d11d394daa7ad26ff45bdc2c1393d0f6",
-  "fallbackHash": "0b3ed89cd748de7a6113d28d48f1085aaed97a0f",
-  "sourceCount": 88,
-  "createdAt": "2026-10-25T21:05:12.717Z"
+  "hash": "d561756704fa63ce3c52464a1b5e97a818f74aab",
+  "fallbackHash": "546bab25227fb8979b42a36054e13c054739d683",
+  "sourceCount": 90,
+  "createdAt": "2026-10-31T18:15:42.447Z"
 }
