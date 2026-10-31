@@ -2,6 +2,8 @@
 #   native inputs unchanged -> publish a JS/asset OTA update (EAS Update)
 #   native inputs changed   -> build iOS and auto-submit to TestFlight, then commit the
 #                              new fingerprint baseline so later pushes go back to OTA.
+# Convex deploys first (when packages/server/convex changed) so a new client never
+# runs against an old backend. Web is deployed by Vercel's Git integration (vercel.json).
 # Native changes bump `version` (runtime) in app.config.js, so OTA never reaches an
 # older binary. Pull requests and manual runs never build.
 # The production channel is for TestFlight binaries (no public App Store listing).
@@ -73,10 +75,72 @@ jobs:
       - name: Render screens against a dead Convex backend
         run: pnpm --filter @rn-monorepo/reactnative test:crash-guard
 
+  convex:
+    name: Deploy Convex backend
+    needs: crash-guard
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check CONVEX_DEPLOY_KEY
+        id: key
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::warning title=CONVEX_DEPLOY_KEY missing::Convex was NOT deployed. Create a deploy key for the deployment the app uses (Convex dashboard -> Settings -> Deploy Keys) and add it as the CONVEX_DEPLOY_KEY repository secret."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.key.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect backend changes
+        id: changed
+        if: steps.key.outputs.present == 'true'
+        run: |
+          if git diff --name-only HEAD~1 HEAD -- packages/server/convex pnpm-lock.yaml | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No backend changes; skipping Convex deploy."
+          fi
+
+      - name: Setup pnpm
+        if: steps.changed.outputs.changed == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - name: Setup Node
+        if: steps.changed.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.changed.outputs.changed == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Convex
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: packages/server
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: pnpm exec convex deploy --yes
+
   update:
     name: Publish OTA update
-    needs: crash-guard
-    if: github.event_name != 'pull_request'
+    needs: [crash-guard, convex]
+    # Run after Convex whether it deployed or was skipped, but not if it failed.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.crash-guard.result == 'success' && (needs.convex.result == 'success' || needs.convex.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       # contents: write lets the native-build path commit the new baseline back to main.
