@@ -1,4 +1,9 @@
-# Publishes a JS/asset OTA update to EAS Update.
+# On push to main this decides per commit, using `pnpm check:native`:
+#   native inputs unchanged -> publish a JS/asset OTA update (EAS Update)
+#   native inputs changed   -> build iOS and auto-submit to TestFlight, then commit the
+#                              new fingerprint baseline so later pushes go back to OTA.
+# Native changes bump `version` (runtime) in app.config.js, so OTA never reaches an
+# older binary. Pull requests and manual runs never build.
 # The production channel is for TestFlight binaries (no public App Store listing).
 # Web deploys stay on Vercel (vercel.json). This workflow never builds or ships web.
 #
@@ -38,7 +43,8 @@ on:
 
 concurrency:
   group: eas-update-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a native build on main when a newer push arrives; queue it instead.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   crash-guard:
@@ -73,7 +79,8 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write lets the native-build path commit the new baseline back to main.
+      contents: write
     env:
       CHANNEL: ${{ github.event.inputs.channel || 'production' }}
       DEFAULT_EAS_PROJECT_ID: 45f0cfd7-2b50-4deb-b537-b5e44f76b937
@@ -170,3 +177,26 @@ jobs:
       - name: Skip OTA (native changed)
         if: steps.native.outputs.changed == 'true'
         run: echo "Skipped eas update because the native fingerprint changed."
+
+      # Native change on main: build iOS and submit to TestFlight with no human step.
+      # Needs EAS credentials for the build (stored remotely) and an App Store Connect
+      # API key stored in EAS for the submit; a missing key fails here with EAS's message.
+      - name: Build iOS and submit to TestFlight
+        id: build
+        if: steps.native.outputs.changed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: packages/reactnative
+        run: eas build --profile production --platform ios --non-interactive --auto-submit
+
+      - name: Record new native baseline
+        if: steps.build.conclusion == 'success'
+        run: |
+          pnpm check:native --write
+          if git diff --quiet -- packages/reactnative/.native-fingerprint.json; then
+            echo "Baseline already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/reactnative/.native-fingerprint.json
+          git commit -m "Record native fingerprint after TestFlight build [skip ci]"
+          git push origin HEAD:main

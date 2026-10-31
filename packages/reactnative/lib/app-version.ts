@@ -1,9 +1,10 @@
 /**
  * JS-only OTA stamp. Bump `JS_OTA_BUILD` each time we publish JS.
- * Do not change `APP_VERSION` or `runtimeVersion` — that would miss
- * TestFlight build 3 (runtime 1.0.0).
+ * `APP_VERSION` is the runtime version (policy appVersion). 1.1.0 is the
+ * Plaid binary (react-native-plaid-link-sdk); 1.0.0 builds never receive
+ * OTA JS that needs it. Bump it only when native code changes.
  */
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 export const JS_OTA_BUILD = 22;
 
 export function jsVersionLabel(appVersion = APP_VERSION, ota = JS_OTA_BUILD): string {
@@ -34,7 +35,7 @@ export type UpdateMeta = {
   embedded: boolean;
 };
 
-/** Second line: `1.0.0 · embedded` or `1.0.0 · a1b2c3d4 · Oct 24, 2026, 4:12 PM PDT`. */
+/** Second line: `1.1.0 · embedded` or `1.1.0 · a1b2c3d4 · Oct 24, 2026, 4:12 PM PDT`. */
 export function formatBuildDetail(meta: UpdateMeta, appVersion = APP_VERSION): string {
   if (meta.embedded || !meta.updateId) return `${appVersion} · embedded`;
   const hash = shortUpdateId(meta.updateId) ?? 'embedded';

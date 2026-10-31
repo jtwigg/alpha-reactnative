@@ -111,7 +111,7 @@ export async function collectFingerprint(appDir = appRoot) {
   const method = expo.hash ? 'expo-fingerprint' : 'fallback';
   return {
     buildNumber: '3',
-    runtimeVersion: '1.0.0',
+    runtimeVersion: '1.1.0',
     method,
     hash: expo.hash ?? fallback.hash,
     fallbackHash: fallback.hash,

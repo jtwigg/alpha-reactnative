@@ -161,7 +161,7 @@ describe('native app link config', () => {
     expect(config.android.intentFilters[0].autoVerify).toBe(true);
     expect(config.android.intentFilters[0].data[0]).toEqual({ scheme: 'https', host: APP_LINK_HOST });
     expect(config.runtimeVersion).toEqual({ policy: 'appVersion' });
-    expect(config.version).toBe('1.0.0');
+    expect(config.version).toBe('1.1.0');
     const fields = nativeConfigFields(config);
     expect(fields.ios.associatedDomains).toEqual([`applinks:${APP_LINK_HOST}`]);
     expect(fields.android.intentFilters[0].autoVerify).toBe(true);

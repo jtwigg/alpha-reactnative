@@ -15,7 +15,7 @@ module.exports = ({ config }) => ({
   ...config,
   name: 'Alpha',
   slug: 'alpha-mono',
-  version: '1.0.0',
+  version: '1.1.0',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
   scheme: 'johnsapp',

@@ -12,7 +12,7 @@ describe('Home version label + update banner', () => {
     const tree = renderHomeChrome({ prompt: null });
     const texts = collectTexts(tree);
     expect(findNode(tree, 'VersionLabel')?.text).toBe(jsVersionLabel());
-    expect(texts).toContain(`v1.0.0 (ota ${JS_OTA_BUILD})`);
+    expect(texts).toContain(`v1.1.0 (ota ${JS_OTA_BUILD})`);
     expect(findNode(tree, 'UpdateBanner')).toBeNull();
     const types = (tree.children ?? []).map((child) => child.type);
     expect(types.indexOf('VersionLabel')).toBeLessThan(types.indexOf('Composer'));
@@ -27,11 +27,11 @@ describe('Home version label + update banner', () => {
     });
     const banner = findNode(tree, 'UpdateBanner');
     expect(banner?.text).toBe(`Update available: ota ${JS_OTA_BUILD}, tap to update & restart`);
-    expect(findNode(tree, 'VersionLabel')?.text).toBe(`v1.0.0 (ota ${JS_OTA_BUILD})`);
+    expect(findNode(tree, 'VersionLabel')?.text).toBe(`v1.1.0 (ota ${JS_OTA_BUILD})`);
     expect((tree.children ?? [])[0]?.type).toBe('UpdateBanner');
     expect(collectTexts(tree)).toEqual(
       expect.arrayContaining([
-        `v1.0.0 (ota ${JS_OTA_BUILD})`,
+        `v1.1.0 (ota ${JS_OTA_BUILD})`,
         `Update available: ota ${JS_OTA_BUILD}, tap to update & restart`,
       ]),
     );
@@ -43,7 +43,7 @@ describe('Home version label + update banner', () => {
       dismissed: true,
     });
     expect(findNode(tree, 'UpdateBanner')).toBeNull();
-    expect(findNode(tree, 'VersionLabel')?.text).toBe(`v1.0.0 (ota ${JS_OTA_BUILD})`);
+    expect(findNode(tree, 'VersionLabel')?.text).toBe(`v1.1.0 (ota ${JS_OTA_BUILD})`);
   });
 
   it('mounts banner then label on the Home screen, not under the composer', () => {
