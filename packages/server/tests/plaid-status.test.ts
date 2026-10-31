@@ -17,9 +17,14 @@ const item = (over: Partial<PlaidConnection> = {}): PlaidConnection => ({
 });
 
 describe('plaid home banner', () => {
-  it('is hidden when nothing needs attention', () => {
+  it('is hidden only while loading', () => {
     expect(plaidBannerLabel(undefined)).toBeNull();
-    expect(plaidBannerLabel({ items: [item()], openDeletionProposals: 0 })).toBeNull();
+  });
+
+  it('stays as the Connections entry point when nothing needs attention', () => {
+    expect(plaidBannerLabel({ items: [], openDeletionProposals: 0 })).toBe('Link a bank');
+    expect(plaidBannerLabel({ items: [item()], openDeletionProposals: 0 })).toBe('1 bank connected');
+    expect(plaidBannerLabel({ items: [item(), item()], openDeletionProposals: 0 })).toBe('2 banks connected');
   });
 
   it('combines relink, paused and deletion counts', () => {

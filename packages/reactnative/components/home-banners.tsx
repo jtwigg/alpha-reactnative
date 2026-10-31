@@ -111,7 +111,7 @@ export function HomeFinanceBanner({ ready }: { ready: boolean }) {
   );
 }
 
-/** Shown only when a bank needs relinking or deletions await review. */
+/** Entry point to Connections: attention items, "Link a bank", or a connected count. */
 export function HomePlaidBanner({ ready }: { ready: boolean }) {
   const palette = useAppPalette();
   const router = useRouter();

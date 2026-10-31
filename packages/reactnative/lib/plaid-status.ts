@@ -14,7 +14,11 @@ export type PlaidOverview = {
   openDeletionProposals: number;
 };
 
-/** Home banner copy, or null when nothing needs attention. */
+/**
+ * Home banner copy. Attention items win; otherwise the banner stays as the
+ * entry point to Connections ("Link a bank" when empty, a count when healthy).
+ * Null only while the overview is still loading.
+ */
 export function plaidBannerLabel(overview: PlaidOverview | null | undefined): string | null {
   if (!overview) return null;
   const relink = overview.items.filter((item) => item.status === 'needs_relink').length;
@@ -29,7 +33,10 @@ export function plaidBannerLabel(overview: PlaidOverview | null | undefined): st
         : `${overview.openDeletionProposals} deletions to review`,
     );
   }
-  return parts.length > 0 ? parts.join(' · ') : null;
+  if (parts.length > 0) return parts.join(' · ');
+  const count = overview.items.length;
+  if (count === 0) return 'Link a bank';
+  return count === 1 ? '1 bank connected' : `${count} banks connected`;
 }
 
 export function plaidStatusLabel(item: Pick<PlaidConnection, 'status' | 'live'>): string {
