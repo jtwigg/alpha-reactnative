@@ -231,16 +231,31 @@ export const checkChartConsistencySchema = z.object({
   scopeId: z.string().optional(),
 });
 
+export const plaidStatusSchema = z.object({});
+
+export const plaidRunsSchema = z.object({
+  limit: z.number().int().positive().max(50).optional().describe('How many recent sync runs (default 10, max 50)'),
+});
+
 function asText(result: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
   };
 }
 
+/**
+ * Write tools are registered only when explicitly enabled, so by default
+ * `tools/list` shows read-only tools. Enable with FINANCE_MCP_WRITES=true
+ * (or pass `{ writes: true }`).
+ */
+export type FinanceToolOptions = { writes?: boolean };
+
 export function registerFinanceTools(
   server: { registerTool: (...args: never[]) => unknown },
   convex: ConvexFinanceClient,
+  options: FinanceToolOptions = {},
 ) {
+  const writes = options.writes ?? process.env.FINANCE_MCP_WRITES === 'true';
   const call = (op: string) => async (args: Record<string, unknown>) =>
     asText(await convex.call(op, args));
   const tool = server.registerTool.bind(server) as (
@@ -248,8 +263,9 @@ export function registerFinanceTools(
     config: { title: string; description: string; inputSchema: z.ZodType },
     handler: (args: Record<string, unknown>) => Promise<unknown>,
   ) => void;
+  const writeTool: typeof tool = writes ? tool : () => undefined;
 
-  tool(
+  writeTool(
     'upsert_accounts',
     {
       title: 'Upsert accounts',
@@ -260,7 +276,7 @@ export function registerFinanceTools(
     call('upsert_accounts'),
   );
 
-  tool(
+  writeTool(
     'upsert_snapshots',
     {
       title: 'Upsert balance snapshots',
@@ -271,7 +287,7 @@ export function registerFinanceTools(
     call('upsert_snapshots'),
   );
 
-  tool(
+  writeTool(
     'upsert_transactions',
     {
       title: 'Upsert transactions',
@@ -282,7 +298,7 @@ export function registerFinanceTools(
     call('upsert_transactions'),
   );
 
-  tool(
+  writeTool(
     'upsert_holdings',
     {
       title: 'Upsert holdings',
@@ -293,7 +309,7 @@ export function registerFinanceTools(
     call('upsert_holdings'),
   );
 
-  tool(
+  writeTool(
     'fill_gaps',
     {
       title: 'Fill snapshot gaps',
@@ -337,7 +353,7 @@ export function registerFinanceTools(
     call('list_accounts'),
   );
 
-  tool(
+  writeTool(
     'delete_accounts',
     {
       title: 'Delete accounts',
@@ -348,7 +364,7 @@ export function registerFinanceTools(
     call('delete_accounts'),
   );
 
-  tool(
+  writeTool(
     'delete_transactions',
     {
       title: 'Delete transactions',
@@ -359,7 +375,7 @@ export function registerFinanceTools(
     call('delete_transactions'),
   );
 
-  tool(
+  writeTool(
     'upsert_flows',
     {
       title: 'Upsert TWR flows',
@@ -370,7 +386,7 @@ export function registerFinanceTools(
     call('upsert_flows'),
   );
 
-  tool(
+  writeTool(
     'delete_flows',
     {
       title: 'Delete TWR flows',
@@ -381,7 +397,7 @@ export function registerFinanceTools(
     call('delete_flows'),
   );
 
-  tool(
+  writeTool(
     'upsert_returns',
     {
       title: 'Upsert TWR returns',
@@ -392,7 +408,7 @@ export function registerFinanceTools(
     call('upsert_returns'),
   );
 
-  tool(
+  writeTool(
     'upsert_series',
     {
       title: 'Upsert TWR series',
@@ -403,7 +419,7 @@ export function registerFinanceTools(
     call('upsert_series'),
   );
 
-  tool(
+  writeTool(
     'delete_series',
     {
       title: 'Delete TWR series',
@@ -414,7 +430,7 @@ export function registerFinanceTools(
     call('delete_series'),
   );
 
-  tool(
+  writeTool(
     'recompute_charts',
     {
       title: 'Recompute all chart serve docs',
@@ -425,7 +441,7 @@ export function registerFinanceTools(
     call('recompute_charts'),
   );
 
-  tool(
+  writeTool(
     'recompute_chart_scope',
     {
       title: 'Recompute one chart scope',
@@ -436,7 +452,7 @@ export function registerFinanceTools(
     call('recompute_chart_scope'),
   );
 
-  tool(
+  writeTool(
     'recompute_charts_from',
     {
       title: 'Recompute charts from a date',
@@ -456,5 +472,27 @@ export function registerFinanceTools(
       inputSchema: checkChartConsistencySchema,
     },
     call('check_chart_consistency'),
+  );
+
+  tool(
+    'plaid_status',
+    {
+      title: 'Plaid connection status',
+      description:
+        'Read-only. Linked institutions with status (active|needs_relink|paused), live vs shadow, failures, last sync, account counts; whether the daily sync is enabled; open deletion proposals; the last sync run. Never returns tokens or balances.',
+      inputSchema: plaidStatusSchema,
+    },
+    call('plaid_status'),
+  );
+
+  tool(
+    'plaid_runs',
+    {
+      title: 'Recent Plaid sync runs',
+      description:
+        'Read-only. Recent daily-sync runs: status (ok|aborted|failed), abort reason, Plaid calls and mutations used, and a per-institution report of rows added/modified/removed.',
+      inputSchema: plaidRunsSchema,
+    },
+    call('plaid_runs'),
   );
 }

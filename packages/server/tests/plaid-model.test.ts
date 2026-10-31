@@ -9,6 +9,7 @@ import {
   mapAccount,
   mapHolding,
   mapTransaction,
+  matchAccounts,
   newBudget,
   noProgress,
   runDue,
@@ -158,5 +159,58 @@ describe('run safeguards', () => {
     expect(noProgress({ added: 0, modified: 0, removed: 0, prevCursor: 'a', nextCursor: 'b' })).toBe(true);
     expect(noProgress({ added: 3, modified: 0, removed: 0, prevCursor: 'a', nextCursor: 'a' })).toBe(true);
     expect(noProgress({ added: 3, modified: 0, removed: 0, prevCursor: 'a', nextCursor: 'b' })).toBe(false);
+  });
+});
+
+describe('account matching', () => {
+  const plaid = (id: string, over = {}) => ({
+    account_id: id,
+    name: 'Checking',
+    type: 'depository',
+    mask: '1234',
+    balances: {},
+    ...over,
+  });
+  const legacy = (sourceId: string, over = {}) => ({
+    sourceId,
+    provider: 'finance',
+    class: 'cash',
+    name: 'Total Checking',
+    mask: '1234',
+    ...over,
+  });
+
+  it('matches one legacy account by class and mask', () => {
+    expect(matchAccounts([plaid('p1')], [legacy('old1')])).toEqual([
+      { kind: 'matched', plaidAccountId: 'p1', sourceId: 'old1', by: 'mask' },
+    ]);
+  });
+
+  it('reports a new account when nothing matches', () => {
+    expect(matchAccounts([plaid('p1')], [legacy('old1', { mask: '9999' })])).toEqual([
+      { kind: 'new', plaidAccountId: 'p1' },
+    ]);
+  });
+
+  it('flags ambiguity instead of guessing', () => {
+    const result = matchAccounts([plaid('p1')], [legacy('a'), legacy('b')]);
+    expect(result[0]).toMatchObject({ kind: 'ambiguous', candidates: ['a', 'b'] });
+  });
+
+  it('uses each legacy account once and ignores other classes and plaid-owned accounts', () => {
+    const result = matchAccounts(
+      [plaid('p1'), plaid('p2')],
+      [legacy('old1'), legacy('card', { class: 'liability' }), legacy('plaid:x', { provider: 'plaid' })],
+    );
+    expect(result[0]).toMatchObject({ kind: 'matched', sourceId: 'old1' });
+    expect(result[1]).toEqual({ kind: 'new', plaidAccountId: 'p2' });
+  });
+
+  it('falls back to an exact unique name when there is no mask', () => {
+    const result = matchAccounts(
+      [plaid('p1', { mask: undefined, name: 'Total Checking' })],
+      [legacy('old1', { mask: undefined })],
+    );
+    expect(result[0]).toMatchObject({ kind: 'matched', sourceId: 'old1', by: 'name' });
   });
 });

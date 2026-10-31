@@ -60,7 +60,7 @@ export const existingTransactions = internalQuery({
     const rows = await ctx.db
       .query('transactions')
       .withIndex('by_account_date', (q) => q.eq('accountId', accountId).gte('date', from).lte('date', to))
-      .take(2000);
+      .take(8000);
     return rows.map((row) => ({
       sourceId: row.sourceId,
       accountId: row.accountId,
@@ -124,5 +124,55 @@ export const closeResolvedProposals = internalMutation({
       }
     }
     return closed;
+  },
+});
+
+/** Stored transactions by sourceId, for deciding whether a Plaid removal applies. */
+export const transactionsByIds = internalQuery({
+  args: { ids: v.array(v.string()) },
+  handler: async (ctx, { ids }) => {
+    const out: Array<{ sourceId: string; accountId: string; date: string; amount: number; name: string; merchant?: string; pending: boolean }> = [];
+    for (const id of ids) {
+      const row = await ctx.db.query('transactions').withIndex('by_sourceId', (q) => q.eq('sourceId', id)).first();
+      if (row) {
+        out.push({
+          sourceId: row.sourceId,
+          accountId: row.accountId,
+          date: row.date,
+          amount: row.amount,
+          name: row.name,
+          ...(row.merchant ? { merchant: row.merchant } : {}),
+          pending: row.pending,
+        });
+      }
+    }
+    return out;
+  },
+});
+
+/**
+ * One account's stored posted/pending transactions, the last trustworthy
+ * snapshot before `before`, and every snapshot date (so reconstructed history
+ * never overwrites a real day).
+ */
+export const accountLedger = internalQuery({
+  args: { accountId: v.string(), before: v.string() },
+  handler: async (ctx, { accountId, before }) => {
+    const txns = await ctx.db
+      .query('transactions')
+      .withIndex('by_account_date', (q) => q.eq('accountId', accountId))
+      .take(8000);
+    const snaps = await ctx.db
+      .query('balance_snapshots')
+      .withIndex('by_account_asOf', (q) => q.eq('accountId', accountId))
+      .take(8000);
+    const trusted = snaps
+      .filter((s) => s.asOf < before && (s.source === 'observed' || s.source === 'manual'))
+      .sort((a, b) => b.asOf.localeCompare(a.asOf))[0];
+    return {
+      transactions: txns.map((t) => ({ date: t.date, amount: t.amount, pending: t.pending })),
+      previous: trusted ? { asOf: trusted.asOf, balance: trusted.balance } : null,
+      snapshotDates: snaps.map((s) => s.asOf),
+    };
   },
 });

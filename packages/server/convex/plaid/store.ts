@@ -77,8 +77,8 @@ export const insertItem = internalMutation({
     return await ctx.db.insert('plaid_items', {
       ...args,
       status: 'active',
-      // Shadow mode until the explicit per-institution cutover.
-      live: false,
+      // Plaid is the primary writer: new institutions sync into finance immediately.
+      live: true,
       consecutiveFailures: 0,
       createdAt: Date.now(),
     });
@@ -93,6 +93,7 @@ export const patchItem = internalMutation({
     consecutiveFailures: v.optional(v.number()),
     lastError: v.optional(v.union(v.string(), v.null())),
     lastSyncedAt: v.optional(v.number()),
+    historyBuiltAt: v.optional(v.number()),
     accounts: v.optional(v.array(accountSummary)),
   },
   handler: async (ctx, { plaidItemId, lastError, ...rest }) => {
@@ -158,5 +159,26 @@ export const deleteItem = internalMutation({
       .collect();
     for (const row of mapped) await ctx.db.delete(row._id);
     return { removed: Boolean(item), mapRows: mapped.length };
+  },
+});
+
+/**
+ * Accounts Alpha already holds that no Plaid account owns yet (written earlier
+ * by the Finance assistant). These are the candidates for matching.
+ */
+export const legacyAccounts = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mapped = new Set((await ctx.db.query('plaid_account_map').collect()).map((row) => row.sourceId));
+    const accounts = await ctx.db.query('accounts').collect();
+    return accounts
+      .filter((a) => a.provider !== 'plaid' && !mapped.has(a.sourceId))
+      .map((a) => ({
+        sourceId: a.sourceId,
+        provider: a.provider,
+        class: a.class,
+        name: a.name,
+        ...(a.mask ? { mask: a.mask } : {}),
+      }));
   },
 });

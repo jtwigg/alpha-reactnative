@@ -356,6 +356,8 @@ export default defineSchema({
     consecutiveFailures: v.number(),
     lastError: v.optional(v.string()),
     lastSyncedAt: v.optional(v.number()),
+    /** Set once past daily balances have been rebuilt from stored transactions. */
+    historyBuiltAt: v.optional(v.number()),
     /** Display-only account list (no balances), refreshed at link and on every sync, shadow or live. */
     accounts: v.optional(
       v.array(

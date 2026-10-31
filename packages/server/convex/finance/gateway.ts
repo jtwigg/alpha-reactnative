@@ -24,6 +24,8 @@ export const FINANCE_OPS = [
   'recompute_chart_scope',
   'recompute_charts_from',
   'check_chart_consistency',
+  'plaid_status',
+  'plaid_runs',
 ] as const;
 
 export type FinanceOp = (typeof FINANCE_OPS)[number];
@@ -137,6 +139,10 @@ export async function dispatchFinanceOp(
         kind: args.kind,
         scopeId: args.scopeId,
       });
+    case 'plaid_status':
+      return await ctx.runQuery(internal.plaid.status.summary, {});
+    case 'plaid_runs':
+      return await ctx.runQuery(internal.plaid.status.recentRuns, { limit: args.limit });
     default:
       throw new Error(`Unknown finance op: ${op}`);
   }

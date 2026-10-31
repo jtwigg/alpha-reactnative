@@ -7,14 +7,13 @@ import { PlaidError, plaidPost } from './client';
 import { decryptToken } from './crypto';
 import {
   SYNC_CAPS,
+  accountClass,
   budgetExceeded,
-  contentKey,
   defaultAccountSourceId,
-  dropAlreadyStored,
   isLoginRequired,
   mapAccount,
+  matchAccounts,
   mapHolding,
-  mapTransaction,
   newBudget,
   noProgress,
   summarizeAccounts,
@@ -24,6 +23,14 @@ import {
   type PlaidTransaction,
   type SyncBudget,
 } from './model';
+import {
+  checkAccountBalance,
+  checkBalanceDrift,
+  diffAccounts,
+  planTransactionPage,
+  reconstructBalances,
+  type StoredTxn,
+} from './reconcile';
 
 type SyncPage = {
   added: PlaidTransaction[];
@@ -42,16 +49,14 @@ type ItemReport = {
   removed: number;
   skippedAsDuplicate: number;
   holdings: number;
+  matchedToExisting: number;
+  heldForMatching: string[];
+  deleted: number;
+  unmappedRows: number;
+  skippedBalances: Array<{ accountId: string; reason: string }>;
+  historyDays: number;
+  findings: Array<{ type: string; accountId: string; detail?: unknown }>;
   error?: string;
-};
-
-type StoredTxn = {
-  sourceId: string;
-  accountId: string;
-  date: string;
-  amount: number;
-  name: string;
-  merchant?: string;
 };
 
 class CapReached extends Error {
@@ -94,6 +99,8 @@ async function syncItem(
     cursor?: string;
     live: boolean;
     lastSyncedAt?: number;
+    historyBuiltAt?: number;
+    accounts?: Array<{ accountId: string }>;
   },
   now: number,
 ): Promise<ItemReport> {
@@ -106,6 +113,13 @@ async function syncItem(
     removed: 0,
     skippedAsDuplicate: 0,
     holdings: 0,
+    matchedToExisting: 0,
+    heldForMatching: [],
+    deleted: 0,
+    unmappedRows: 0,
+    skippedBalances: [],
+    historyDays: 0,
+    findings: [],
   };
   const accessToken = await decryptToken(item.encryptedAccessToken, process.env.PLAID_TOKEN_KEY);
 
@@ -120,14 +134,44 @@ async function syncItem(
   });
   const sourceIdFor = new Map<string, string>(existingMap.map((row) => [row.plaidAccountId, row.sourceId]));
   const typeFor = new Map(accounts.map((a) => [a.account_id, a.type]));
-  const entries = accounts
-    .filter((a) => !sourceIdFor.has(a.account_id))
-    .map((a) => ({
-      plaidAccountId: a.account_id,
-      plaidItemId: item.plaidItemId,
-      sourceId: defaultAccountSourceId(a.account_id),
-      type: a.type,
-    }));
+  // Match unmapped Plaid accounts to accounts Alpha already holds so history is
+  // kept and net worth is not double counted. Ambiguous ones are held back (not
+  // written) rather than risk a duplicate.
+  const unmapped = accounts.filter((a) => !sourceIdFor.has(a.account_id));
+  const legacy = unmapped.length > 0 ? await ctx.runQuery(internal.plaid.store.legacyAccounts, {}) : [];
+  const entries: Array<{ plaidAccountId: string; plaidItemId: string; sourceId: string; type: string }> = [];
+  for (const match of matchAccounts(unmapped, legacy)) {
+    const type = typeFor.get(match.plaidAccountId) ?? 'other';
+    if (match.kind === 'matched') {
+      report.matchedToExisting += 1;
+      entries.push({ plaidAccountId: match.plaidAccountId, plaidItemId: item.plaidItemId, sourceId: match.sourceId, type });
+    } else if (match.kind === 'new') {
+      entries.push({
+        plaidAccountId: match.plaidAccountId,
+        plaidItemId: item.plaidItemId,
+        sourceId: defaultAccountSourceId(match.plaidAccountId),
+        type,
+      });
+    } else {
+      report.heldForMatching.push(match.plaidAccountId);
+    }
+  }
+  const heldIds = new Set(report.heldForMatching);
+  const writable = accounts.filter((a) => !heldIds.has(a.account_id));
+  // Only write a balance Plaid actually reported in USD. A missing balance is
+  // never written as 0, and a foreign currency is never summed as dollars.
+  const validBalance = new Map<string, number>();
+  for (const a of writable) {
+    const check = checkAccountBalance(a);
+    if (check.ok) validBalance.set(a.account_id, check.balance);
+    else report.skippedBalances.push({ accountId: a.account_id, reason: check.reason });
+  }
+  const balanced = writable.filter((a) => validBalance.has(a.account_id));
+  const gone = diffAccounts(
+    (item.accounts ?? []).map((a) => a.accountId),
+    accounts.map((a) => a.account_id),
+  ).disappeared;
+  for (const accountId of gone) report.findings.push({ type: 'account_disappeared', accountId });
   if (item.live && entries.length > 0) {
     await mutate(budget, () => ctx.runMutation(internal.plaid.store.ensureAccountMap, { entries }));
   }
@@ -138,23 +182,26 @@ async function syncItem(
   if (item.live) {
     await mutate(budget, () =>
       ctx.runMutation(internal.finance.ingest.upsertAccounts, {
-        items: accounts.map((a) =>
-          mapAccount(a, {
+        items: balanced.map((a) =>
+          mapAccount(
+            { ...a, balances: { ...a.balances, current: validBalance.get(a.account_id)! } },
+            {
             sourceId: sourceIdFor.get(a.account_id)!,
             connectionId: item.plaidItemId,
             now,
-          }),
+            },
+          ),
         ),
       }),
     );
     await mutate(budget, () =>
       ctx.runMutation(internal.finance.ingest.upsertSnapshots, {
-        items: accounts.map((a) => ({
+        items: balanced.map((a) => ({
           accountId: sourceIdFor.get(a.account_id)!,
           accountName: a.official_name?.trim() || a.name,
-          class: mapAccount(a, { sourceId: '', connectionId: '', now }).class,
+          class: accountClass(a.type),
           asOf,
-          balance: a.balances.current ?? 0,
+          balance: validBalance.get(a.account_id)!,
           source: 'observed' as const,
           method: 'plaid.accounts_get',
         })),
@@ -166,7 +213,7 @@ async function syncItem(
   // but only for live items — shadow mode never advances it, so going live
   // starts from the beginning instead of missing rows.
   let cursor = item.cursor;
-  const touchedAccounts = new Set<string>();
+  let syncComplete = false;
   for (let page = 0; page < SYNC_CAPS.maxTransactionPages; page += 1) {
     const res = await plaid<SyncPage>(budget, '/transactions/sync', {
       access_token: accessToken,
@@ -178,47 +225,47 @@ async function syncItem(
     report.removed += res.removed.length;
 
     if (item.live) {
-      const incoming = [...res.added, ...res.modified]
-        .filter((t) => sourceIdFor.has(t.account_id))
-        .map((t) =>
-          mapTransaction(t, {
-            accountSourceId: sourceIdFor.get(t.account_id)!,
-            accountType: typeFor.get(t.account_id) ?? 'depository',
-          }),
-        );
-
-      // Dedupe by content against rows Alpha already holds under other ids.
-      const byAccount = new Map<string, typeof incoming>();
-      for (const row of incoming) byAccount.set(row.accountId, [...(byAccount.get(row.accountId) ?? []), row]);
-      const toWrite: typeof incoming = [];
-      for (const [accountId, rows] of byAccount) {
-        const dates = rows.map((r) => r.date).sort();
-        const stored: StoredTxn[] = await ctx.runQuery(internal.plaid.runs.existingTransactions, {
-          accountId,
-          from: dates[0],
-          to: dates[dates.length - 1],
-        });
-        const counts = new Map<string, number>();
-        for (const row of stored) counts.set(contentKey(row), (counts.get(contentKey(row)) ?? 0) + 1);
-        const { keep, skipped } = dropAlreadyStored(
-          rows,
-          counts,
-          new Set(stored.map((r) => r.sourceId)),
-        );
-        report.skippedAsDuplicate += skipped;
-        toWrite.push(...keep);
-        if (keep.length > 0) touchedAccounts.add(accountId);
+      // Stored rows the plan needs: the date window of each touched account (for
+      // content dedupe) plus any removed ids (to know whether Alpha holds them).
+      const touched = new Map<string, string[]>();
+      for (const t of [...res.added, ...res.modified]) {
+        const sid = sourceIdFor.get(t.account_id);
+        if (sid) touched.set(sid, [...(touched.get(sid) ?? []), t.date]);
       }
-      for (const batch of chunk(toWrite, 500)) {
-        await mutate(budget, () => ctx.runMutation(internal.finance.ingest.upsertTransactions, { items: batch }));
+      const storedById = new Map<string, StoredTxn>();
+      for (const [accountId, dates] of touched) {
+        const sorted = dates.sort();
+        const rows: StoredTxn[] = await ctx.runQuery(internal.plaid.runs.existingTransactions, {
+          accountId,
+          from: sorted[0],
+          to: sorted[sorted.length - 1],
+        });
+        for (const row of rows) storedById.set(row.sourceId, row);
       }
       if (res.removed.length > 0) {
-        await mutate(budget, () =>
-          ctx.runMutation(internal.plaid.runs.proposeDeletions, {
-            transactionSourceIds: res.removed.map((r) => `plaid:${r.transaction_id}`),
-            reason: 'plaid_removed',
-          }),
-        );
+        const rows: StoredTxn[] = await ctx.runQuery(internal.plaid.runs.transactionsByIds, {
+          ids: res.removed.map((r) => `plaid:${r.transaction_id}`),
+        });
+        for (const row of rows) storedById.set(row.sourceId, row);
+      }
+
+      const plan = planTransactionPage({
+        added: res.added,
+        modified: res.modified,
+        removed: res.removed,
+        accountSourceIds: sourceIdFor,
+        accountTypes: typeFor,
+        stored: [...storedById.values()],
+      });
+      report.skippedAsDuplicate += plan.skippedAsDuplicate;
+      report.unmappedRows += plan.unmappedSkipped;
+      for (const batch of chunk(plan.upserts, 500)) {
+        await mutate(budget, () => ctx.runMutation(internal.finance.ingest.upsertTransactions, { items: batch }));
+      }
+      for (const batch of chunk(plan.deletes, 500)) {
+        // Audited delete; only Plaid-owned ids ever reach here.
+        await mutate(budget, () => ctx.runMutation(internal.finance.ingest.deleteTransactions, { ids: batch }));
+        report.deleted += batch.length;
       }
       await mutate(budget, () =>
         ctx.runMutation(internal.plaid.store.patchItem, { plaidItemId: item.plaidItemId, cursor: res.next_cursor }),
@@ -235,6 +282,7 @@ async function syncItem(
         nextCursor: res.next_cursor,
       });
     cursor = res.next_cursor;
+    if (!res.has_more) syncComplete = true;
     if (stop) break;
   }
 
@@ -264,12 +312,67 @@ async function syncItem(
     }
   }
 
+  // Once the full transaction history is stored: check each account for
+  // balance drift, and (first time only) rebuild past daily balances so net
+  // worth has a history. Reconstructed days never overwrite an existing snapshot.
+  let historyBuilt = false;
+  if (item.live && syncComplete) {
+    for (const a of balanced) {
+      if (a.type === 'investment') continue;
+      const sid = sourceIdFor.get(a.account_id)!;
+      const cls = accountClass(a.type);
+      const balance = validBalance.get(a.account_id)!;
+      const ledger: {
+        transactions: Array<{ date: string; amount: number; pending: boolean }>;
+        previous: { asOf: string; balance: number } | null;
+        snapshotDates: string[];
+      } = await ctx.runQuery(internal.plaid.runs.accountLedger, { accountId: sid, before: asOf });
+
+      const drift = checkBalanceDrift({
+        accountClass: cls,
+        previous: ledger.previous,
+        current: { asOf, balance },
+        transactions: ledger.transactions,
+      });
+      if (drift.status === 'drift') report.findings.push({ type: 'balance_drift', accountId: sid, detail: drift });
+
+      if (!item.historyBuiltAt && ledger.transactions.length > 0) {
+        const earliest = ledger.transactions.reduce((min, t) => (t.date < min ? t.date : min), asOf);
+        const have = new Set(ledger.snapshotDates);
+        const rows = reconstructBalances({
+          accountClass: cls,
+          balance,
+          asOf,
+          from: earliest,
+          transactions: ledger.transactions,
+        }).filter((p) => p.asOf < asOf && !have.has(p.asOf));
+        for (const batch of chunk(rows, 500)) {
+          await mutate(budget, () =>
+            ctx.runMutation(internal.finance.ingest.upsertSnapshots, {
+              items: batch.map((p) => ({
+                accountId: sid,
+                accountName: a.official_name?.trim() || a.name,
+                class: cls,
+                asOf: p.asOf,
+                balance: p.balance,
+                source: 'reconstructed' as const,
+                method: 'plaid.reconstructed',
+              })),
+            }),
+          );
+        }
+        report.historyDays += rows.length;
+      }
+    }
+    historyBuilt = true;
+  }
+
   if (item.live) {
     // Gap fill from the last sync to today, per account.
     if (item.lastSyncedAt) {
       const from = today(item.lastSyncedAt + 86_400_000);
       if (from < asOf) {
-        for (const a of accounts) {
+        for (const a of balanced) {
           await mutate(budget, () =>
             ctx.runMutation(internal.finance.ingest.fillGaps, { accountId: sourceIdFor.get(a.account_id)!, from, to: asOf }),
           );
@@ -281,8 +384,9 @@ async function syncItem(
         plaidItemId: item.plaidItemId,
         lastSyncedAt: now,
         consecutiveFailures: 0,
-        lastError: null,
+        lastError: report.heldForMatching.length > 0 ? 'account_match_ambiguous' : null,
         accounts: summarizeAccounts(accounts),
+        ...(historyBuilt && !item.historyBuiltAt ? { historyBuiltAt: now } : {}),
       }),
     );
   } else {
@@ -351,6 +455,13 @@ async function runSync(ctx: ActionCtx, trigger: 'cron' | 'manual'): Promise<RunR
           removed: 0,
           skippedAsDuplicate: 0,
           holdings: 0,
+          matchedToExisting: 0,
+          heldForMatching: [],
+          deleted: 0,
+          unmappedRows: 0,
+          skippedBalances: [],
+          historyDays: 0,
+          findings: [],
           error: code ?? 'sync_failed',
         });
       }

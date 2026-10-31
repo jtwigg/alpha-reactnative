@@ -143,13 +143,14 @@ describe('MCP handler', () => {
     }
   });
 
-  it('lists finance tools after initialize', async () => {
+  it('lists finance tools after initialize (writes enabled)', async () => {
     const previous = process.env.FINANCE_MCP_TOKEN;
     process.env.FINANCE_MCP_TOKEN = 'test-mcp-token';
     try {
-      const handler = createFinanceMcpHandler({
-        call: async (op) => ({ op, ok: true }),
-      });
+      const handler = createFinanceMcpHandler(
+        { call: async (op) => ({ op, ok: true }) },
+        { writes: true },
+      );
       const headers = {
         Authorization: 'Bearer test-mcp-token',
         'Content-Type': 'application/json',
@@ -234,6 +235,78 @@ describe('MCP handler', () => {
       expect(callBody).toContain('list_accounts');
     } finally {
       process.env.FINANCE_MCP_TOKEN = previous;
+    }
+  });
+});
+
+describe('MCP write tools are hidden by default', () => {
+  const headers = {
+    Authorization: 'Bearer test-mcp-token',
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+  };
+  const rpc = (handler: (r: Request) => Promise<Response>, id: number, method: string, params: object) =>
+    handler(
+      new Request('http://localhost/api/mcp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      }),
+    );
+
+  async function open(options?: { writes?: boolean }) {
+    process.env.FINANCE_MCP_TOKEN = 'test-mcp-token';
+    delete process.env.FINANCE_MCP_WRITES;
+    const handler = createFinanceMcpHandler({ call: async (op) => ({ op, ok: true }) }, options);
+    await (
+      await rpc(handler, 1, 'initialize', {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'hidden-writes-test', version: '0.0.1' },
+      })
+    ).text();
+    return handler;
+  }
+
+  it('lists read tools and Plaid status but no write tools', async () => {
+    const handler = await open();
+    const raw = await (await rpc(handler, 2, 'tools/list', {})).text();
+    for (const name of ['get_digest', 'export_bucket', 'list_accounts', 'check_chart_consistency', 'plaid_status', 'plaid_runs']) {
+      expect(raw).toContain(name);
+    }
+    for (const name of [
+      'upsert_accounts', 'upsert_snapshots', 'upsert_transactions', 'upsert_holdings', 'fill_gaps',
+      'delete_accounts', 'delete_transactions', 'upsert_flows', 'delete_flows', 'upsert_returns',
+      'upsert_series', 'delete_series', 'recompute_charts', 'recompute_chart_scope', 'recompute_charts_from',
+    ]) {
+      expect(raw).not.toContain(name);
+    }
+  });
+
+  it('cannot call a hidden write tool', async () => {
+    const handler = await open();
+    const raw = await (
+      await rpc(handler, 3, 'tools/call', { name: 'upsert_transactions', arguments: { items: [] } })
+    ).text();
+    expect(raw).not.toContain('"ok":true');
+    expect(raw.toLowerCase()).toMatch(/not found|unknown|error/);
+  });
+
+  it('shows write tools when FINANCE_MCP_WRITES=true', async () => {
+    process.env.FINANCE_MCP_TOKEN = 'test-mcp-token';
+    process.env.FINANCE_MCP_WRITES = 'true';
+    try {
+      const handler = createFinanceMcpHandler({ call: async (op) => ({ op, ok: true }) });
+      await (
+        await rpc(handler, 1, 'initialize', {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'writes-env-test', version: '0.0.1' },
+        })
+      ).text();
+      expect(await (await rpc(handler, 2, 'tools/list', {})).text()).toContain('upsert_transactions');
+    } finally {
+      delete process.env.FINANCE_MCP_WRITES;
     }
   });
 });

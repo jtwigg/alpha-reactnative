@@ -1,14 +1,15 @@
 import { createMcpHandler } from 'mcp-handler';
 import { requireMcpBearer } from './bearer';
 import { createConvexFinanceClient, type ConvexFinanceClient } from './convex';
-import { registerFinanceTools } from './tools';
+import { registerFinanceTools, type FinanceToolOptions } from './tools';
 
 export function createFinanceMcpHandler(
   convex: ConvexFinanceClient = createConvexFinanceClient(),
+  options: FinanceToolOptions = {},
 ) {
   const mcp = createMcpHandler(
     (server) => {
-      registerFinanceTools(server, convex);
+      registerFinanceTools(server, convex, options);
     },
     {
       serverInfo: {

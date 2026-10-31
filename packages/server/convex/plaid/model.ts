@@ -29,6 +29,7 @@ export type PlaidAccount = {
     current?: number | null;
     available?: number | null;
     iso_currency_code?: string | null;
+    unofficial_currency_code?: string | null;
   };
 };
 
@@ -255,4 +256,62 @@ export function summarizeAccounts(accounts: PlaidAccount[]): AccountSummary[] {
     type: a.type,
     ...(a.subtype ? { subtype: a.subtype } : {}),
   }));
+}
+
+export type LegacyAccount = {
+  sourceId: string;
+  provider: string;
+  class: string;
+  name: string;
+  mask?: string;
+};
+
+export type AccountMatch =
+  | { kind: 'matched'; plaidAccountId: string; sourceId: string; by: 'mask' | 'name' }
+  | { kind: 'new'; plaidAccountId: string }
+  | { kind: 'ambiguous'; plaidAccountId: string; candidates: string[] };
+
+function normalizeName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Maps Plaid accounts onto accounts Alpha already holds (written earlier by the
+ * Finance assistant) so history is kept and net worth is not double counted.
+ * A match needs the same class plus a unique last-4 mask, or a unique exact
+ * name when there is no mask. Zero candidates means a genuinely new account;
+ * several mean a person must decide. Each legacy account is used at most once.
+ */
+export function matchAccounts(plaid: PlaidAccount[], legacy: LegacyAccount[]): AccountMatch[] {
+  const pool = legacy.filter((a) => a.provider !== PLAID_PROVIDER);
+  const used = new Set<string>();
+  const out: AccountMatch[] = [];
+  for (const account of plaid) {
+    const cls = accountClass(account.type);
+    const byMask = account.mask
+      ? pool.filter((l) => l.class === cls && l.mask === account.mask && !used.has(l.sourceId))
+      : [];
+    let candidates = byMask;
+    let by: 'mask' | 'name' = 'mask';
+    if (candidates.length === 0) {
+      const name = normalizeName(account.official_name?.trim() || account.name);
+      candidates = pool.filter(
+        (l) => l.class === cls && !used.has(l.sourceId) && normalizeName(l.name) === name,
+      );
+      by = 'name';
+    }
+    if (candidates.length === 1) {
+      used.add(candidates[0].sourceId);
+      out.push({ kind: 'matched', plaidAccountId: account.account_id, sourceId: candidates[0].sourceId, by });
+    } else if (candidates.length === 0) {
+      out.push({ kind: 'new', plaidAccountId: account.account_id });
+    } else {
+      out.push({
+        kind: 'ambiguous',
+        plaidAccountId: account.account_id,
+        candidates: candidates.map((c) => c.sourceId),
+      });
+    }
+  }
+  return out;
 }
