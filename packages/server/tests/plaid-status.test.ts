@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  abortLabel,
   accountLabel,
   errorLabel,
+  itemLines,
   lastSyncedLabel,
   plaidBannerLabel,
   plaidStatusLabel,
+  runHeadline,
+  runStatusLabel,
   type PlaidConnection,
 } from '../../reactnative/lib/plaid-status';
 
@@ -66,5 +70,86 @@ describe('plaid account and error labels', () => {
     expect(errorLabel(null)).toBeNull();
     expect(errorLabel('ITEM_LOGIN_REQUIRED')).toContain('Relink');
     expect(errorLabel('RATE_LIMIT')).toBe('Last sync failed (RATE_LIMIT).');
+  });
+});
+
+describe('sync log lines', () => {
+  it('summarises a clean run', () => {
+    const lines = itemLines({
+      items: [
+        {
+          institution: 'Chase',
+          live: true,
+          added: 12,
+          modified: 3,
+          removed: 1,
+          deleted: 1,
+          skippedAsDuplicate: 2,
+          matchedToExisting: 2,
+          holdings: 0,
+          historyDays: 400,
+          heldForMatching: [],
+          skippedBalances: [],
+          findings: [],
+        },
+      ],
+    });
+    expect(lines).toEqual([
+      {
+        institution: 'Chase',
+        text: '12 new, 3 updated, 1 removed, 1 deleted, 2 duplicates skipped, 2 accounts matched to existing, history +400 days.',
+        tone: 'ok',
+      },
+    ]);
+  });
+
+  it('flags warnings: held accounts, skipped balances, drift, disappeared accounts', () => {
+    const [line] = itemLines({
+      items: [
+        {
+          institution: 'Bank',
+          live: true,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          heldForMatching: ['a'],
+          skippedBalances: [{ accountId: 'b', reason: 'unsupported_currency' }],
+          unmappedRows: 3,
+          findings: [{ type: 'balance_drift' }, { type: 'account_disappeared' }],
+        },
+      ],
+    });
+    expect(line.tone).toBe('warn');
+    expect(line.text).toContain('1 account held back');
+    expect(line.text).toContain('1 balance not written');
+    expect(line.text).toContain('3 transactions skipped for unmatched accounts');
+    expect(line.text).toContain('does not match its transactions');
+    expect(line.text).toContain('no longer reported');
+  });
+
+  it('shows errors in plain language and marks shadow mode', () => {
+    expect(itemLines({ items: [{ institution: 'Chase', error: 'ITEM_LOGIN_REQUIRED' }] })[0]).toMatchObject({
+      tone: 'error',
+      text: expect.stringContaining('Relink'),
+    });
+    expect(itemLines({ items: [{ institution: 'X', live: false, added: 1 }] })[0].text).toContain('shadow mode');
+  });
+
+  it('tolerates missing, empty or malformed reports', () => {
+    expect(itemLines(null)).toEqual([]);
+    expect(itemLines({})).toEqual([]);
+    expect(itemLines({ items: [null, {}] })).toHaveLength(2);
+  });
+
+  it('labels runs and abort reasons', () => {
+    expect(runStatusLabel('aborted')).toBe('Stopped early');
+    expect(abortLabel('plaid_call_cap')).toContain('Plaid calls');
+    expect(abortLabel(null)).toBeNull();
+    expect(
+      runHeadline({
+        id: '1', startedAt: 0, finishedAt: 1, trigger: 'cron', status: 'ok', abortReason: null,
+        plaidCalls: 14, mutations: 40, itemsSynced: 1, report: null,
+      }),
+    ).toBe('Daily · 1 bank · 14 Plaid calls · 40 writes');
   });
 });

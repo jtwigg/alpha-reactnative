@@ -142,7 +142,27 @@ export function HomePlaidBanner({ ready }: { ready: boolean }) {
   );
 }
 
+/** Visible entry to Settings (Connections and Sync logs). */
+export function HomeSettingsLink({ ready }: { ready: boolean }) {
+  const palette = useAppPalette();
+  const router = useRouter();
+  const allowed = useQuery(api.finance.queries.isAllowed, ready ? {} : 'skip');
+  if (!ready || !allowed) return null;
+  return (
+    <Pressable
+      onPress={() => router.push('/settings' as Href)}
+      accessibilityRole="button"
+      accessibilityLabel="Open Settings"
+      style={({ pressed }) => [styles.settingsLink, pressed && { backgroundColor: palette.pressed }]}>
+      <FText variant="callout" tone="accent">
+        Settings · Connections · Sync logs
+      </FText>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  settingsLink: { marginHorizontal: 16, marginBottom: 8, paddingVertical: 6, borderRadius: 8 },
   banner: {
     marginHorizontal: 16,
     marginBottom: 8,

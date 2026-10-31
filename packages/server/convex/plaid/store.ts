@@ -182,3 +182,28 @@ export const legacyAccounts = internalQuery({
       }));
   },
 });
+
+/** Recent sync runs for the Sync logs screen. Reports hold counts and findings only, never tokens. */
+export const syncLogs = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    await requireAllowedIdentity(ctx);
+    const take = Math.min(Math.max(Math.floor(limit ?? 20), 1), 50);
+    const runs = await ctx.db.query('plaid_sync_runs').withIndex('by_startedAt').order('desc').take(take);
+    return {
+      syncEnabled: process.env.PLAID_SYNC_ENABLED === 'true',
+      runs: runs.map((run) => ({
+        id: run._id as string,
+        startedAt: run.startedAt,
+        finishedAt: run.finishedAt ?? null,
+        trigger: run.trigger,
+        status: run.status,
+        abortReason: run.abortReason ?? null,
+        plaidCalls: run.plaidCalls,
+        mutations: run.mutations,
+        itemsSynced: run.itemsSynced,
+        report: run.report ?? null,
+      })),
+    };
+  },
+});

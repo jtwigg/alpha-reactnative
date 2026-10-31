@@ -81,3 +81,101 @@ export const STATUS_HELP: Array<{ label: string; body: string }> = [
   { label: 'Needs relink', body: 'The bank asked you to sign in again. Tap Relink; history is kept.' },
   { label: 'Paused', body: 'Three syncs in a row failed, so syncing stopped. Relink to try again.' },
 ];
+
+export type SyncRunStatus = 'running' | 'ok' | 'aborted' | 'failed';
+
+export type SyncRunRow = {
+  id: string;
+  startedAt: number;
+  finishedAt: number | null;
+  trigger: 'cron' | 'manual';
+  status: SyncRunStatus;
+  abortReason: string | null;
+  plaidCalls: number;
+  mutations: number;
+  itemsSynced: number;
+  report: unknown;
+};
+
+export type SyncLogs = { syncEnabled: boolean; runs: SyncRunRow[] };
+
+export type LogLine = { institution: string; text: string; tone: 'ok' | 'warn' | 'error' };
+
+const RUN_STATUS_LABEL: Record<SyncRunStatus, string> = {
+  running: 'Running',
+  ok: 'Completed',
+  aborted: 'Stopped early',
+  failed: 'Failed',
+};
+
+export function runStatusLabel(status: SyncRunStatus): string {
+  return RUN_STATUS_LABEL[status];
+}
+
+const ABORT_LABEL: Record<string, string> = {
+  plaid_call_cap: 'Hit the per-run limit on Plaid calls.',
+  mutation_cap: 'Hit the per-run limit on database writes.',
+};
+
+export function abortLabel(reason: string | null): string | null {
+  if (!reason) return null;
+  return ABORT_LABEL[reason] ?? `Stopped: ${reason}`;
+}
+
+export function runHeadline(run: SyncRunRow): string {
+  const banks = run.itemsSynced === 1 ? '1 bank' : `${run.itemsSynced} banks`;
+  const how = run.trigger === 'manual' ? 'Manual' : 'Daily';
+  return `${how} · ${banks} · ${run.plaidCalls} Plaid calls · ${run.mutations} writes`;
+}
+
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function count(value: number, singular: string, plural = `${singular}s`): string {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+/** One plain-language line per institution in a run report (tolerates older or partial reports). */
+export function itemLines(report: unknown): LogLine[] {
+  const items = (report as { items?: unknown[] } | null)?.items;
+  if (!Array.isArray(items)) return [];
+  return items.map((raw) => {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const institution = typeof r.institution === 'string' ? r.institution : 'Bank';
+    if (typeof r.error === 'string') {
+      return { institution, text: errorLabel(r.error) ?? 'Sync failed.', tone: 'error' as const };
+    }
+    const parts: string[] = [];
+    const warnings: string[] = [];
+    parts.push(`${num(r.added)} new`, `${num(r.modified)} updated`, `${num(r.removed)} removed`);
+    if (num(r.deleted) > 0) parts.push(`${num(r.deleted)} deleted`);
+    if (num(r.skippedAsDuplicate) > 0) parts.push(`${count(num(r.skippedAsDuplicate), 'duplicate')} skipped`);
+    if (num(r.matchedToExisting) > 0) parts.push(`${count(num(r.matchedToExisting), 'account')} matched to existing`);
+    if (num(r.holdings) > 0) parts.push(count(num(r.holdings), 'holding'));
+    if (num(r.historyDays) > 0) parts.push(`history +${count(num(r.historyDays), 'day')}`);
+    if (r.live === false) parts.push('shadow mode');
+
+    const held = Array.isArray(r.heldForMatching) ? r.heldForMatching.length : 0;
+    if (held > 0) warnings.push(`${count(held, 'account')} held back: more than one possible match`);
+    const skipped = Array.isArray(r.skippedBalances) ? r.skippedBalances.length : 0;
+    if (skipped > 0) warnings.push(`${count(skipped, 'balance')} not written (missing or non-USD)`);
+    if (num(r.unmappedRows) > 0) warnings.push(`${count(num(r.unmappedRows), 'transaction')} skipped for unmatched accounts`);
+    const findings = Array.isArray(r.findings) ? (r.findings as Array<{ type?: string }>) : [];
+    const drift = findings.filter((f) => f.type === 'balance_drift').length;
+    if (drift > 0) warnings.push(`${count(drift, 'account')} with a balance that does not match its transactions`);
+    const gone = findings.filter((f) => f.type === 'account_disappeared').length;
+    if (gone > 0) warnings.push(`${count(gone, 'account')} no longer reported by the bank`);
+
+    return {
+      institution,
+      text: [parts.join(', '), ...warnings].join('. ') + '.',
+      tone: warnings.length > 0 ? ('warn' as const) : ('ok' as const),
+    };
+  });
+}
+
+export const SETTINGS_SECTIONS: Array<{ href: string; title: string; body: string }> = [
+  { href: '/connections', title: 'Connections', body: 'Linked banks, status, relink, add or remove.' },
+  { href: '/sync-logs', title: 'Sync logs', body: 'What happened in each sync: what changed and what needs attention.' },
+];

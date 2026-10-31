@@ -15,7 +15,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { ChatInput } from '@/components/chat/chat-input';
 import { HomeThread, useHomeChat } from '@/components/chat/home-thread';
 import { FText } from '@/components/finance/ui';
-import { HomeBriefingBanner, HomeFinanceBanner, HomePlaidBanner } from '@/components/home-banners';
+import { HomeBriefingBanner, HomeFinanceBanner, HomePlaidBanner, HomeSettingsLink } from '@/components/home-banners';
 import { HomeUpdateBannerHost, VersionLabel } from '@/components/home-update-chrome';
 import { QueryErrorBoundary } from '@/components/query-error-boundary';
 import { isClerkConfigured } from '@/lib/convex';
@@ -80,6 +80,7 @@ function HomeBody({ ready, onToast }: { ready: boolean; onToast: (message: strin
       </QueryErrorBoundary>
       <QueryErrorBoundary compact surface="home-plaid">
         <HomePlaidBanner ready={ready} />
+        <HomeSettingsLink ready={ready} />
       </QueryErrorBoundary>
       <QueryErrorBoundary compact surface="home-thread">
         <HomeChatSection ready={ready} onToast={onToast} askId={askId} askMalformed={askMalformed} />
