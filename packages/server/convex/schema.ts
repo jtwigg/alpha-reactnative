@@ -339,6 +339,60 @@ export default defineSchema({
    * Singleton native-release pointer John sets after each TestFlight submit.
    * The app compares `latestBuildNumber` to expo-application `nativeBuildVersion`.
    */
+  /** One row per linked institution. `encryptedAccessToken` is AES-GCM; never returned to clients. */
+  plaid_items: defineTable({
+    plaidItemId: v.string(),
+    institutionId: v.optional(v.string()),
+    institutionName: v.optional(v.string()),
+    encryptedAccessToken: v.string(),
+    cursor: v.optional(v.string()),
+    status: v.union(
+      v.literal('active'),
+      v.literal('needs_relink'),
+      v.literal('paused'),
+    ),
+    /** False until the cutover; shadow mode records diff counts and writes no finance rows. */
+    live: v.boolean(),
+    consecutiveFailures: v.number(),
+    lastError: v.optional(v.string()),
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_plaidItemId', ['plaidItemId'])
+    .index('by_institutionId', ['institutionId']),
+
+  /** Plaid account id → Alpha canonical account sourceId. */
+  plaid_account_map: defineTable({
+    plaidAccountId: v.string(),
+    plaidItemId: v.string(),
+    sourceId: v.string(),
+    type: v.string(),
+  })
+    .index('by_plaidAccountId', ['plaidAccountId'])
+    .index('by_plaidItemId', ['plaidItemId']),
+
+  plaid_sync_runs: defineTable({
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    trigger: v.union(v.literal('cron'), v.literal('manual')),
+    status: v.union(v.literal('running'), v.literal('ok'), v.literal('aborted'), v.literal('failed')),
+    abortReason: v.optional(v.string()),
+    plaidCalls: v.number(),
+    mutations: v.number(),
+    itemsSynced: v.number(),
+    report: v.optional(v.any()),
+  }).index('by_startedAt', ['startedAt']),
+
+  /** Deletions are proposals only; nothing is removed without explicit approval. */
+  finance_proposed_deletions: defineTable({
+    transactionSourceId: v.string(),
+    reason: v.union(v.literal('plaid_removed'), v.literal('stale_pending')),
+    proposedAt: v.number(),
+    status: v.union(v.literal('open'), v.literal('closed')),
+  })
+    .index('by_status', ['status'])
+    .index('by_transactionSourceId', ['transactionSourceId']),
+
   app_release: defineTable({
     key: v.literal('latest'),
     latestBuildNumber: v.string(),

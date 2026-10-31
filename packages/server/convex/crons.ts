@@ -15,4 +15,12 @@ crons.interval(
   internal.finance.rollupJobs.rebuildStep,
 );
 
+// 11:30 UTC is 4:30 AM PT in daylight time and 3:30 AM PT otherwise. A no-op
+// unless PLAID_SYNC_ENABLED=true; shadow items fetch and report without writing.
+crons.daily(
+  'plaid daily sync',
+  { hourUTC: 11, minuteUTC: 30 },
+  internal.plaid.sync.dailySync,
+);
+
 export default crons;
